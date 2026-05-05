@@ -9,6 +9,7 @@ import type {
 } from '../shared/admin-agent/types'
 import type { ConfirmationContext } from './tools/confirmable'
 import { mapSdkMessage } from './sdk-mapper'
+import { createCrmTools } from './tools/crm'
 import { createFacilitatorReadTools } from './tools/facilitator'
 import { createFacilitatorProposalTools } from './tools/facilitatorProposals'
 import { createAvailabilityTools } from './tools/availability'
@@ -40,6 +41,7 @@ export function createAdminAgent(
     ...createAvailabilityTools(convex, orgId),
     ...createGuestTools(convex, orgId, userId),
     ...createSurveyTools(convex, orgId, userId, confirmCtx),
+    ...createCrmTools(convex, orgId, userId, confirmCtx),
   ]
 
   const mcpServer = createSdkMcpServer({
@@ -99,6 +101,13 @@ export function createAdminAgent(
     '- close_opportunity(opportunityId): Close an opportunity to stop accepting applications.',
     '- reopen_opportunity(opportunityId): Reopen a closed opportunity.',
     '- close_survey(surveyId): Close a feedback survey to stop accepting responses.',
+    '- create_crm_record(collection, fields): Create a new CRM record in contacts/organizations/opportunities. fields is an object with the relevant keys (e.g. {name, email, role} for contacts).',
+    '- update_crm_record(collection, id, field, value): Update a single field on a CRM record.',
+    '',
+    'CRM tools (read):',
+    '- list_crm_records(collection, searchQuery?): List records from contacts/organizations/opportunities/submissions. searchQuery matches the primary name/title field for contacts/organizations/opportunities only — for submissions all rows are returned (no search index).',
+    '- get_crm_record(collection, id): Get full details of a single CRM record.',
+    '- get_crm_stats: Counts of all 4 CRM collections.',
     '',
     'Guidelines:',
     '- WRITE TOOLS: override_engagement, clear_engagement_override, set_quality_score, enroll_participant, remove_participant, approve_guest_visit, reject_guest_visit all modify data. Always read first (get_member_engagement, list_applications, list_programs, list_guest_visits) before writing.',
