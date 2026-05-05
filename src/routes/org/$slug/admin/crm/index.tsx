@@ -29,14 +29,6 @@ type CollectionTab =
   | 'opportunities'
   | 'submissions'
 
-// Backend caps each count at STATS_CAP (10 001); render "10 000+" past the
-// cap so the UI doesn't claim an exact count.
-function formatCount(count: number | undefined): string | null {
-  if (count == null) return null
-  if (count > 10_000) return '10 000+'
-  return count.toString()
-}
-
 const TAB_CONFIG: Record<
   CollectionTab,
   { label: string; icon: typeof Users; collection: string }
@@ -69,16 +61,14 @@ function CrmDashboard() {
     api.orgs.membership.getMembership,
     org ? { orgId: org._id } : 'skip',
   )
-  // One query per collection so each stays under Convex's per-function read
-  // budget — a single 4×take(10_001) call could trip the cap on busy orgs.
+  // O(1) read from the `crmCounts` aggregate — one row per org, populated
+  // by `bumpCount` on every insert/delete and seeded by the `backfillCrmCounts`
+  // internalMutation.
   const isAdmin = org != null && membership?.role === 'admin'
-  const statsArgs = isAdmin ? { orgId: org._id } : 'skip'
-  const counts: Record<CollectionTab, number | undefined> = {
-    contacts: useQuery(api.crm.getContactCount, statsArgs),
-    organizations: useQuery(api.crm.getOrganizationCount, statsArgs),
-    opportunities: useQuery(api.crm.getOpportunityCount, statsArgs),
-    submissions: useQuery(api.crm.getSubmissionCount, statsArgs),
-  }
+  const stats = useQuery(
+    api.crm.getStats,
+    isAdmin ? { orgId: org._id } : 'skip',
+  )
 
   if (org === undefined || membership === undefined) {
     return (
@@ -185,7 +175,7 @@ function CrmDashboard() {
               ][]
             ).map(([key, config]) => {
               const Icon = config.icon
-              const display = formatCount(counts[key])
+              const count = stats?.[key]
               return (
                 <Card
                   key={key}
@@ -200,8 +190,8 @@ function CrmDashboard() {
                   </CardHeader>
                   <CardContent>
                     <div className="text-3xl font-bold text-foreground">
-                      {display !== null ? (
-                        display
+                      {count !== undefined ? (
+                        count
                       ) : (
                         <Spinner className="size-6" />
                       )}

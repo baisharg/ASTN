@@ -1,6 +1,115 @@
 import { v } from 'convex/values'
-import { mutation, query } from './_generated/server'
+import {
+  internalMutation,
+  mutation,
+  query,
+  type MutationCtx,
+} from './_generated/server'
+import type { Doc, Id } from './_generated/dataModel'
 import { requireOrgAdmin, requireOrgRecord } from './lib/auth'
+
+type CrmCountField =
+  | 'contacts'
+  | 'organizations'
+  | 'opportunities'
+  | 'submissions'
+
+type OrgScopedCrmTable =
+  | 'crmContacts'
+  | 'crmOrganizations'
+  | 'crmOpportunities'
+  | 'crmSubmissions'
+
+// Capped live count of all four CRM tables for one org. Used as the cold
+// path for both `bumpCount` (to seed a correct row when none exists) and
+// `getStats` (to answer reads for orgs that haven't been backfilled yet).
+// Without this, a single import-of-1 on a pre-backfill org would write
+// `{contacts: 1, …}` and silently undercount the actual hundreds of rows
+// already in the table. STATS_CAP also matches `backfillCrmCounts`'s
+// implicit limit via Convex's per-function read budget.
+const STATS_CAP = 10_001
+type Counts = {
+  contacts: number
+  organizations: number
+  opportunities: number
+  submissions: number
+}
+async function liveCount(
+  ctx: { db: MutationCtx['db'] } | { db: any },
+  orgId: Id<'organizations'>,
+): Promise<Counts> {
+  const [contacts, organizations, opportunities, submissions] =
+    await Promise.all([
+      ctx.db
+        .query('crmContacts')
+        .withIndex('by_orgId', (q: any) => q.eq('orgId', orgId))
+        .take(STATS_CAP),
+      ctx.db
+        .query('crmOrganizations')
+        .withIndex('by_orgId', (q: any) => q.eq('orgId', orgId))
+        .take(STATS_CAP),
+      ctx.db
+        .query('crmOpportunities')
+        .withIndex('by_orgId', (q: any) => q.eq('orgId', orgId))
+        .take(STATS_CAP),
+      ctx.db
+        .query('crmSubmissions')
+        .withIndex('by_orgId', (q: any) => q.eq('orgId', orgId))
+        .take(STATS_CAP),
+    ])
+  return {
+    contacts: contacts.length,
+    organizations: organizations.length,
+    opportunities: opportunities.length,
+    submissions: submissions.length,
+  }
+}
+
+// Increment or decrement the per-org CRM count aggregate. `.collect()`
+// (instead of `.unique()`) tolerates OCC races on the first-ever write —
+// two concurrent inserts may both see no existing row and each create one;
+// the next call collapses any duplicates into the first. Math.max(0, …)
+// guards against drift causing negative counts on delete-after-backfill-loss.
+async function bumpCount(
+  ctx: MutationCtx,
+  orgId: Id<'organizations'>,
+  field: CrmCountField,
+  delta: number,
+): Promise<void> {
+  const rows = await ctx.db
+    .query('crmCounts')
+    .withIndex('by_orgId', (q) => q.eq('orgId', orgId))
+    .collect()
+  if (rows.length === 0) {
+    // Seed the row from a live count of all four tables before applying the
+    // delta — without this, a pre-backfill org with existing data would land
+    // at `{contacts: 1, organizations: 0, …}` after the first write and
+    // silently report wrong totals until the manual backfill runs.
+    const seed = await liveCount(ctx, orgId)
+    seed[field] = Math.max(0, seed[field] + delta)
+    await ctx.db.insert('crmCounts', { orgId, ...seed })
+    return
+  }
+  // Sum every count field across duplicates (not just the target field) so a
+  // dup row holding a write to a different collection isn't silently dropped
+  // when this bump deletes it.
+  const [primary, ...extras] = rows
+  const totals: Counts = {
+    contacts: primary.contacts,
+    organizations: primary.organizations,
+    opportunities: primary.opportunities,
+    submissions: primary.submissions,
+  }
+  for (const dup of extras) {
+    totals.contacts += dup.contacts
+    totals.organizations += dup.organizations
+    totals.opportunities += dup.opportunities
+    totals.submissions += dup.submissions
+    await ctx.db.delete(dup._id)
+  }
+  totals[field] = Math.max(0, totals[field] + delta)
+  await ctx.db.patch(primary._id, totals)
+}
 
 // Patching `orgId` via updateX mutations would move a record into another
 // org and escape the source-org admin check — so the update mutations accept
@@ -94,7 +203,7 @@ export const listContacts = query({
 
     return await ctx.db
       .query('crmContacts')
-      .withIndex('by_org', (q: any) => q.eq('orgId', args.orgId))
+      .withIndex('by_orgId', (q: any) => q.eq('orgId', args.orgId))
       .collect()
   },
 })
@@ -119,7 +228,7 @@ export const listOrganizations = query({
 
     return await ctx.db
       .query('crmOrganizations')
-      .withIndex('by_org', (q: any) => q.eq('orgId', args.orgId))
+      .withIndex('by_orgId', (q: any) => q.eq('orgId', args.orgId))
       .collect()
   },
 })
@@ -144,7 +253,7 @@ export const listOpportunities = query({
 
     return await ctx.db
       .query('crmOpportunities')
-      .withIndex('by_org', (q: any) => q.eq('orgId', args.orgId))
+      .withIndex('by_orgId', (q: any) => q.eq('orgId', args.orgId))
       .collect()
   },
 })
@@ -159,7 +268,7 @@ export const listSubmissions = query({
 
     return await ctx.db
       .query('crmSubmissions')
-      .withIndex('by_org', (q: any) => q.eq('orgId', args.orgId))
+      .withIndex('by_orgId', (q: any) => q.eq('orgId', args.orgId))
       .collect()
   },
 })
@@ -308,6 +417,7 @@ export const insertContacts = mutation({
         }),
       ),
     )
+    await bumpCount(ctx, args.orgId, 'contacts', args.records.length)
     return args.records.length
   },
 })
@@ -379,6 +489,7 @@ export const insertOrganizations = mutation({
         }),
       ),
     )
+    await bumpCount(ctx, args.orgId, 'organizations', args.records.length)
     return args.records.length
   },
 })
@@ -450,6 +561,7 @@ export const insertOpportunities = mutation({
         }),
       ),
     )
+    await bumpCount(ctx, args.orgId, 'opportunities', args.records.length)
     return args.records.length
   },
 })
@@ -508,6 +620,7 @@ export const insertSubmissions = mutation({
         })
       }),
     )
+    await bumpCount(ctx, args.orgId, 'submissions', args.records.length)
     return args.records.length
   },
 })
@@ -520,12 +633,14 @@ export const createEmptyContact = mutation({
   handler: async (ctx, args) => {
     await requireOrgAdmin(ctx, args.orgId)
     const now = Date.now()
-    return await ctx.db.insert('crmContacts', {
+    const id = await ctx.db.insert('crmContacts', {
       orgId: args.orgId,
       name: 'New contact',
       createdAt: now,
       updatedAt: now,
     })
+    await bumpCount(ctx, args.orgId, 'contacts', 1)
+    return id
   },
 })
 
@@ -535,12 +650,14 @@ export const createEmptyOrganization = mutation({
   handler: async (ctx, args) => {
     await requireOrgAdmin(ctx, args.orgId)
     const now = Date.now()
-    return await ctx.db.insert('crmOrganizations', {
+    const id = await ctx.db.insert('crmOrganizations', {
       orgId: args.orgId,
       name: 'New organization',
       createdAt: now,
       updatedAt: now,
     })
+    await bumpCount(ctx, args.orgId, 'organizations', 1)
+    return id
   },
 })
 
@@ -550,12 +667,14 @@ export const createEmptyOpportunity = mutation({
   handler: async (ctx, args) => {
     await requireOrgAdmin(ctx, args.orgId)
     const now = Date.now()
-    return await ctx.db.insert('crmOpportunities', {
+    const id = await ctx.db.insert('crmOpportunities', {
       orgId: args.orgId,
       title: 'New opportunity',
       createdAt: now,
       updatedAt: now,
     })
+    await bumpCount(ctx, args.orgId, 'opportunities', 1)
+    return id
   },
 })
 
@@ -565,16 +684,17 @@ export const createEmptySubmission = mutation({
   handler: async (ctx, args) => {
     await requireOrgAdmin(ctx, args.orgId)
     const now = Date.now()
-    return await ctx.db.insert('crmSubmissions', {
+    const id = await ctx.db.insert('crmSubmissions', {
       orgId: args.orgId,
       data: {},
       createdAt: now,
       updatedAt: now,
     })
+    await bumpCount(ctx, args.orgId, 'submissions', 1)
+    return id
   },
 })
 
-// Create with fields — used by the admin agent
 export const createContactWithFields = mutation({
   args: {
     orgId: v.id('organizations'),
@@ -585,7 +705,7 @@ export const createContactWithFields = mutation({
     await requireOrgAdmin(ctx, args.orgId)
     const now = Date.now()
     const f = args.fields || {}
-    return await ctx.db.insert('crmContacts', {
+    const id = await ctx.db.insert('crmContacts', {
       orgId: args.orgId,
       name: f.name ?? 'No name',
       email: f.email,
@@ -612,6 +732,8 @@ export const createContactWithFields = mutation({
       createdAt: now,
       updatedAt: now,
     })
+    await bumpCount(ctx, args.orgId, 'contacts', 1)
+    return id
   },
 })
 
@@ -625,7 +747,7 @@ export const createOrganizationWithFields = mutation({
     await requireOrgAdmin(ctx, args.orgId)
     const now = Date.now()
     const f = args.fields || {}
-    return await ctx.db.insert('crmOrganizations', {
+    const id = await ctx.db.insert('crmOrganizations', {
       orgId: args.orgId,
       name: f.name ?? 'No name',
       description: f.description,
@@ -638,6 +760,8 @@ export const createOrganizationWithFields = mutation({
       createdAt: now,
       updatedAt: now,
     })
+    await bumpCount(ctx, args.orgId, 'organizations', 1)
+    return id
   },
 })
 
@@ -651,7 +775,7 @@ export const createOpportunityWithFields = mutation({
     await requireOrgAdmin(ctx, args.orgId)
     const now = Date.now()
     const f = args.fields || {}
-    return await ctx.db.insert('crmOpportunities', {
+    const id = await ctx.db.insert('crmOpportunities', {
       orgId: args.orgId,
       title: f.title ?? 'No title',
       organization: f.organization,
@@ -664,6 +788,8 @@ export const createOpportunityWithFields = mutation({
       createdAt: now,
       updatedAt: now,
     })
+    await bumpCount(ctx, args.orgId, 'opportunities', 1)
+    return id
   },
 })
 
@@ -671,118 +797,97 @@ export const createOpportunityWithFields = mutation({
 
 // `requireOrgRecord` re-checks `record.orgId === args.orgId`; without that, a
 // multi-org admin steered by prompt injection could mutate a record outside
-// the agent/UI's bound org.
-export const updateContact = mutation({
-  args: {
-    orgId: v.id('organizations'),
-    id: v.id('crmContacts'),
-    field: v.string(),
-    value: v.any(),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    await requireOrgAdmin(ctx, args.orgId)
-    await requireOrgRecord(ctx, args.id, args.orgId, 'Contact not found')
-    if (!CONTACT_EDITABLE.has(args.field)) {
-      throw new Error(`Field '${args.field}' is not editable`)
-    }
-    await ctx.db.patch(args.id, {
-      [args.field]: args.value,
-      updatedAt: Date.now(),
-    })
-    return null
-  },
-})
+// the agent/UI's bound org. The factory shape lets the four collections
+// share auth + allowlist plumbing without re-exporting eight near-identical
+// mutation bodies.
+function defineUpdateMutation<T extends OrgScopedCrmTable>(
+  table: T,
+  editable: Set<string>,
+  notFoundMsg: string,
+) {
+  return mutation({
+    args: {
+      orgId: v.id('organizations'),
+      id: v.id(table),
+      field: v.string(),
+      value: v.any(),
+    },
+    returns: v.null(),
+    handler: async (ctx, args) => {
+      await requireOrgAdmin(ctx, args.orgId)
+      await requireOrgRecord(ctx, args.id, args.orgId, notFoundMsg)
+      if (!editable.has(args.field)) {
+        throw new Error(`Field '${args.field}' is not editable`)
+      }
+      // Cast needed because `T` is a union over four tables; the inferred
+      // patch shape is the intersection of all four schemas, which the
+      // dynamic `[args.field]` can't satisfy. The runtime allowlist above
+      // gates `args.field` to the table's editable fields.
+      await ctx.db.patch(args.id, {
+        [args.field]: args.value,
+        updatedAt: Date.now(),
+      } as unknown as Partial<Doc<T>>)
+      return null
+    },
+  })
+}
 
-export const updateOrganization = mutation({
-  args: {
-    orgId: v.id('organizations'),
-    id: v.id('crmOrganizations'),
-    field: v.string(),
-    value: v.any(),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    await requireOrgAdmin(ctx, args.orgId)
-    await requireOrgRecord(ctx, args.id, args.orgId, 'Organization not found')
-    if (!ORGANIZATION_EDITABLE.has(args.field)) {
-      throw new Error(`Field '${args.field}' is not editable`)
-    }
-    await ctx.db.patch(args.id, {
-      [args.field]: args.value,
-      updatedAt: Date.now(),
-    })
-    return null
-  },
-})
+function defineDeleteMutation<T extends OrgScopedCrmTable>(
+  table: T,
+  countField: CrmCountField,
+  notFoundMsg: string,
+) {
+  return mutation({
+    args: { orgId: v.id('organizations'), id: v.id(table) },
+    returns: v.null(),
+    handler: async (ctx, args) => {
+      await requireOrgAdmin(ctx, args.orgId)
+      await requireOrgRecord(ctx, args.id, args.orgId, notFoundMsg)
+      await ctx.db.delete(args.id)
+      await bumpCount(ctx, args.orgId, countField, -1)
+      return null
+    },
+  })
+}
 
-export const updateOpportunity = mutation({
-  args: {
-    orgId: v.id('organizations'),
-    id: v.id('crmOpportunities'),
-    field: v.string(),
-    value: v.any(),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    await requireOrgAdmin(ctx, args.orgId)
-    await requireOrgRecord(ctx, args.id, args.orgId, 'Opportunity not found')
-    if (!OPPORTUNITY_EDITABLE.has(args.field)) {
-      throw new Error(`Field '${args.field}' is not editable`)
-    }
-    await ctx.db.patch(args.id, {
-      [args.field]: args.value,
-      updatedAt: Date.now(),
-    })
-    return null
-  },
-})
+export const updateContact = defineUpdateMutation(
+  'crmContacts',
+  CONTACT_EDITABLE,
+  'Contact not found',
+)
+export const updateOrganization = defineUpdateMutation(
+  'crmOrganizations',
+  ORGANIZATION_EDITABLE,
+  'Organization not found',
+)
+export const updateOpportunity = defineUpdateMutation(
+  'crmOpportunities',
+  OPPORTUNITY_EDITABLE,
+  'Opportunity not found',
+)
 
 // ── Mutations: Delete single ──
 
-export const deleteContact = mutation({
-  args: { orgId: v.id('organizations'), id: v.id('crmContacts') },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    await requireOrgAdmin(ctx, args.orgId)
-    await requireOrgRecord(ctx, args.id, args.orgId, 'Contact not found')
-    await ctx.db.delete(args.id)
-    return null
-  },
-})
-
-export const deleteOrganization = mutation({
-  args: { orgId: v.id('organizations'), id: v.id('crmOrganizations') },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    await requireOrgAdmin(ctx, args.orgId)
-    await requireOrgRecord(ctx, args.id, args.orgId, 'Organization not found')
-    await ctx.db.delete(args.id)
-    return null
-  },
-})
-
-export const deleteOpportunity = mutation({
-  args: { orgId: v.id('organizations'), id: v.id('crmOpportunities') },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    await requireOrgAdmin(ctx, args.orgId)
-    await requireOrgRecord(ctx, args.id, args.orgId, 'Opportunity not found')
-    await ctx.db.delete(args.id)
-    return null
-  },
-})
-
-export const deleteSubmission = mutation({
-  args: { orgId: v.id('organizations'), id: v.id('crmSubmissions') },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    await requireOrgAdmin(ctx, args.orgId)
-    await requireOrgRecord(ctx, args.id, args.orgId, 'Submission not found')
-    await ctx.db.delete(args.id)
-    return null
-  },
-})
+export const deleteContact = defineDeleteMutation(
+  'crmContacts',
+  'contacts',
+  'Contact not found',
+)
+export const deleteOrganization = defineDeleteMutation(
+  'crmOrganizations',
+  'organizations',
+  'Organization not found',
+)
+export const deleteOpportunity = defineDeleteMutation(
+  'crmOpportunities',
+  'opportunities',
+  'Opportunity not found',
+)
+export const deleteSubmission = defineDeleteMutation(
+  'crmSubmissions',
+  'submissions',
+  'Submission not found',
+)
 
 // ── Mutations: Delete (clear collection for re-import) ──
 
@@ -792,6 +897,12 @@ export const deleteSubmission = mutation({
 // transaction at ~8 MB / ~8 k writes), so batching keeps the operation below
 // those limits regardless of collection size.
 const CLEAR_BATCH = 500
+const TABLE_TO_COUNT_FIELD: Record<OrgScopedCrmTable, CrmCountField> = {
+  crmContacts: 'contacts',
+  crmOrganizations: 'organizations',
+  crmOpportunities: 'opportunities',
+  crmSubmissions: 'submissions',
+}
 export const clearCollection = mutation({
   args: {
     orgId: v.id('organizations'),
@@ -811,10 +922,18 @@ export const clearCollection = mutation({
 
     const records = await ctx.db
       .query(args.collection)
-      .withIndex('by_org', (q: any) => q.eq('orgId', args.orgId))
+      .withIndex('by_orgId', (q: any) => q.eq('orgId', args.orgId))
       .take(CLEAR_BATCH)
 
     await Promise.all(records.map((record) => ctx.db.delete(record._id)))
+    if (records.length > 0) {
+      await bumpCount(
+        ctx,
+        args.orgId,
+        TABLE_TO_COUNT_FIELD[args.collection],
+        -records.length,
+      )
+    }
     return {
       deleted: records.length,
       hasMore: records.length === CLEAR_BATCH,
@@ -824,63 +943,88 @@ export const clearCollection = mutation({
 
 // ── Queries: Stats ──
 
-// One query per collection so each stays under Convex's per-function read
-// budget (~16k docs / ~8 MB). A single combined query running all four
-// `.take(STATS_CAP)` reads in parallel could scan up to 4×STATS_CAP docs in
-// one function and trip the cap on busy orgs. The UI renders `STATS_CAP+`
-// when the cap is hit; an exact count past that needs a dedicated aggregate
-// doc, which is out of scope.
-const STATS_CAP = 10_001
-
-async function countOrgRows(
-  ctx: { db: any },
-  table:
-    | 'crmContacts'
-    | 'crmOrganizations'
-    | 'crmOpportunities'
-    | 'crmSubmissions',
-  orgId: any,
-): Promise<number> {
-  const rows = await ctx.db
-    .query(table)
-    .withIndex('by_org', (q: any) => q.eq('orgId', orgId))
-    .take(STATS_CAP)
-  return rows.length
-}
-
-export const getContactCount = query({
+// Reads the `crmCounts` aggregate; sums any duplicate rows in case an OCC
+// race left more than one. When no row exists yet (org never had a CRM
+// write since the migration), falls back to a capped live count so
+// pre-backfill dashboards show real numbers instead of zeros — the next
+// mutation's `bumpCount` will materialize the row.
+export const getStats = query({
   args: { orgId: v.id('organizations') },
-  returns: v.number(),
-  handler: async (ctx, args) => {
+  returns: v.object({
+    contacts: v.number(),
+    organizations: v.number(),
+    opportunities: v.number(),
+    submissions: v.number(),
+  }),
+  handler: async (ctx, args): Promise<Counts> => {
     await requireOrgAdmin(ctx, args.orgId)
-    return countOrgRows(ctx, 'crmContacts', args.orgId)
+    const rows = await ctx.db
+      .query('crmCounts')
+      .withIndex('by_orgId', (q) => q.eq('orgId', args.orgId))
+      .collect()
+    if (rows.length === 0) return liveCount(ctx, args.orgId)
+    const totals: Counts = {
+      contacts: 0,
+      organizations: 0,
+      opportunities: 0,
+      submissions: 0,
+    }
+    for (const row of rows) {
+      totals.contacts += row.contacts
+      totals.organizations += row.organizations
+      totals.opportunities += row.opportunities
+      totals.submissions += row.submissions
+    }
+    return totals
   },
 })
 
-export const getOrganizationCount = query({
-  args: { orgId: v.id('organizations') },
-  returns: v.number(),
-  handler: async (ctx, args) => {
-    await requireOrgAdmin(ctx, args.orgId)
-    return countOrgRows(ctx, 'crmOrganizations', args.orgId)
-  },
-})
+// One-shot backfill: walk every CRM row across the four tables and write a
+// `crmCounts` doc per org. Run once after deploy via:
+//   bunx convex run crm:backfillCrmCounts
+// Idempotent — re-runs overwrite each org's row with the freshly counted
+// totals, collapsing any drift from concurrent writes during the backfill.
+export const backfillCrmCounts = internalMutation({
+  args: {},
+  returns: v.object({
+    orgs: v.number(),
+  }),
+  handler: async (ctx) => {
+    const orgs = await ctx.db.query('organizations').collect()
+    const tables: { table: OrgScopedCrmTable; field: CrmCountField }[] = [
+      { table: 'crmContacts', field: 'contacts' },
+      { table: 'crmOrganizations', field: 'organizations' },
+      { table: 'crmOpportunities', field: 'opportunities' },
+      { table: 'crmSubmissions', field: 'submissions' },
+    ]
 
-export const getOpportunityCount = query({
-  args: { orgId: v.id('organizations') },
-  returns: v.number(),
-  handler: async (ctx, args) => {
-    await requireOrgAdmin(ctx, args.orgId)
-    return countOrgRows(ctx, 'crmOpportunities', args.orgId)
-  },
-})
-
-export const getSubmissionCount = query({
-  args: { orgId: v.id('organizations') },
-  returns: v.number(),
-  handler: async (ctx, args) => {
-    await requireOrgAdmin(ctx, args.orgId)
-    return countOrgRows(ctx, 'crmSubmissions', args.orgId)
+    for (const org of orgs) {
+      const totals = {
+        contacts: 0,
+        organizations: 0,
+        opportunities: 0,
+        submissions: 0,
+      }
+      for (const { table, field } of tables) {
+        const rows = await ctx.db
+          .query(table)
+          .withIndex('by_orgId', (q) => q.eq('orgId', org._id))
+          .collect()
+        totals[field] = rows.length
+      }
+      const existing = await ctx.db
+        .query('crmCounts')
+        .withIndex('by_orgId', (q) => q.eq('orgId', org._id))
+        .collect()
+      if (existing.length === 0) {
+        await ctx.db.insert('crmCounts', { orgId: org._id, ...totals })
+      } else {
+        const [primary, ...extras] = existing
+        for (const dup of extras) await ctx.db.delete(dup._id)
+        await ctx.db.patch(primary._id, totals)
+      }
+    }
+    return { orgs: orgs.length }
   },
 })
 

@@ -197,23 +197,17 @@ export function createCrmTools(
       {},
       async () => {
         try {
-          const [contacts, organizations, opportunities, submissions] =
-            await Promise.all([
-              convex.query(api.crm.getContactCount, { orgId }),
-              convex.query(api.crm.getOrganizationCount, { orgId }),
-              convex.query(api.crm.getOpportunityCount, { orgId }),
-              convex.query(api.crm.getSubmissionCount, { orgId }),
-            ])
+          const stats = await convex.query(api.crm.getStats, { orgId })
           return {
             content: [
               {
                 type: 'text' as const,
                 text:
                   `## CRM Stats\n\n` +
-                  `- Contacts: ${contacts}\n` +
-                  `- Organizations: ${organizations}\n` +
-                  `- Opportunities: ${opportunities}\n` +
-                  `- Submissions: ${submissions}`,
+                  `- Contacts: ${stats.contacts}\n` +
+                  `- Organizations: ${stats.organizations}\n` +
+                  `- Opportunities: ${stats.opportunities}\n` +
+                  `- Submissions: ${stats.submissions}`,
               },
             ],
           }
