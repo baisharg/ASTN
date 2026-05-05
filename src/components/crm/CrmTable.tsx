@@ -21,6 +21,13 @@ import type { Id } from '../../../convex/_generated/dataModel'
 import { Button } from '~/components/ui/button'
 import { Checkbox } from '~/components/ui/checkbox'
 import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '~/components/ui/dialog'
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -147,8 +154,9 @@ export function CrmTable({ orgId, collection }: CrmTableProps) {
   const [showFilters, setShowFilters] = useState(false)
   const [savedViews, setSavedViews] = useState<SavedView[]>([])
   const [activeViewId, setActiveViewId] = useState<string | null>(null)
+  // `null` = dialog closed; otherwise the in-progress name from the input.
+  const [savingViewName, setSavingViewName] = useState<string | null>(null)
 
-  // Load saved views from localStorage on mount / collection change
   useEffect(() => {
     if (typeof window === 'undefined') return
     const raw = localStorage.getItem(viewsStorageKey(orgId, collection))
@@ -169,11 +177,19 @@ export function CrmTable({ orgId, collection }: CrmTableProps) {
 
   const persistViews = useCallback(
     (views: SavedView[]) => {
-      localStorage.setItem(
-        viewsStorageKey(orgId, collection),
-        JSON.stringify(views),
-      )
+      // Always update the in-memory state so the session doesn't desync from
+      // the dropdown. Persistence is best-effort: incognito quota errors and
+      // disabled storage shouldn't kill the save.
       setSavedViews(views)
+      try {
+        localStorage.setItem(
+          viewsStorageKey(orgId, collection),
+          JSON.stringify(views),
+        )
+      } catch (err) {
+        console.error('Failed to persist views:', err)
+        toast.error('Could not save view to local storage')
+      }
     },
     [orgId, collection],
   )
@@ -203,8 +219,12 @@ export function CrmTable({ orgId, collection }: CrmTableProps) {
     setActiveViewId(null)
   }, [clearExactFilters])
 
-  const saveCurrentAsView = useCallback(() => {
-    const name = window.prompt('View name:')
+  const openSaveViewDialog = useCallback(() => {
+    setSavingViewName('')
+  }, [])
+
+  const confirmSaveView = useCallback(() => {
+    const name = savingViewName?.trim()
     if (!name) return
     const newView: SavedView = {
       id: Math.random().toString(36).slice(2, 10),
@@ -216,7 +236,16 @@ export function CrmTable({ orgId, collection }: CrmTableProps) {
     }
     persistViews([...savedViews, newView])
     setActiveViewId(newView.id)
-  }, [hiddenColumns, filters, sortKey, sortDir, savedViews, persistViews])
+    setSavingViewName(null)
+  }, [
+    savingViewName,
+    hiddenColumns,
+    filters,
+    sortKey,
+    sortDir,
+    savedViews,
+    persistViews,
+  ])
 
   const deleteView = useCallback(
     (id: string) => {
@@ -324,14 +353,16 @@ export function CrmTable({ orgId, collection }: CrmTableProps) {
     return result
   }, [rawData, sortKey, sortDir, filters, exactFilters])
 
-  // For submissions, dynamically extract column keys from `data`
+  // For submissions, dynamically extract column keys from `data`. Derived
+  // from `rawData` (not the filtered `data`) so a zero-row filter doesn't
+  // collapse the column set and break saved views referencing those keys.
   const allColumns = useMemo(() => {
     if (collection !== 'submissions') return COLUMN_CONFIG[collection]
     const base = COLUMN_CONFIG.submissions
-    if (!data || data.length === 0) return base
+    if (!rawData || rawData.length === 0) return base
 
     const dataKeys = new Set<string>()
-    for (const record of data as any[]) {
+    for (const record of rawData as any[]) {
       if (record.data) {
         for (const key of Object.keys(record.data)) {
           dataKeys.add(key)
@@ -343,7 +374,7 @@ export function CrmTable({ orgId, collection }: CrmTableProps) {
       .map((key) => ({ key: `data.${key}`, label: key }))
 
     return [...base, ...extraCols]
-  }, [collection, data])
+  }, [collection, rawData])
 
   const columns = useMemo(
     () => allColumns.filter((col) => !hiddenColumns.includes(col.key)),
@@ -641,7 +672,9 @@ export function CrmTable({ orgId, collection }: CrmTableProps) {
             />
             {searchQuery && (
               <button
+                type="button"
                 onClick={() => setSearchQuery('')}
+                aria-label="Clear search"
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
                 <X className="size-4" />
@@ -687,12 +720,14 @@ export function CrmTable({ orgId, collection }: CrmTableProps) {
                       )}
                     </DropdownMenuItem>
                     <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation()
                         deleteView(view.id)
                       }}
                       className="px-2 text-muted-foreground hover:text-destructive"
                       title="Delete view"
+                      aria-label={`Delete view "${view.name}"`}
                     >
                       <Trash2 className="size-3" />
                     </button>
@@ -722,7 +757,7 @@ export function CrmTable({ orgId, collection }: CrmTableProps) {
                 </>
               )}
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={saveCurrentAsView}>
+              <DropdownMenuItem onClick={openSaveViewDialog}>
                 <Save className="size-4 mr-2" />
                 Save current view
               </DropdownMenuItem>
@@ -916,6 +951,7 @@ export function CrmTable({ orgId, collection }: CrmTableProps) {
                         autoFocus
                       />
                       <button
+                        type="button"
                         onClick={() => {
                           setFilters((prev) => {
                             const next = { ...prev }
@@ -931,6 +967,7 @@ export function CrmTable({ orgId, collection }: CrmTableProps) {
                         }}
                         className="text-muted-foreground hover:text-destructive"
                         title="Remove filter"
+                        aria-label={`Remove filter for ${col.label}`}
                       >
                         <X className="size-4" />
                       </button>
@@ -1112,6 +1149,7 @@ export function CrmTable({ orgId, collection }: CrmTableProps) {
                             )}
                             {isEditable && !col.key.startsWith('data.') && (
                               <button
+                                type="button"
                                 onClick={() =>
                                   handleStartEdit(
                                     record._id,
@@ -1119,6 +1157,7 @@ export function CrmTable({ orgId, collection }: CrmTableProps) {
                                     cellValue,
                                   )
                                 }
+                                aria-label={`Edit ${col.label}`}
                                 className="opacity-0 group-hover:opacity-100 transition-opacity ml-auto shrink-0"
                               >
                                 <Pencil className="size-3 text-muted-foreground hover:text-foreground" />
@@ -1134,8 +1173,10 @@ export function CrmTable({ orgId, collection }: CrmTableProps) {
                       <Popover>
                         <PopoverTrigger asChild>
                           <button
+                            type="button"
                             className="opacity-0 group-hover/row:opacity-100 focus:opacity-100 transition-opacity text-muted-foreground hover:text-destructive p-1 inline-flex"
                             title="Delete row"
+                            aria-label="Delete row"
                           >
                             <Trash2 className="size-3.5" />
                           </button>
@@ -1166,6 +1207,42 @@ export function CrmTable({ orgId, collection }: CrmTableProps) {
           </tbody>
         </table>
       </div>
+
+      <Dialog
+        open={savingViewName !== null}
+        onOpenChange={(open) => {
+          if (!open) setSavingViewName(null)
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Save current view</DialogTitle>
+          </DialogHeader>
+          <Input
+            placeholder="View name"
+            value={savingViewName ?? ''}
+            onChange={(e) => setSavingViewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && savingViewName?.trim()) {
+                e.preventDefault()
+                confirmSaveView()
+              }
+            }}
+            autoFocus
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSavingViewName(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={confirmSaveView}
+              disabled={!savingViewName?.trim()}
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

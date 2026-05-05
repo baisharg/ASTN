@@ -1809,7 +1809,7 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index('by_org', ['orgId'])
+    .index('by_orgId', ['orgId'])
     .searchIndex('search_name', {
       searchField: 'name',
       filterFields: ['orgId'],
@@ -1829,7 +1829,7 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index('by_org', ['orgId'])
+    .index('by_orgId', ['orgId'])
     .searchIndex('search_name', {
       searchField: 'name',
       filterFields: ['orgId'],
@@ -1849,7 +1849,7 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index('by_org', ['orgId'])
+    .index('by_orgId', ['orgId'])
     .searchIndex('search_title', {
       searchField: 'title',
       filterFields: ['orgId'],
@@ -1866,5 +1866,16 @@ export default defineSchema({
     data: v.record(v.string(), v.any()),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index('by_org', ['orgId']),
+  }).index('by_orgId', ['orgId']),
+
+  // CRM Counts — O(1) per-org per-collection size aggregate. Each insert/
+  // delete bumps the matching field; the dashboard reads one row per org
+  // instead of `.take(STATS_CAP)`-scanning each table on every page view.
+  crmCounts: defineTable({
+    orgId: v.id('organizations'),
+    contacts: v.number(),
+    organizations: v.number(),
+    opportunities: v.number(),
+    submissions: v.number(),
+  }).index('by_orgId', ['orgId']),
 })

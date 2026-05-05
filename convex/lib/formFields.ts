@@ -201,10 +201,18 @@ export function sanitizeResponsesForForm(
 
 /**
  * Convert a label string to a camelCase key.
- * "First name" -> "firstName", "How course helps" -> "howCourseHelps"
+ * "First name" -> "firstName", "How course helps" -> "howCourseHelps",
+ * "Año de graduación" -> "anoDeGraduacion".
+ *
+ * NFD-strips accents so accent-only headers (`Período`, `Pregunta`) produce
+ * clean keys. Returns `''` if the result wouldn't start with a letter —
+ * Convex rejects field names starting with `_` or a digit, so callers should
+ * skip empty results rather than try to insert them.
  */
 export function labelToKey(label: string): string {
-  return label
+  const camel = label
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, '')
     .split(/\s+/)
@@ -213,4 +221,5 @@ export function labelToKey(label: string): string {
       i === 0 ? word : word.charAt(0).toUpperCase() + word.slice(1),
     )
     .join('')
+  return /^[a-z]/.test(camel) ? camel : ''
 }

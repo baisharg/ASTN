@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
+import { labelToKey } from '../../../convex/lib/formFields'
 import { Button } from '~/components/ui/button'
 import {
   Dialog,
@@ -25,31 +26,6 @@ type TargetCollection =
   | 'opportunities'
   | 'submissions'
 
-// Convex rejects field names that start with `_` (reserved for system fields)
-// or contain accents/spaces/control chars. Normalize Excel headers to safe
-// camelCase keys, stripping any leading underscores so SheetJS auto-headers
-// (`__EMPTY`, `__EMPTY_1`) and accent-only headers don't poison the record.
-function normalizeKey(key: string): string {
-  const stripped = key
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\w\s]/g, '')
-    .replace(/^_+/, '')
-    .trim()
-  if (!stripped) return ''
-  const parts = stripped.split(/\s+/).filter(Boolean)
-  if (parts.length === 0) return ''
-  const camel = parts
-    .map((word, i) =>
-      i === 0
-        ? word.toLowerCase()
-        : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase(),
-    )
-    .join('')
-  // Convex field names must start with a letter; drop leading digits/underscores.
-  return /^[a-zA-Z]/.test(camel) ? camel : ''
-}
-
 // XLSX may emit numbers, Dates, or booleans in cells whose target column is a
 // `v.string()`. Coerce non-null primitives to strings; pass through structured
 // values untouched (they are either dropped or end up under `data` for
@@ -63,28 +39,36 @@ function coerceCellValue(value: unknown): unknown {
 }
 
 // Per-sheet header→normalized-key map so the NFD/regex/split/map work in
-// `normalizeKey` runs once per header instead of once per (header × row).
+// `labelToKey` runs once per header instead of once per (header × row).
 function buildHeaderMap(headers: string[]): Map<string, string | null> {
   const map = new Map<string, string | null>()
   for (const key of headers) {
-    const norm = normalizeKey(key)
+    const norm = labelToKey(key)
     map.set(key, norm && norm !== key ? norm : null)
   }
   return map
 }
 
+// For typed collections (contacts/orgs/opps), preserve the original Excel
+// header so backend `??` chains can match accented Spanish headers like
+// `record['Teléfono']` directly. For submissions the non-promoted keys land
+// in the flexible `data` bag verbatim, so duplicating each key as both
+// `Período` and `periodo` would store every field twice — emit only the
+// camelCase normalization there.
 function normalizeRow(
   row: Record<string, any>,
   headerMap: Map<string, string | null>,
+  preserveOriginal: boolean,
 ): Record<string, any> {
   const out: Record<string, any> = {}
   for (const [key, value] of Object.entries(row)) {
     const coerced = coerceCellValue(value)
-    // Preserve the original header so backend accented-header fallbacks
-    // (e.g. `record['Experiencia en AI Safety']`) match. Skip headers that
-    // start with `_` — Convex reserves those for system fields.
-    if (!key.startsWith('_')) out[key] = coerced
-    const norm = headerMap.get(key) ?? normalizeKey(key)
+    if (preserveOriginal && !key.startsWith('_')) out[key] = coerced
+    // headerMap is built from `Object.keys(rows[0])`, so a column whose
+    // first data row is blank is missing from the map — fall back to a live
+    // `labelToKey` so submissions don't silently drop those answers when
+    // `preserveOriginal` is false.
+    const norm = headerMap.get(key) ?? labelToKey(key)
     if (norm && norm !== key) out[norm] = coerced
   }
   return out
@@ -210,6 +194,10 @@ export function CrmImportDialog({
     setStatus('importing')
     setErrorMsg('')
     const results: { sheet: string; count: number; collection: string }[] = []
+    // Track the in-flight sheet so a thrown error in a later batch can name
+    // *which* sheet broke (without blaming the previously completed ones).
+    let currentSheet: string | null = null
+    let partialCount = 0
 
     try {
       for (const sheet of sheets) {
@@ -219,12 +207,15 @@ export function CrmImportDialog({
         // Convex mutations have a size limit, so batch in chunks of 50
         const BATCH_SIZE = 50
         let totalInserted = 0
+        currentSheet = sheet.name
+        partialCount = 0
         const headerMap = buildHeaderMap(sheet.headers)
+        const preserveOriginal = target !== 'submissions'
 
         for (let i = 0; i < sheet.rows.length; i += BATCH_SIZE) {
           const batch = sheet.rows
             .slice(i, i + BATCH_SIZE)
-            .map((row) => normalizeRow(row, headerMap))
+            .map((row) => normalizeRow(row, headerMap, preserveOriginal))
 
           switch (target) {
             case 'contacts':
@@ -252,6 +243,7 @@ export function CrmImportDialog({
               })
               break
           }
+          partialCount = totalInserted
         }
 
         results.push({
@@ -265,7 +257,16 @@ export function CrmImportDialog({
       setStatus('done')
     } catch (err: any) {
       console.error('Import error:', err)
-      setErrorMsg(err.message || 'Import failed')
+      const baseMsg = err.message || 'Import failed'
+      let partial = ''
+      if (currentSheet) {
+        partial =
+          partialCount > 0
+            ? ` Imported ${partialCount} row${partialCount === 1 ? '' : 's'} from "${currentSheet}" before the error.`
+            : ` Failed on sheet "${currentSheet}".`
+      }
+      setErrorMsg(baseMsg + partial)
+      setImportResults(results)
       setStatus('error')
     }
   }, [
@@ -311,16 +312,17 @@ export function CrmImportDialog({
               a CRM collection (Contacts, Organizations, Opportunities, or
               Submissions).
             </p>
-            <div
-              className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-primary transition-colors"
+            <button
+              type="button"
               onClick={() => fileInputRef.current?.click()}
+              className="w-full border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <FileUp className="size-10 text-muted-foreground mx-auto mb-3" />
               <p className="font-medium">Click to select file</p>
               <p className="text-sm text-muted-foreground mt-1">
                 .xlsx, .xls, or .csv
               </p>
-            </div>
+            </button>
             <input
               ref={fileInputRef}
               type="file"
@@ -430,6 +432,19 @@ export function CrmImportDialog({
               <span className="font-medium">Error</span>
             </div>
             <p className="text-sm text-muted-foreground">{errorMsg}</p>
+            {importResults.length > 0 && (
+              <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Sheets imported before the error:
+                </p>
+                {importResults.map((r) => (
+                  <p key={r.sheet} className="text-sm">
+                    <span className="font-medium">{r.sheet}</span>: {r.count}{' '}
+                    record{r.count === 1 ? '' : 's'} → {r.collection}
+                  </p>
+                ))}
+              </div>
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={handleReset}>
                 Try again
