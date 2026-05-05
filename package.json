@@ -86,6 +86,7 @@
     "string-similarity-js": "^2.1.4",
     "tailwind-merge": "^3.4.0",
     "tauri-plugin-clerk": "^0.1.0",
+    "xlsx": "npm:@e965/xlsx@^0.20.3",
     "zod": "^3.25"
   },
   "devDependencies": {

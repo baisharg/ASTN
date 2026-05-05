@@ -1,6 +1,31 @@
 import type { ActionCtx, MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc, Id } from '../_generated/dataModel'
 
+type OrgScopedCrmTable =
+  | 'crmContacts'
+  | 'crmOrganizations'
+  | 'crmOpportunities'
+  | 'crmSubmissions'
+
+/**
+ * Load a CRM record by ID and verify it belongs to the caller-declared org.
+ * Mirrors the read-getter pattern in `convex/crm.ts` so update/delete
+ * mutations can't be tricked into mutating records the caller's bound
+ * `orgId` doesn't cover.
+ */
+export async function requireOrgRecord<T extends OrgScopedCrmTable>(
+  ctx: QueryCtx | MutationCtx,
+  id: Id<T>,
+  orgId: Id<'organizations'>,
+  notFoundMsg: string,
+): Promise<Doc<T>> {
+  const record = await ctx.db.get(id)
+  if (!record || record.orgId !== orgId) {
+    throw new Error(notFoundMsg)
+  }
+  return record
+}
+
 /**
  * Try to look up a user's email from the legacy auth users table.
  * Post-Clerk-migration, userId is a Clerk subject string (not a valid Convex
