@@ -260,10 +260,12 @@ function OpportunityEditPage() {
         deadline,
         externalUrl: externalUrl.trim() || undefined,
         featured,
-        redirectOpportunityId:
-          redirectOpportunityId as Id<'orgOpportunities'> | null,
-        sourceOpportunityId:
-          sourceOpportunityId as Id<'orgOpportunities'> | null,
+        redirectOpportunityId: redirectOpportunityId
+          ? (redirectOpportunityId as Id<'orgOpportunities'>)
+          : null,
+        sourceOpportunityId: sourceOpportunityId
+          ? (sourceOpportunityId as Id<'orgOpportunities'>)
+          : null,
       })
       toast.success('Opportunity details saved')
     } catch (err) {
@@ -499,7 +501,9 @@ function OpportunityEditPage() {
                           <Select
                             value={redirectOpportunityId ?? 'none'}
                             onValueChange={(v) =>
-                              setRedirectOpportunityId(v === 'none' ? null : v)
+                              setRedirectOpportunityId(
+                                !v || v === 'none' ? null : v,
+                              )
                             }
                           >
                             <SelectTrigger>
@@ -529,7 +533,9 @@ function OpportunityEditPage() {
                         <Select
                           value={sourceOpportunityId ?? 'none'}
                           onValueChange={(v) =>
-                            setSourceOpportunityId(v === 'none' ? null : v)
+                            setSourceOpportunityId(
+                              !v || v === 'none' ? null : v,
+                            )
                           }
                         >
                           <SelectTrigger>
