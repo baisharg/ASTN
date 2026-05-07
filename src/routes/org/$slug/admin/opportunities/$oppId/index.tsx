@@ -110,9 +110,10 @@ function OpportunityEditPage() {
 
   // Source (pre-fill) options: all opportunities in this org (any status),
   // excluding the current one. Usually the source is a closed prior edition.
+  // Gated on admin membership — listAllByOrg throws for non-admins.
   const allOpportunities = useQuery(
     api.orgOpportunities.listAllByOrg,
-    org ? { orgId: org._id } : 'skip',
+    org && membership?.role === 'admin' ? { orgId: org._id } : 'skip',
   )
   const sourceOptions = (allOpportunities ?? []).filter((o) => o._id !== oppId)
 
