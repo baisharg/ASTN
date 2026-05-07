@@ -343,6 +343,7 @@ export const insertContacts = mutation({
           aiSafetyExperience:
             record.aiSafetyExperience ??
             record['AI Safety experience'] ??
+            record.experienciaEnAiSafety ??
             record.experienciaAiSafety ??
             record['Experiencia en AI Safety'] ??
             undefined,
@@ -379,12 +380,14 @@ export const insertContacts = mutation({
           contactSource:
             record.contactSource ??
             record['Contact source'] ??
+            record.fuenteDeContacto ??
             record.fuenteContacto ??
             record['Fuente de contacto'] ??
             undefined,
           contactPerson:
             record.contactPerson ??
             record['Contact person'] ??
+            record.personaDeContacto ??
             record.personaContacto ??
             record['Persona de contacto'] ??
             undefined,
@@ -463,6 +466,7 @@ export const insertOrganizations = mutation({
           aiStance:
             record.aiStance ??
             record['AI stance'] ??
+            record.posturaIaregulacion ??
             record.posturaIA ??
             record['Postura IA/regulación'] ??
             undefined,
@@ -481,6 +485,7 @@ export const insertOrganizations = mutation({
           autoSummary:
             record.autoSummary ??
             record['Auto-summary'] ??
+            record.resumenAutoGenerado ??
             record.resumenAuto ??
             record['Resumen auto-generado'] ??
             undefined,

@@ -55,6 +55,11 @@ function buildHeaderMap(headers: string[]): Map<string, string | null> {
 // in the flexible `data` bag verbatim, so duplicating each key as both
 // `Período` and `periodo` would store every field twice — emit only the
 // camelCase normalization there.
+// Convex rejects field names containing non-ASCII characters, so the original
+// header is only forwarded when it's printable ASCII; the camelCase `norm`
+// always carries the value through.
+const ASCII_PRINTABLE_KEY = /^[\x20-\x7E]+$/
+
 function normalizeRow(
   row: Record<string, any>,
   headerMap: Map<string, string | null>,
@@ -63,7 +68,12 @@ function normalizeRow(
   const out: Record<string, any> = {}
   for (const [key, value] of Object.entries(row)) {
     const coerced = coerceCellValue(value)
-    if (preserveOriginal && !key.startsWith('_')) out[key] = coerced
+    if (
+      preserveOriginal &&
+      !key.startsWith('_') &&
+      ASCII_PRINTABLE_KEY.test(key)
+    )
+      out[key] = coerced
     // headerMap is built from `Object.keys(rows[0])`, so a column whose
     // first data row is blank is missing from the map — fall back to a live
     // `labelToKey` so submissions don't silently drop those answers when
