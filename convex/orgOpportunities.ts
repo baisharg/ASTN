@@ -1,7 +1,13 @@
 import { ConvexError, v } from 'convex/values'
+import type { Id } from './_generated/dataModel'
 import { internalQuery, mutation, query } from './_generated/server'
 import type { QueryCtx } from './_generated/server'
-import type { Id } from './_generated/dataModel'
+import {
+  BAISH_ORG_SLUG,
+  compareBaishCourseOpportunities,
+  toBaishCourseOpportunityContract,
+  type BaishCourseOpportunityContract,
+} from './lib/baishCourseOpportunities'
 import { getUserId } from './lib/auth'
 
 // Validate an opportunity cross-reference (redirect target / pre-fill source).
@@ -54,6 +60,24 @@ const opportunityReturnValidator = v.object({
   sourceOpportunityId: v.optional(v.id('orgOpportunities')),
   createdAt: v.number(),
   updatedAt: v.number(),
+})
+
+const baishCourseKeyValidator = v.union(
+  v.literal('technical_ai_safety_course'),
+  v.literal('technical_ai_safety_project'),
+  v.literal('frontier_ai_governance'),
+)
+
+const baishCourseOpportunityReturnValidator = v.object({
+  opportunityId: v.id('orgOpportunities'),
+  courseKey: baishCourseKeyValidator,
+  title: v.string(),
+  description: v.string(),
+  state: v.union(v.literal('eoi_open'), v.literal('applications_open')),
+  applyUrlPath: v.string(),
+  externalUrl: v.optional(v.string()),
+  deadline: v.optional(v.number()),
+  featured: v.boolean(),
 })
 
 // Get an opportunity by ID
@@ -149,6 +173,38 @@ export const listByOrg = query({
         q.eq('orgId', orgId).eq('status', 'active'),
       )
       .collect()
+  },
+})
+
+// Public: list BAISH course opportunities in the stable next-baish contract.
+export const listBaishCourses = query({
+  args: {},
+  returns: v.array(baishCourseOpportunityReturnValidator),
+  handler: async (ctx) => {
+    const baishOrg = await ctx.db
+      .query('organizations')
+      .withIndex('by_slug', (q) => q.eq('slug', BAISH_ORG_SLUG))
+      .unique()
+
+    if (!baishOrg) return []
+
+    const opportunities = await ctx.db
+      .query('orgOpportunities')
+      .withIndex('by_org_and_status', (q) =>
+        q.eq('orgId', baishOrg._id).eq('status', 'active'),
+      )
+      .collect()
+
+    const courses: Array<
+      BaishCourseOpportunityContract<Id<'orgOpportunities'>>
+    > = []
+    for (const opportunity of opportunities) {
+      const course = toBaishCourseOpportunityContract(opportunity)
+      if (course) courses.push(course)
+    }
+
+    courses.sort(compareBaishCourseOpportunities)
+    return courses
   },
 })
 
