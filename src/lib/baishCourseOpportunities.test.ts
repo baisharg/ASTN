@@ -2,6 +2,7 @@ import {
   compareBaishCourseOpportunities,
   inferBaishCourseKey,
   inferBaishCourseState,
+  selectBaishCourseOpportunities,
   toBaishCourseOpportunityContract,
   type BaishCourseOpportunitySource,
 } from '../../convex/lib/baishCourseOpportunities'
@@ -85,6 +86,12 @@ describe('BAISH course opportunities contract', () => {
         'Applications close soon.',
       ),
     ).toBe('applications_open')
+    expect(
+      inferBaishCourseState(
+        'Technical AI Safety Course EOI',
+        'EOI closed. Applications open now.',
+      ),
+    ).toBe('applications_open')
   })
 
   test('excludes inactive, non-course, and unrecognized opportunities', () => {
@@ -130,6 +137,43 @@ describe('BAISH course opportunities contract', () => {
       'technical_ai_safety_course',
       'technical_ai_safety_project',
       'frontier_ai_governance',
+    ])
+  })
+
+  test('deduplicates active opportunities by course key and prefers applications-open cohorts', () => {
+    const selected = selectBaishCourseOpportunities([
+      {
+        opportunityId: 'opp_eoi',
+        courseKey: 'technical_ai_safety_course',
+        title: 'Technical AI Safety Course EOI',
+        description: 'Register interest.',
+        state: 'eoi_open',
+        applyUrlPath: '/org/baish/apply/opp_eoi',
+        featured: true,
+      },
+      {
+        opportunityId: 'opp_apply',
+        courseKey: 'technical_ai_safety_course',
+        title: 'Technical AI Safety Course Applications',
+        description: 'Applications open.',
+        state: 'applications_open',
+        applyUrlPath: '/org/baish/apply/opp_apply',
+        featured: false,
+      },
+      {
+        opportunityId: 'opp_project',
+        courseKey: 'technical_ai_safety_project',
+        title: 'Technical AI Safety Project',
+        description: 'Register interest.',
+        state: 'eoi_open',
+        applyUrlPath: '/org/baish/apply/opp_project',
+        featured: false,
+      },
+    ])
+
+    expect(selected.map((course) => course.opportunityId)).toEqual([
+      'opp_apply',
+      'opp_project',
     ])
   })
 })

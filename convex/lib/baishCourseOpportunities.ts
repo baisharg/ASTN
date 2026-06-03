@@ -95,6 +95,15 @@ export function inferBaishCourseState(
   const normalizedText = normalizeForCourseMatching(`${title} ${description}`)
 
   if (
+    normalizedText.includes('applications open') ||
+    normalizedText.includes('applications close') ||
+    normalizedText.includes('apply now') ||
+    normalizedText.includes('apply to')
+  ) {
+    return 'applications_open'
+  }
+
+  if (
     normalizedText.includes('expression of interest') ||
     containsWord(normalizedText, 'eoi') ||
     normalizedText.includes('register interest')
@@ -150,4 +159,41 @@ export function compareBaishCourseOpportunities(
 
   if (byCourseKey !== 0) return byCourseKey
   return left.title.localeCompare(right.title)
+}
+
+function shouldReplaceBaishCourseOpportunity(
+  current: BaishCourseOpportunityContract,
+  candidate: BaishCourseOpportunityContract,
+): boolean {
+  if (current.state !== candidate.state) {
+    return candidate.state === 'applications_open'
+  }
+
+  if (current.featured !== candidate.featured) return candidate.featured
+
+  if (current.deadline !== candidate.deadline) {
+    if (current.deadline === undefined) return false
+    if (candidate.deadline === undefined) return true
+    return candidate.deadline < current.deadline
+  }
+
+  return candidate.title.localeCompare(current.title) < 0
+}
+
+export function selectBaishCourseOpportunities<OpportunityId extends string>(
+  courses: Array<BaishCourseOpportunityContract<OpportunityId>>,
+): Array<BaishCourseOpportunityContract<OpportunityId>> {
+  const byCourseKey = new Map<
+    BaishCourseKey,
+    BaishCourseOpportunityContract<OpportunityId>
+  >()
+
+  for (const course of courses) {
+    const current = byCourseKey.get(course.courseKey)
+    if (!current || shouldReplaceBaishCourseOpportunity(current, course)) {
+      byCourseKey.set(course.courseKey, course)
+    }
+  }
+
+  return Array.from(byCourseKey.values()).sort(compareBaishCourseOpportunities)
 }

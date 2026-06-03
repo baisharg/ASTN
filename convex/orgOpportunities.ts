@@ -4,7 +4,7 @@ import { internalQuery, mutation, query } from './_generated/server'
 import type { QueryCtx } from './_generated/server'
 import {
   BAISH_ORG_SLUG,
-  compareBaishCourseOpportunities,
+  selectBaishCourseOpportunities,
   toBaishCourseOpportunityContract,
   type BaishCourseOpportunityContract,
 } from './lib/baishCourseOpportunities'
@@ -193,7 +193,7 @@ export const listBaishCourses = query({
       .withIndex('by_org_and_status', (q) =>
         q.eq('orgId', baishOrg._id).eq('status', 'active'),
       )
-      .collect()
+      .take(50)
 
     const courses: Array<
       BaishCourseOpportunityContract<Id<'orgOpportunities'>>
@@ -203,8 +203,7 @@ export const listBaishCourses = query({
       if (course) courses.push(course)
     }
 
-    courses.sort(compareBaishCourseOpportunities)
-    return courses
+    return selectBaishCourseOpportunities(courses)
   },
 })
 
