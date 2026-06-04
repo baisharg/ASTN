@@ -426,7 +426,7 @@ function ApplyPage() {
             <h1 className="text-2xl font-display font-semibold text-foreground">
               {opportunity.title}
             </h1>
-            <p className="text-muted-foreground mt-1">
+            <p className="text-muted-foreground mt-1 whitespace-pre-line">
               {opportunity.description}
             </p>
             {opportunity.externalUrl && (
