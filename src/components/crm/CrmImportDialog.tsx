@@ -1,10 +1,18 @@
 import { useMutation } from 'convex/react'
 import { FileUp, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
 import { labelToKey } from '../../../convex/lib/formFields'
+import type { CrmCollection } from '../../../convex/lib/crmFields'
+import {
+  CRM_FIELDS,
+  DATA_TARGET,
+  NOTES_TARGET,
+  SKIP_TARGET,
+  suggestFieldKey,
+} from '../../../convex/lib/crmFields'
 import { Button } from '~/components/ui/button'
 import {
   Dialog,
@@ -16,15 +24,17 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '~/components/ui/select'
 
-type TargetCollection =
-  | 'contacts'
-  | 'organizations'
-  | 'opportunities'
-  | 'submissions'
+type TargetCollection = CrmCollection
+
+// `mapping[sheetName][excelHeader]` → a canonical field key, or one of the
+// special sentinels: NOTES_TARGET (append to `notes`), DATA_TARGET (keep in a
+// submission's flexible `data` bag), or SKIP_TARGET (drop the column).
+type ColumnMapping = Record<string, Record<string, string>>
 
 // XLSX may emit numbers, Dates, or booleans in cells whose target column is a
 // `v.string()`. Coerce non-null primitives to strings; pass through structured
@@ -38,50 +48,87 @@ function coerceCellValue(value: unknown): unknown {
   return value
 }
 
-// Per-sheet header→normalized-key map so the NFD/regex/split/map work in
-// `labelToKey` runs once per header instead of once per (header × row).
-function buildHeaderMap(headers: string[]): Map<string, string | null> {
-  const map = new Map<string, string | null>()
-  for (const key of headers) {
-    const norm = labelToKey(key)
-    map.set(key, norm && norm !== key ? norm : null)
+// Safe stringification for display / notes concatenation — coerced cells are
+// usually strings already, but a structured cell would otherwise stringify to
+// "[object Object]" (and trips the linter's no-base-to-string rule).
+function cellToText(value: unknown): string {
+  if (value == null) return ''
+  switch (typeof value) {
+    case 'string':
+      return value
+    case 'number':
+    case 'boolean':
+    case 'bigint':
+      return String(value)
+    case 'object':
+      return JSON.stringify(value)
+    default:
+      return ''
   }
-  return map
 }
 
-// For typed collections (contacts/orgs/opps), preserve the original Excel
-// header so backend `??` chains can match accented Spanish headers like
-// `record['Teléfono']` directly. For submissions the non-promoted keys land
-// in the flexible `data` bag verbatim, so duplicating each key as both
-// `Período` and `periodo` would store every field twice — emit only the
-// camelCase normalization there.
-// Convex rejects field names containing non-ASCII characters, so the original
-// header is only forwarded when it's printable ASCII; the camelCase `norm`
-// always carries the value through.
-const ASCII_PRINTABLE_KEY = /^[\x20-\x7E]+$/
-
-function normalizeRow(
+// Build the canonical record sent to the backend from a raw Excel row plus the
+// confirmed column mapping. Field-mapped columns write directly to their key;
+// NOTES_TARGET columns are concatenated (label-prefixed) into `notes`;
+// DATA_TARGET columns land in the submission `data` bag keyed by camelCase.
+function buildRecord(
   row: Record<string, any>,
-  headerMap: Map<string, string | null>,
-  preserveOriginal: boolean,
+  mapping: Record<string, string>,
+  collection: TargetCollection,
 ): Record<string, any> {
   const out: Record<string, any> = {}
-  for (const [key, value] of Object.entries(row)) {
-    const coerced = coerceCellValue(value)
-    if (
-      preserveOriginal &&
-      !key.startsWith('_') &&
-      ASCII_PRINTABLE_KEY.test(key)
-    )
-      out[key] = coerced
-    // headerMap is built from `Object.keys(rows[0])`, so a column whose
-    // first data row is blank is missing from the map — fall back to a live
-    // `labelToKey` so submissions don't silently drop those answers when
-    // `preserveOriginal` is false.
-    const norm = headerMap.get(key) ?? labelToKey(key)
-    if (norm && norm !== key) out[norm] = coerced
+  const notesParts: Array<string> = []
+  const data: Record<string, any> = {}
+
+  for (const [header, rawValue] of Object.entries(row)) {
+    const target = mapping[header] ?? SKIP_TARGET
+    if (target === SKIP_TARGET) continue
+
+    const value = coerceCellValue(rawValue)
+    if (value == null || value === '') continue
+
+    if (target === NOTES_TARGET) {
+      notesParts.push(`${header}: ${cellToText(value)}`)
+    } else if (target === DATA_TARGET) {
+      const key = labelToKey(header)
+      if (key) data[key] = value
+    } else if (target === 'notes') {
+      // A column explicitly mapped to the Notes field carries its value raw
+      // (no `Header:` prefix) — that's the user's real notes content.
+      notesParts.push(cellToText(value))
+    } else {
+      out[target] = value
+    }
+  }
+
+  if (collection === 'submissions') {
+    out.data = data
+  } else if (notesParts.length > 0) {
+    out.notes = notesParts.join('\n')
   }
   return out
+}
+
+// Initial per-column guess: known alias → that field; otherwise an orphan,
+// which defaults to the data bag for submissions or to Notes for typed
+// collections (so nothing is silently dropped — the user can still override
+// any column to Skip in the mapping step).
+function buildInitialMapping(
+  headers: Array<string>,
+  collection: TargetCollection,
+): Record<string, string> {
+  const fields = CRM_FIELDS[collection]
+  const orphanDefault =
+    collection === 'submissions' ? DATA_TARGET : NOTES_TARGET
+  const mapping: Record<string, string> = {}
+  for (const header of headers) {
+    if (header.startsWith('_')) {
+      mapping[header] = SKIP_TARGET
+      continue
+    }
+    mapping[header] = suggestFieldKey(header, fields) ?? orphanDefault
+  }
+  return mapping
 }
 
 interface CrmImportDialogProps {
@@ -92,15 +139,16 @@ interface CrmImportDialogProps {
 
 interface SheetPreview {
   name: string
-  headers: string[]
+  headers: Array<string>
   rowCount: number
-  rows: Record<string, any>[]
+  rows: Array<Record<string, any>>
 }
 
 type ImportStatus =
   | 'idle'
   | 'parsing'
   | 'previewing'
+  | 'mapping'
   | 'importing'
   | 'done'
   | 'error'
@@ -112,12 +160,13 @@ export function CrmImportDialog({
 }: CrmImportDialogProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [status, setStatus] = useState<ImportStatus>('idle')
-  const [sheets, setSheets] = useState<SheetPreview[]>([])
+  const [sheets, setSheets] = useState<Array<SheetPreview>>([])
   const [sheetMappings, setSheetMappings] = useState<
     Record<string, TargetCollection | ''>
   >({})
+  const [columnMappings, setColumnMappings] = useState<ColumnMapping>({})
   const [importResults, setImportResults] = useState<
-    { sheet: string; count: number; collection: string }[]
+    Array<{ sheet: string; count: number; collection: string }>
   >([])
   const [errorMsg, setErrorMsg] = useState('')
 
@@ -138,26 +187,27 @@ export function CrmImportDialog({
         const buffer = await file.arrayBuffer()
         const workbook = XLSX.read(buffer, { type: 'array' })
 
-        const parsedSheets: SheetPreview[] = workbook.SheetNames.map((name) => {
-          const sheet = workbook.Sheets[name]
-          // `raw: false` formats numeric/date cells the way Excel renders them,
-          // so phone-number and date columns arrive as strings instead of
-          // failing `v.string()` validation downstream. We deliberately do NOT
-          // pass `defval: ''` — blank cells must stay omitted so the backend's
-          // `record.phone ?? record.Phone ?? record.telefono ?? …` chains can
-          // fall through to populated language variants.
-          const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(sheet, {
-            raw: false,
-          })
-          const headers = rows.length > 0 ? Object.keys(rows[0]) : []
+        const parsedSheets: Array<SheetPreview> = workbook.SheetNames.map(
+          (name) => {
+            const sheet = workbook.Sheets[name]
+            // `raw: false` formats numeric/date cells the way Excel renders
+            // them, so phone-number and date columns arrive as strings instead
+            // of failing `v.string()` validation downstream.
+            const rows: Array<Record<string, any>> = XLSX.utils.sheet_to_json(
+              sheet,
+              { raw: false },
+            )
+            // Union of keys across all rows, not just row[0] — a column that's
+            // blank in the first row still needs a mapping entry, otherwise it
+            // would be silently dropped at import time.
+            const headerSet = new Set<string>()
+            for (const r of rows)
+              for (const k of Object.keys(r)) headerSet.add(k)
+            const headers = [...headerSet]
 
-          return {
-            name,
-            headers,
-            rowCount: rows.length,
-            rows,
-          }
-        })
+            return { name, headers, rowCount: rows.length, rows }
+          },
+        )
 
         setSheets(parsedSheets)
 
@@ -188,6 +238,7 @@ export function CrmImportDialog({
           else autoMappings[sheet.name] = ''
         }
         setSheetMappings(autoMappings)
+        setColumnMappings({})
         setStatus('previewing')
       } catch (err) {
         console.error('Parse error:', err)
@@ -200,10 +251,27 @@ export function CrmImportDialog({
     [],
   )
 
+  // Move from sheet→collection step to the per-column mapping step, seeding an
+  // auto-suggested column mapping for every mapped sheet.
+  const goToMapping = useCallback(() => {
+    const next: ColumnMapping = {}
+    for (const sheet of sheets) {
+      const collection = sheetMappings[sheet.name]
+      if (!collection) continue
+      next[sheet.name] = buildInitialMapping(sheet.headers, collection)
+    }
+    setColumnMappings(next)
+    setStatus('mapping')
+  }, [sheets, sheetMappings])
+
   const handleImport = useCallback(async () => {
     setStatus('importing')
     setErrorMsg('')
-    const results: { sheet: string; count: number; collection: string }[] = []
+    const results: Array<{
+      sheet: string
+      count: number
+      collection: string
+    }> = []
     // Track the in-flight sheet so a thrown error in a later batch can name
     // *which* sheet broke (without blaming the previously completed ones).
     let currentSheet: string | null = null
@@ -214,25 +282,21 @@ export function CrmImportDialog({
         const target = sheetMappings[sheet.name]
         if (!target) continue
 
+        const mapping = columnMappings[sheet.name] ?? {}
         // Convex mutations have a size limit, so batch in chunks of 50
         const BATCH_SIZE = 50
         let totalInserted = 0
         currentSheet = sheet.name
         partialCount = 0
-        const headerMap = buildHeaderMap(sheet.headers)
-        const preserveOriginal = target !== 'submissions'
 
         for (let i = 0; i < sheet.rows.length; i += BATCH_SIZE) {
           const batch = sheet.rows
             .slice(i, i + BATCH_SIZE)
-            .map((row) => normalizeRow(row, headerMap, preserveOriginal))
+            .map((row) => buildRecord(row, mapping, target))
 
           switch (target) {
             case 'contacts':
-              totalInserted += await insertContacts({
-                orgId,
-                records: batch,
-              })
+              totalInserted += await insertContacts({ orgId, records: batch })
               break
             case 'organizations':
               totalInserted += await insertOrganizations({
@@ -282,6 +346,7 @@ export function CrmImportDialog({
   }, [
     sheets,
     sheetMappings,
+    columnMappings,
     orgId,
     insertContacts,
     insertOrganizations,
@@ -293,6 +358,7 @@ export function CrmImportDialog({
     setStatus('idle')
     setSheets([])
     setSheetMappings({})
+    setColumnMappings({})
     setImportResults([])
     setErrorMsg('')
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -306,7 +372,21 @@ export function CrmImportDialog({
     if (!open) handleReset()
   }, [open, handleReset])
 
+  const setColumnTarget = useCallback(
+    (sheetName: string, header: string, target: string) => {
+      setColumnMappings((prev) => ({
+        ...prev,
+        [sheetName]: { ...prev[sheetName], [header]: target },
+      }))
+    },
+    [],
+  )
+
   const mappedSheetCount = Object.values(sheetMappings).filter(Boolean).length
+  const mappedSheets = useMemo(
+    () => sheets.filter((s) => sheetMappings[s.name]),
+    [sheets, sheetMappings],
+  )
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -353,7 +433,8 @@ export function CrmImportDialog({
         {status === 'previewing' && (
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Found {sheets.length} sheet(s). Map each one to a CRM collection:
+              Found {sheets.length} sheet(s). Map each one to a CRM collection —
+              you'll match the columns next:
             </p>
 
             {sheets.map((sheet) => (
@@ -398,7 +479,54 @@ export function CrmImportDialog({
               <Button variant="outline" onClick={handleReset}>
                 Cancel
               </Button>
-              <Button onClick={handleImport} disabled={mappedSheetCount === 0}>
+              <Button onClick={goToMapping} disabled={mappedSheetCount === 0}>
+                Next: map columns
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {status === 'mapping' && (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Match each column to a field. Auto-detected matches are pre-filled
+              — adjust anything that's off. Unmatched columns default to Notes /
+              data so nothing is dropped.
+            </p>
+
+            <div className="max-h-[55vh] overflow-y-auto space-y-5 pr-1">
+              {mappedSheets.map((sheet) => {
+                const collection = sheetMappings[sheet.name] as TargetCollection
+                const mapping = columnMappings[sheet.name] ?? {}
+                const fields = CRM_FIELDS[collection]
+                const sample = sheet.rows[0] ?? {}
+
+                const missingRequired = fields
+                  .filter((f) => f.required)
+                  .filter((f) => !Object.values(mapping).includes(f.key))
+
+                return (
+                  <ColumnMapSection
+                    key={sheet.name}
+                    sheet={sheet}
+                    collection={collection}
+                    mapping={mapping}
+                    fields={fields}
+                    sample={sample}
+                    missingRequired={missingRequired.map((f) => f.label)}
+                    onChange={(header, target) =>
+                      setColumnTarget(sheet.name, header, target)
+                    }
+                  />
+                )
+              })}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setStatus('previewing')}>
+                Back
+              </Button>
+              <Button onClick={handleImport}>
                 Import {mappedSheetCount} sheet(s)
               </Button>
             </div>
@@ -464,5 +592,88 @@ export function CrmImportDialog({
         )}
       </DialogContent>
     </Dialog>
+  )
+}
+
+interface ColumnMapSectionProps {
+  sheet: SheetPreview
+  collection: TargetCollection
+  mapping: Record<string, string>
+  fields: (typeof CRM_FIELDS)[TargetCollection]
+  sample: Record<string, any>
+  missingRequired: Array<string>
+  onChange: (header: string, target: string) => void
+}
+
+function ColumnMapSection({
+  sheet,
+  collection,
+  mapping,
+  fields,
+  sample,
+  missingRequired,
+  onChange,
+}: ColumnMapSectionProps) {
+  const orphanLabel =
+    collection === 'submissions' ? 'Keep in data' : 'Add to Notes'
+  const orphanValue = collection === 'submissions' ? DATA_TARGET : NOTES_TARGET
+
+  return (
+    <div className="border rounded-lg p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="font-medium text-sm">{sheet.name}</p>
+        <span className="text-xs text-muted-foreground capitalize">
+          → {collection}
+        </span>
+      </div>
+
+      {missingRequired.length > 0 && (
+        <p className="text-xs text-amber-600">
+          No column mapped to required field
+          {missingRequired.length > 1 ? 's' : ''}: {missingRequired.join(', ')}.
+          Those rows will use a placeholder.
+        </p>
+      )}
+
+      <div className="space-y-1.5">
+        {sheet.headers
+          .filter((h) => !h.startsWith('_'))
+          .map((header) => {
+            const sampleVal = coerceCellValue(sample[header])
+            return (
+              <div key={header} className="flex items-center gap-2">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm truncate" title={header}>
+                    {header}
+                  </p>
+                  {sampleVal != null && sampleVal !== '' && (
+                    <p className="text-xs text-muted-foreground truncate">
+                      e.g. {cellToText(sampleVal)}
+                    </p>
+                  )}
+                </div>
+                <Select
+                  value={mapping[header] ?? SKIP_TARGET}
+                  onValueChange={(v) => onChange(header, v)}
+                >
+                  <SelectTrigger className="w-[180px] shrink-0">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {fields.map((f) => (
+                      <SelectItem key={f.key} value={f.key}>
+                        {f.label}
+                      </SelectItem>
+                    ))}
+                    <SelectSeparator />
+                    <SelectItem value={orphanValue}>{orphanLabel}</SelectItem>
+                    <SelectItem value={SKIP_TARGET}>Skip</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )
+          })}
+      </div>
+    </div>
   )
 }

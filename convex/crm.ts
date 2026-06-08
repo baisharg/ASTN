@@ -294,127 +294,31 @@ export const insertContacts = mutation({
       args.records.map((record) =>
         ctx.db.insert('crmContacts', {
           orgId: args.orgId,
-          name:
-            record.name ??
-            record.Name ??
-            record.nombre ??
-            record.Nombre ??
-            'No name',
-          email: record.email ?? record.Email ?? undefined,
-          phone:
-            record.phone ??
-            record.Phone ??
-            record.telefono ??
-            record['Teléfono'] ??
-            undefined,
-          linkedin: record.linkedin ?? record.LinkedIn ?? undefined,
-          website:
-            record.website ??
-            record.Website ??
-            record.paginaWeb ??
-            record['Página web'] ??
-            undefined,
-          relationship:
-            record.relationship ??
-            record.Relationship ??
-            record.vinculo ??
-            record['Vínculo'] ??
-            undefined,
-          role:
-            record.role ?? record.Role ?? record.rol ?? record.Rol ?? undefined,
-          title:
-            record.title ??
-            record.Title ??
-            record.cargo ??
-            record.Cargo ??
-            undefined,
-          professionalField:
-            record.professionalField ??
-            record['Professional field'] ??
-            record.campoProfesional ??
-            record['Campo profesional'] ??
-            undefined,
-          careerStage:
-            record.careerStage ??
-            record['Career stage'] ??
-            record.etapaProfesional ??
-            record['Etapa profesional'] ??
-            undefined,
-          aiSafetyExperience:
-            record.aiSafetyExperience ??
-            record['AI Safety experience'] ??
-            record.experienciaEnAiSafety ??
-            record.experienciaAiSafety ??
-            record['Experiencia en AI Safety'] ??
-            undefined,
-          skills:
-            record.skills ??
-            record.Skills ??
-            record.habilidades ??
-            record.Habilidades ??
-            undefined,
-          interests:
-            record.interests ??
-            record.Interests ??
-            record.intereses ??
-            record.Intereses ??
-            undefined,
-          availability:
-            record.availability ??
-            record.Availability ??
-            record.disponibilidad ??
-            record.Disponibilidad ??
-            undefined,
-          location:
-            record.location ??
-            record.Location ??
-            record.ubicacion ??
-            record['Ubicación'] ??
-            undefined,
-          inBuenosAires: parseBoolish(
-            record.inBuenosAires ??
-              record['In Buenos Aires'] ??
-              record.enBuenosAires ??
-              record['En Buenos Aires'],
-          ),
-          contactSource:
-            record.contactSource ??
-            record['Contact source'] ??
-            record.fuenteDeContacto ??
-            record.fuenteContacto ??
-            record['Fuente de contacto'] ??
-            undefined,
-          contactPerson:
-            record.contactPerson ??
-            record['Contact person'] ??
-            record.personaDeContacto ??
-            record.personaContacto ??
-            record['Persona de contacto'] ??
-            undefined,
-          firstContact:
-            record.firstContact ??
-            record['First contact'] ??
-            record.primerContacto ??
-            record['Primer contacto'] ??
-            undefined,
-          associatedOrganizations:
-            record.associatedOrganizations ??
-            record['Associated organizations'] ??
-            record.organizacionesAsociadas ??
-            record['Organizaciones asociadas'] ??
-            undefined,
-          participatedIn:
-            record.participatedIn ??
-            record['Participated in'] ??
-            record.participoEn ??
-            record['Participó en'] ??
-            undefined,
-          notes:
-            record.notes ??
-            record.Notes ??
-            record.notas ??
-            record.Notas ??
-            undefined,
+          // Records arrive pre-mapped to canonical schema keys by the import
+          // dialog's column-mapping step (convex/lib/crmFields.ts), so each
+          // field is read directly — no header-alias guessing here.
+          name: record.name ?? 'No name',
+          email: record.email ?? undefined,
+          phone: record.phone ?? undefined,
+          linkedin: record.linkedin ?? undefined,
+          website: record.website ?? undefined,
+          relationship: record.relationship ?? undefined,
+          role: record.role ?? undefined,
+          title: record.title ?? undefined,
+          professionalField: record.professionalField ?? undefined,
+          careerStage: record.careerStage ?? undefined,
+          aiSafetyExperience: record.aiSafetyExperience ?? undefined,
+          skills: record.skills ?? undefined,
+          interests: record.interests ?? undefined,
+          availability: record.availability ?? undefined,
+          location: record.location ?? undefined,
+          inBuenosAires: parseBoolish(record.inBuenosAires),
+          contactSource: record.contactSource ?? undefined,
+          contactPerson: record.contactPerson ?? undefined,
+          firstContact: record.firstContact ?? undefined,
+          associatedOrganizations: record.associatedOrganizations ?? undefined,
+          participatedIn: record.participatedIn ?? undefined,
+          notes: record.notes ?? undefined,
           createdAt: now,
           updatedAt: now,
         }),
@@ -439,56 +343,14 @@ export const insertOrganizations = mutation({
       args.records.map((record) =>
         ctx.db.insert('crmOrganizations', {
           orgId: args.orgId,
-          name:
-            record.name ??
-            record.Name ??
-            record.nombre ??
-            record.Nombre ??
-            'No name',
-          description:
-            record.description ??
-            record.Description ??
-            record.descripcion ??
-            record['Descripción'] ??
-            undefined,
-          keyPeople:
-            record.keyPeople ??
-            record['Key people'] ??
-            record.personasClave ??
-            record['Personas clave'] ??
-            undefined,
-          type:
-            record.type ??
-            record.Type ??
-            record.tipo ??
-            record.Tipo ??
-            undefined,
-          aiStance:
-            record.aiStance ??
-            record['AI stance'] ??
-            record.posturaIaregulacion ??
-            record.posturaIA ??
-            record['Postura IA/regulación'] ??
-            undefined,
-          mainTopic:
-            record.mainTopic ??
-            record['Main topic'] ??
-            record.tematicaPrincipal ??
-            record['Temática principal'] ??
-            undefined,
-          notes:
-            record.notes ??
-            record.Notes ??
-            record.notas ??
-            record.Notas ??
-            undefined,
-          autoSummary:
-            record.autoSummary ??
-            record['Auto-summary'] ??
-            record.resumenAutoGenerado ??
-            record.resumenAuto ??
-            record['Resumen auto-generado'] ??
-            undefined,
+          name: record.name ?? 'No name',
+          description: record.description ?? undefined,
+          keyPeople: record.keyPeople ?? undefined,
+          type: record.type ?? undefined,
+          aiStance: record.aiStance ?? undefined,
+          mainTopic: record.mainTopic ?? undefined,
+          notes: record.notes ?? undefined,
+          autoSummary: record.autoSummary ?? undefined,
           createdAt: now,
           updatedAt: now,
         }),
@@ -513,54 +375,14 @@ export const insertOpportunities = mutation({
       args.records.map((record) =>
         ctx.db.insert('crmOpportunities', {
           orgId: args.orgId,
-          title:
-            record.title ??
-            record.Title ??
-            record.titulo ??
-            record['Título'] ??
-            'No title',
-          organization:
-            record.organization ??
-            record.Organization ??
-            record.organizacion ??
-            record['Organización'] ??
-            undefined,
-          location:
-            record.location ??
-            record.Location ??
-            record.ubicacion ??
-            record['Ubicación'] ??
-            undefined,
-          type:
-            record.type ??
-            record.Type ??
-            record.tipo ??
-            record.Tipo ??
-            undefined,
-          category:
-            record.category ??
-            record.Category ??
-            record.categoria ??
-            record['Categoría'] ??
-            undefined,
-          date:
-            record.date ??
-            record.Date ??
-            record.fecha ??
-            record.Fecha ??
-            undefined,
-          status:
-            record.status ??
-            record.Status ??
-            record.estado ??
-            record.Estado ??
-            undefined,
-          source:
-            record.source ??
-            record.Source ??
-            record.fuente ??
-            record.Fuente ??
-            undefined,
+          title: record.title ?? 'No title',
+          organization: record.organization ?? undefined,
+          location: record.location ?? undefined,
+          type: record.type ?? undefined,
+          category: record.category ?? undefined,
+          date: record.date ?? undefined,
+          status: record.status ?? undefined,
+          source: record.source ?? undefined,
           createdAt: now,
           updatedAt: now,
         }),
@@ -583,42 +405,21 @@ export const insertSubmissions = mutation({
     const now = Date.now()
     await Promise.all(
       args.records.map((record) => {
-        const {
-          Participant,
-          Period,
-          Source,
-          Participante,
-          Periodo,
-          Fuente,
-          participant,
-          period,
-          source,
-          participante,
-          periodo,
-          fuente,
-          // Strip system keys so re-imports or agent round-trips don't pollute
-          // the flexible `data` bag with orgId/_id/timestamps.
-          orgId: _orgId,
-          _id,
-          _creationTime,
-          createdAt: _createdAt,
-          updatedAt: _updatedAt,
-          ...rest
-        } = record
+        // The import dialog promotes participant/period/source to canonical
+        // keys and assembles the remaining columns into `record.data`. Filter
+        // the bag defensively so a stray non-ASCII / system key can't reject
+        // the insert (Convex requires field names start with a letter).
+        const rawData =
+          record.data && typeof record.data === 'object' ? record.data : {}
         const data: Record<string, any> = {}
-        for (const [k, val] of Object.entries(rest)) {
+        for (const [k, val] of Object.entries(rawData)) {
           if (SAFE_RECORD_KEY.test(k)) data[k] = val
         }
         return ctx.db.insert('crmSubmissions', {
           orgId: args.orgId,
-          participant:
-            participant ??
-            Participant ??
-            participante ??
-            Participante ??
-            undefined,
-          period: period ?? Period ?? periodo ?? Periodo ?? undefined,
-          source: source ?? Source ?? fuente ?? Fuente ?? undefined,
+          participant: record.participant ?? undefined,
+          period: record.period ?? undefined,
+          source: record.source ?? undefined,
           data,
           createdAt: now,
           updatedAt: now,
