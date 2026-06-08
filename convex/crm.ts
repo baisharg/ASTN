@@ -273,10 +273,44 @@ export const listSubmissions = query({
   },
 })
 
+// Export every CRM collection for an org in one round-trip. Used by the
+// dashboard's "Export" menu to build a CSV / multi-sheet .xlsx client-side.
+export const exportAll = query({
+  args: {
+    orgId: v.id('organizations'),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    await requireOrgAdmin(ctx, args.orgId)
+
+    const byOrg = (
+      table:
+        | 'crmContacts'
+        | 'crmOrganizations'
+        | 'crmOpportunities'
+        | 'crmSubmissions',
+    ) =>
+      ctx.db
+        .query(table)
+        .withIndex('by_orgId', (q: any) => q.eq('orgId', args.orgId))
+        .collect()
+
+    const [contacts, organizations, opportunities, submissions] =
+      await Promise.all([
+        byOrg('crmContacts'),
+        byOrg('crmOrganizations'),
+        byOrg('crmOpportunities'),
+        byOrg('crmSubmissions'),
+      ])
+
+    return { contacts, organizations, opportunities, submissions }
+  },
+})
+
 // ── Mutations: Insert (batch import) ──
-// Each insert accepts both the canonical camelCase key and a list of
-// Spanish-header fallbacks, so BAISH's existing Airtable exports continue to
-// import even though the schema is now English.
+// Records arrive pre-mapped to canonical schema keys by the import dialog's
+// column-mapping step (convex/lib/crmFields.ts); each insert reads those keys
+// directly.
 
 export const insertContacts = mutation({
   args: {

@@ -18,6 +18,7 @@ import { Spinner } from '~/components/ui/spinner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { CrmTable } from '~/components/crm/CrmTable'
 import { CrmImportDialog } from '~/components/crm/CrmImportDialog'
+import { CrmExportMenu } from '~/components/crm/CrmExportMenu'
 
 export const Route = createFileRoute('/org/$slug/admin/crm/')({
   component: CrmDashboard,
@@ -159,10 +160,17 @@ function CrmDashboard() {
                   opportunities, and form responses
                 </p>
               </div>
-              <Button onClick={() => setImportOpen(true)}>
-                <Upload className="size-4 mr-2" />
-                Import Excel/CSV
-              </Button>
+              <div className="flex items-center gap-2">
+                <CrmExportMenu
+                  orgId={org._id}
+                  orgSlug={slug}
+                  activeCollection={activeTab}
+                />
+                <Button onClick={() => setImportOpen(true)}>
+                  <Upload className="size-4 mr-2" />
+                  Import Excel/CSV
+                </Button>
+              </div>
             </div>
           </div>
 
