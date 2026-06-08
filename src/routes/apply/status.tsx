@@ -196,7 +196,7 @@ function ApplicationCard({ application }: { application: Application }) {
               <p className="text-sm text-destructive font-medium mb-1">
                 Rejection Reason
               </p>
-              <p className="text-sm text-muted-foreground">
+              <p className="text-sm text-muted-foreground whitespace-pre-line">
                 {application.rejectionReason}
               </p>
             </div>

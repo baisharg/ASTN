@@ -219,7 +219,7 @@ export function BookingCard({
         {/* Rejection reason */}
         {booking.status === 'rejected' && booking.rejectionReason && (
           <div className="mt-3 p-2 bg-destructive/10 rounded-md">
-            <p className="text-sm text-destructive">
+            <p className="text-sm text-destructive whitespace-pre-line">
               <span className="font-medium">Rejection reason:</span>{' '}
               {booking.rejectionReason}
             </p>

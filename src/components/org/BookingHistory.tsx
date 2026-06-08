@@ -307,7 +307,7 @@ function HistoryBookingCard({ booking }: HistoryBookingCardProps) {
 
         {/* Rejection reason */}
         {booking.status === 'rejected' && booking.rejectionReason && (
-          <div className="mt-3 p-2 bg-red-50 rounded text-sm text-red-800">
+          <div className="mt-3 p-2 bg-red-50 rounded text-sm text-red-800 whitespace-pre-line">
             <span className="font-medium">Rejection reason:</span>{' '}
             {booking.rejectionReason}
           </div>

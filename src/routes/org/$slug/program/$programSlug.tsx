@@ -272,7 +272,9 @@ function ProgramPage() {
               </div>
 
               {program.description && (
-                <p className="text-slate-600 mt-4">{program.description}</p>
+                <p className="text-slate-600 mt-4 whitespace-pre-line">
+                  {program.description}
+                </p>
               )}
             </Card>
 

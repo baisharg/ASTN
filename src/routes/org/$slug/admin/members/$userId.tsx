@@ -399,7 +399,9 @@ function ProfileDetailsCard({
           visible={visibleSections.careerGoals}
         >
           {profile.careerGoals ? (
-            <p className="text-sm text-slate-700">{profile.careerGoals}</p>
+            <p className="text-sm text-slate-700 whitespace-pre-line">
+              {profile.careerGoals}
+            </p>
           ) : profile.seeking && profile.seeking.length > 0 ? (
             <div className="space-y-2">
               <div className="text-sm text-slate-600">Seeking:</div>
