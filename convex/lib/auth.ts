@@ -79,7 +79,20 @@ export async function requireOrgAdmin(
 ): Promise<string> {
   const userId = await getUserId(ctx)
   if (!userId) throw new Error('Not authenticated')
+  return requireOrgAdminFor(ctx, userId, orgId)
+}
 
+/**
+ * Require an explicitly-passed user to be an admin of a specific organization.
+ * For callers authenticated outside Convex's `ctx.auth` — e.g. the MCP
+ * endpoint verifies a Clerk OAuth JWT itself and passes the subject down to
+ * internal functions, which must re-check admin membership on every call.
+ */
+export async function requireOrgAdminFor(
+  ctx: QueryCtx | MutationCtx,
+  userId: string,
+  orgId: Id<'organizations'>,
+): Promise<string> {
   const membership = await ctx.db
     .query('orgMemberships')
     .withIndex('by_user_and_org', (q) =>

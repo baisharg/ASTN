@@ -67,6 +67,7 @@
     "date-fns-tz": "^3.2.0",
     "dompurify": "^3.3.1",
     "exa-js": "^2.4.0",
+    "jose": "^6.2.3",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.562.0",
     "marked": "^17.0.3",

@@ -34,7 +34,7 @@ type Counts = {
   opportunities: number
   submissions: number
 }
-async function liveCount(
+export async function liveCount(
   ctx: { db: MutationCtx['db'] } | { db: any },
   orgId: Id<'organizations'>,
 ): Promise<Counts> {
@@ -70,7 +70,7 @@ async function liveCount(
 // two concurrent inserts may both see no existing row and each create one;
 // the next call collapses any duplicates into the first. Math.max(0, …)
 // guards against drift causing negative counts on delete-after-backfill-loss.
-async function bumpCount(
+export async function bumpCount(
   ctx: MutationCtx,
   orgId: Id<'organizations'>,
   field: CrmCountField,
@@ -114,7 +114,7 @@ async function bumpCount(
 // Patching `orgId` via updateX mutations would move a record into another
 // org and escape the source-org admin check — so the update mutations accept
 // only fields in these allowlists.
-const CONTACT_EDITABLE = new Set<string>([
+export const CONTACT_EDITABLE = new Set<string>([
   'name',
   'email',
   'phone',
@@ -138,7 +138,7 @@ const CONTACT_EDITABLE = new Set<string>([
   'participatedIn',
   'notes',
 ])
-const ORGANIZATION_EDITABLE = new Set<string>([
+export const ORGANIZATION_EDITABLE = new Set<string>([
   'name',
   'description',
   'keyPeople',
@@ -148,7 +148,7 @@ const ORGANIZATION_EDITABLE = new Set<string>([
   'notes',
   'autoSummary',
 ])
-const OPPORTUNITY_EDITABLE = new Set<string>([
+export const OPPORTUNITY_EDITABLE = new Set<string>([
   'title',
   'organization',
   'location',
@@ -163,11 +163,11 @@ const OPPORTUNITY_EDITABLE = new Set<string>([
 // `_creationTime`), so record keys must start with a letter. Excel headers
 // like `Período` or `Postura IA/regulación` would otherwise reject the
 // insert; SheetJS auto-headers like `__EMPTY` would too.
-const SAFE_RECORD_KEY = /^[a-zA-Z][a-zA-Z0-9_]*$/
+export const SAFE_RECORD_KEY = /^[a-zA-Z][a-zA-Z0-9_]*$/
 
 // Unrecognised cells return `undefined` rather than `false` so a blank import
 // doesn't silently flip a flag to a meaningful negative value.
-function parseBoolish(value: unknown): boolean | undefined {
+export function parseBoolish(value: unknown): boolean | undefined {
   if (typeof value === 'boolean') return value
   if (typeof value === 'number') {
     if (value === 1) return true
