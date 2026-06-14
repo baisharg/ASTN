@@ -20,7 +20,7 @@ import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
 import type { FormField } from '../../../convex/lib/formFields'
 import { FormFieldsEditor } from '~/components/opportunities/FormFieldsEditor'
-import { SurveyPreviewDialog } from '~/components/surveys/SurveyPreviewDialog'
+import { SurveyPreview } from '~/components/surveys/SurveyPreview'
 import { SurveyResultsTable } from '~/components/surveys/SurveyResultsTable'
 import {
   AlertDialog,
@@ -58,9 +58,17 @@ const ALL_STATUSES = [
 interface SurveyTabProps {
   opportunityId: Id<'orgOpportunities'>
   slug: string
+  /** Passed to the respondent-faithful preview header. */
+  orgName?: string
+  opportunityTitle?: string
 }
 
-export function SurveyTab({ opportunityId, slug }: SurveyTabProps) {
+export function SurveyTab({
+  opportunityId,
+  slug,
+  orgName,
+  opportunityTitle,
+}: SurveyTabProps) {
   const survey = useQuery(api.feedbackSurveys.getSurveyByOpportunity, {
     opportunityId,
   })
@@ -74,7 +82,13 @@ export function SurveyTab({ opportunityId, slug }: SurveyTabProps) {
   }
 
   if (!survey) {
-    return <CreateSurveyForm opportunityId={opportunityId} />
+    return (
+      <CreateSurveyForm
+        opportunityId={opportunityId}
+        orgName={orgName}
+        opportunityTitle={opportunityTitle}
+      />
+    )
   }
 
   return (
@@ -82,14 +96,20 @@ export function SurveyTab({ opportunityId, slug }: SurveyTabProps) {
       surveyId={survey._id}
       slug={slug}
       accessToken={survey.accessToken}
+      orgName={orgName}
+      opportunityTitle={opportunityTitle}
     />
   )
 }
 
 function CreateSurveyForm({
   opportunityId,
+  orgName,
+  opportunityTitle,
 }: {
   opportunityId: Id<'orgOpportunities'>
+  orgName?: string
+  opportunityTitle?: string
 }) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -211,16 +231,18 @@ function CreateSurveyForm({
       </Card>
 
       <div className="flex justify-end gap-2">
-        <SurveyPreviewDialog
+        <SurveyPreview
           title={title}
           description={description}
+          orgName={orgName}
+          opportunityTitle={opportunityTitle}
           formFields={formFields}
         >
           <Button variant="outline" size="lg">
             <Eye className="size-4 mr-2" />
             Preview
           </Button>
-        </SurveyPreviewDialog>
+        </SurveyPreview>
         <Button onClick={handleCreate} disabled={isCreating} size="lg">
           {isCreating ? (
             <>
@@ -243,10 +265,14 @@ function SurveyManagement({
   surveyId,
   slug,
   accessToken,
+  orgName,
+  opportunityTitle,
 }: {
   surveyId: Id<'feedbackSurveys'>
   slug: string
   accessToken: string
+  orgName?: string
+  opportunityTitle?: string
 }) {
   const results = useQuery(api.feedbackSurveys.getSurveyResults, { surveyId })
   const updateSurvey = useMutation(api.feedbackSurveys.updateSurvey)
@@ -511,9 +537,11 @@ function SurveyManagement({
 
           <div className="flex flex-wrap gap-2">
             {!isDraft && (
-              <SurveyPreviewDialog
+              <SurveyPreview
                 title={survey.title}
                 description={survey.description}
+                orgName={orgName}
+                opportunityTitle={opportunityTitle}
                 formFields={survey.formFields as Array<FormField>}
               />
             )}
@@ -595,9 +623,11 @@ function SurveyManagement({
             <div className="flex items-center justify-between">
               <CardTitle className="text-base">Survey Questions</CardTitle>
               <div className="flex gap-2">
-                <SurveyPreviewDialog
+                <SurveyPreview
                   title={survey.title}
                   description={survey.description}
+                  orgName={orgName}
+                  opportunityTitle={opportunityTitle}
                   formFields={
                     isEditingFields
                       ? editFormFields

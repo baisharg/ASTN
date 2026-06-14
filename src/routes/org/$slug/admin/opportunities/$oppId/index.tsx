@@ -625,7 +625,12 @@ function OpportunityEditPage() {
             </TabsContent>
 
             <TabsContent value="feedback" className="mt-6">
-              <SurveyTab opportunityId={opportunity._id} slug={slug} />
+              <SurveyTab
+                opportunityId={opportunity._id}
+                slug={slug}
+                orgName={org?.name}
+                opportunityTitle={opportunity.title}
+              />
             </TabsContent>
           </Tabs>
         </div>
