@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   ClipboardCopy,
   Edit3,
+  Eye,
   Loader2,
   Lock,
   LockOpen,
@@ -19,6 +20,7 @@ import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
 import type { FormField } from '../../../convex/lib/formFields'
 import { FormFieldsEditor } from '~/components/opportunities/FormFieldsEditor'
+import { SurveyPreviewDialog } from '~/components/surveys/SurveyPreviewDialog'
 import { SurveyResultsTable } from '~/components/surveys/SurveyResultsTable'
 import {
   AlertDialog,
@@ -208,7 +210,17 @@ function CreateSurveyForm({
         </CardContent>
       </Card>
 
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <SurveyPreviewDialog
+          title={title}
+          description={description}
+          formFields={formFields}
+        >
+          <Button variant="outline" size="lg">
+            <Eye className="size-4 mr-2" />
+            Preview
+          </Button>
+        </SurveyPreviewDialog>
         <Button onClick={handleCreate} disabled={isCreating} size="lg">
           {isCreating ? (
             <>
@@ -499,6 +511,14 @@ function SurveyManagement({
 
           <div className="flex flex-wrap gap-2">
             {!isDraft && (
+              <SurveyPreviewDialog
+                title={survey.title}
+                description={survey.description}
+                formFields={survey.formFields as Array<FormField>}
+              />
+            )}
+
+            {!isDraft && (
               <Button variant="outline" size="sm" onClick={copyLink}>
                 <ClipboardCopy className="size-4 mr-1" />
                 Copy Link
@@ -574,19 +594,30 @@ function SurveyManagement({
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="text-base">Survey Questions</CardTitle>
-              {!isEditingFields && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setEditFormFields(survey.formFields as Array<FormField>)
-                    setIsEditingFields(true)
-                  }}
-                >
-                  <Edit3 className="size-4 mr-1" />
-                  Edit Questions
-                </Button>
-              )}
+              <div className="flex gap-2">
+                <SurveyPreviewDialog
+                  title={survey.title}
+                  description={survey.description}
+                  formFields={
+                    isEditingFields
+                      ? editFormFields
+                      : (survey.formFields as Array<FormField>)
+                  }
+                />
+                {!isEditingFields && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setEditFormFields(survey.formFields as Array<FormField>)
+                      setIsEditingFields(true)
+                    }}
+                  >
+                    <Edit3 className="size-4 mr-1" />
+                    Edit Questions
+                  </Button>
+                )}
+              </div>
             </div>
           </CardHeader>
           <CardContent>
