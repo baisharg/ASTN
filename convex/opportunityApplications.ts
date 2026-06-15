@@ -1,6 +1,7 @@
 import { ConvexError, v } from 'convex/values'
 import { action, internalQuery, mutation, query } from './_generated/server'
 import { getUserId } from './lib/auth'
+import { resolveApplicantContact } from './lib/applicantContact'
 import { resolveApplicantDisplayName } from './lib/applicantName'
 import { rateLimiter } from './lib/rateLimiter'
 import { internal } from './_generated/api'
@@ -505,6 +506,79 @@ export const listByOpportunity = query({
         q.eq('opportunityId', opportunityId),
       )
       .collect()
+  },
+})
+
+// Admin: list applicants of an opportunity with their resolved display name and
+// email. Mirrors the 3-tier email resolution used when actually sending
+// (guestEmail → profile.email → legacy users table), so the recipient table in
+// the email composer matches who will really receive the broadcast. `email` is
+// '' when no address can be resolved for the applicant.
+export const listRecipientsByOpportunity = query({
+  args: { opportunityId: v.id('orgOpportunities') },
+  returns: v.array(
+    v.object({
+      applicationId: v.id('opportunityApplications'),
+      status: v.union(
+        v.literal('submitted'),
+        v.literal('under_review'),
+        v.literal('accepted'),
+        v.literal('rejected'),
+        v.literal('waitlisted'),
+      ),
+      name: v.string(),
+      email: v.string(),
+    }),
+  ),
+  handler: async (ctx, { opportunityId }) => {
+    const userId = await getUserId(ctx)
+    if (!userId) throw new ConvexError('Not authenticated')
+
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) throw new ConvexError('Opportunity not found')
+
+    const membership = await ctx.db
+      .query('orgMemberships')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .filter((q) => q.eq(q.field('orgId'), opportunity.orgId))
+      .first()
+
+    if (!membership || membership.role !== 'admin') {
+      throw new ConvexError('Admin access required')
+    }
+
+    const formFields = opportunity.formFields as Array<FormField> | undefined
+
+    const apps = await ctx.db
+      .query('opportunityApplications')
+      .withIndex('by_opportunity_and_status', (q) =>
+        q.eq('opportunityId', opportunityId),
+      )
+      .collect()
+
+    const recipients: Array<{
+      applicationId: Id<'opportunityApplications'>
+      status: (typeof apps)[number]['status']
+      name: string
+      email: string
+    }> = []
+
+    for (const app of apps) {
+      const { name, email } = await resolveApplicantContact(
+        ctx,
+        app,
+        formFields,
+        'Unknown applicant',
+      )
+      recipients.push({
+        applicationId: app._id,
+        status: app.status,
+        name,
+        email,
+      })
+    }
+
+    return recipients
   },
 })
 
