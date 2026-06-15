@@ -9,6 +9,7 @@ import {
   type BaishCourseOpportunityContract,
 } from './lib/baishCourseOpportunities'
 import { getUserId } from './lib/auth'
+import { sanitizeFormFieldKeys } from './lib/formFields'
 
 // Validate an opportunity cross-reference (redirect target / pre-fill source).
 // Discriminates "caller didn't pass this field" (`set: false` — skip the
@@ -313,6 +314,9 @@ export const create = mutation({
     const now = Date.now()
     return await ctx.db.insert('orgOpportunities', {
       ...args,
+      ...(args.formFields !== undefined && {
+        formFields: sanitizeFormFieldKeys(args.formFields),
+      }),
       createdAt: now,
       updatedAt: now,
     })
@@ -388,6 +392,8 @@ export const update = mutation({
       ...updates,
       updatedAt: Date.now(),
     }
+    if (updates.formFields !== undefined)
+      patch.formFields = sanitizeFormFieldKeys(updates.formFields)
     if (redirect.set) patch.redirectOpportunityId = redirect.value
     if (source.set) patch.sourceOpportunityId = source.value
 

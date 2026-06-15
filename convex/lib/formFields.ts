@@ -67,9 +67,69 @@ export const PROFILE_PREFILL_KEYS = [
 
 // --- Helpers ---
 
+/**
+ * Convex object field names must be identifier-like. Form-field `key`s become
+ * keys of the stored `responses` object, so an invalid key (e.g. one with `?`,
+ * spaces, or a leading digit) makes the response write throw an opaque
+ * "Server Error". Keep this in sync with Convex's field-name rules.
+ */
+const VALID_FIELD_KEY = /^[a-zA-Z][a-zA-Z0-9_]*$/
+
+/** Coerce an arbitrary string into a valid Convex field key. Idempotent. */
+export function sanitizeFieldKey(key: string): string {
+  let k = (key ?? '').replace(/[^a-zA-Z0-9_]/g, '')
+  if (!k || !/^[a-zA-Z]/.test(k)) k = `field_${k}`
+  return k
+}
+
+/**
+ * Return `fields` with every `key` coerced to a valid Convex field name,
+ * deduping any collisions introduced by sanitization. Already-valid keys are
+ * left untouched (so this is safe to run on existing data). Non-array input is
+ * returned unchanged. Apply at every site that persists form fields.
+ */
+export function sanitizeFormFieldKeys<T>(fields: T): T {
+  if (!Array.isArray(fields)) return fields
+  const used = new Set<string>()
+  const out = fields.map((f) => {
+    if (!f || typeof f !== 'object' || typeof f.key !== 'string') return f
+    let key = sanitizeFieldKey(f.key)
+    if (used.has(key)) {
+      let i = 2
+      while (used.has(`${key}_${i}`)) i++
+      key = `${key}_${i}`
+    }
+    used.add(key)
+    return key === f.key ? f : { ...f, key }
+  })
+  return out as T
+}
+
+/**
+ * Map the keys of a `responses` object through the same sanitization, so a
+ * client that loaded a stale (pre-sanitization) form still saves under the
+ * canonical key. First write wins on collision.
+ */
+export function sanitizeResponseKeys(
+  responses: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(responses)) {
+    if (VALID_FIELD_KEY.test(k)) {
+      if (!(k in out)) out[k] = v
+      continue
+    }
+    const sk = sanitizeFieldKey(k)
+    if (!(sk in out)) out[sk] = v
+  }
+  return out
+}
+
 /** Return only fields that collect input (excludes section_header) */
 export function getInputFields(fields: Array<FormField>): Array<FormField> {
-  return fields.filter((f) => f.kind !== 'section_header')
+  return (Array.isArray(fields) ? fields : []).filter(
+    (f) => f && f.kind !== 'section_header',
+  )
 }
 
 /** Return fields marked as required */

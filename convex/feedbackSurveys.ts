@@ -1,8 +1,17 @@
 import { ConvexError, v } from 'convex/values'
-import { internalQuery, mutation, query } from './_generated/server'
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from './_generated/server'
 import { getUserId, requireOrgAdmin } from './lib/auth'
 import { resolveApplicantDisplayNameFromApplication } from './lib/applicantName'
-import { validateResponses } from './lib/formFields'
+import {
+  sanitizeFormFieldKeys,
+  sanitizeResponseKeys,
+  validateResponses,
+} from './lib/formFields'
 import type { Id } from './_generated/dataModel'
 import type { FormField } from './lib/formFields'
 
@@ -76,7 +85,7 @@ export const createSurvey = mutation({
       createdBy: userId,
       title: args.title,
       description: args.description,
-      formFields: args.formFields,
+      formFields: sanitizeFormFieldKeys(args.formFields),
       accessToken: crypto.randomUUID(),
       status: 'draft',
       applicantStatuses: statusFilter.length > 0 ? statusFilter : undefined,
@@ -141,7 +150,8 @@ export const updateSurvey = mutation({
     if (updates.title !== undefined) patch.title = updates.title
     if (updates.description !== undefined)
       patch.description = updates.description
-    if (updates.formFields !== undefined) patch.formFields = updates.formFields
+    if (updates.formFields !== undefined)
+      patch.formFields = sanitizeFormFieldKeys(updates.formFields)
     if (updates.status !== undefined) patch.status = updates.status
 
     await ctx.db.patch('feedbackSurveys', surveyId, patch)
@@ -554,9 +564,20 @@ export const submitResponse = mutation({
     if (survey.status !== 'open')
       throw new ConvexError('Survey is no longer accepting responses')
 
+    // Coerce response keys to valid Convex field names. Protects against an
+    // invalid form-field key (e.g. one containing `?`) crashing the write with
+    // an opaque "Server Error", and against clients that loaded a stale form.
+    const safeResponses = sanitizeResponseKeys(
+      responses && typeof responses === 'object' && !Array.isArray(responses)
+        ? (responses as Record<string, unknown>)
+        : {},
+    )
+
     // Validate responses against form fields
-    const formFields = survey.formFields as Array<FormField>
-    const errors = validateResponses(formFields, responses)
+    const formFields = Array.isArray(survey.formFields)
+      ? (survey.formFields as Array<FormField>)
+      : []
+    const errors = validateResponses(formFields, safeResponses)
     if (errors.length > 0)
       throw new ConvexError(`Validation errors: ${errors.join(', ')}`)
 
@@ -570,24 +591,89 @@ export const submitResponse = mutation({
       )
       .first()
 
-    if (existing) {
-      await ctx.db.patch('surveyResponses', existing._id, {
+    try {
+      if (existing) {
+        await ctx.db.patch('surveyResponses', existing._id, {
+          respondentName: respondent.respondentName,
+          responses: safeResponses,
+          updatedAt: now,
+        })
+        return existing._id
+      }
+
+      return await ctx.db.insert('surveyResponses', {
+        surveyId,
+        respondentId,
         respondentName: respondent.respondentName,
-        responses,
+        responses: safeResponses,
+        userId: respondent.userId,
+        submittedAt: now,
         updatedAt: now,
       })
-      return existing._id
+    } catch (err) {
+      // Surface a legible error to the respondent instead of a raw server error.
+      throw new ConvexError(
+        `Could not save your response: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+    }
+  },
+})
+
+// ─── One-off migration: repair invalid form-field keys ───
+
+/**
+ * Scan every survey and coerce invalid form-field `key`s (e.g. ones containing
+ * `?`) to valid Convex field names. Fixes surveys whose responses could never
+ * be saved because the bad key crashed the write. Idempotent and safe to re-run
+ * (already-valid keys are untouched). No stored response used an invalid key
+ * (they always failed to insert), so no response-data migration is needed.
+ */
+export const fixInvalidSurveyFieldKeys = internalMutation({
+  args: {},
+  returns: v.array(
+    v.object({
+      surveyId: v.id('feedbackSurveys'),
+      title: v.string(),
+      remapped: v.array(v.object({ from: v.string(), to: v.string() })),
+    }),
+  ),
+  handler: async (ctx) => {
+    const surveys = await ctx.db.query('feedbackSurveys').collect()
+    const report: Array<{
+      surveyId: Id<'feedbackSurveys'>
+      title: string
+      remapped: Array<{ from: string; to: string }>
+    }> = []
+
+    for (const s of surveys) {
+      if (!Array.isArray(s.formFields)) continue
+      const sanitized = sanitizeFormFieldKeys(s.formFields) as Array<{
+        key?: unknown
+      }>
+      const remapped: Array<{ from: string; to: string }> = []
+      for (let i = 0; i < s.formFields.length; i++) {
+        const oldKey = (s.formFields[i] as { key?: unknown })?.key
+        const newKey = sanitized[i]?.key
+        if (
+          typeof oldKey === 'string' &&
+          typeof newKey === 'string' &&
+          oldKey !== newKey
+        ) {
+          remapped.push({ from: oldKey, to: newKey })
+        }
+      }
+      if (remapped.length > 0) {
+        await ctx.db.patch('feedbackSurveys', s._id, {
+          formFields: sanitized,
+          updatedAt: Date.now(),
+        })
+        report.push({ surveyId: s._id, title: s.title, remapped })
+      }
     }
 
-    return await ctx.db.insert('surveyResponses', {
-      surveyId,
-      respondentId,
-      respondentName: respondent.respondentName,
-      responses,
-      userId: respondent.userId,
-      submittedAt: now,
-      updatedAt: now,
-    })
+    return report
   },
 })
 
