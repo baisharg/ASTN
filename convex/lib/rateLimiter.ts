@@ -28,9 +28,6 @@ export const rateLimiter = new RateLimiter(components.rateLimiter, {
 
   // --- MEDIUM: Admin actions ---
   adminBroadcast: { kind: 'fixed window', rate: 5, period: HOUR },
-  // Test emails go only to the admin themselves, so the limit is looser
-  // and kept separate from adminBroadcast to avoid eating the broadcast budget.
-  adminTestEmail: { kind: 'fixed window', rate: 20, period: HOUR },
 
   // --- HIGH: Authenticated write endpoints ---
   orgApplicationSubmit: { kind: 'fixed window', rate: 5, period: HOUR },

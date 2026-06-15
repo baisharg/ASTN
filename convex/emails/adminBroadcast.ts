@@ -1,7 +1,7 @@
 import { v } from 'convex/values'
+import { getLegacyUserEmail } from '../lib/auth'
 import { internalMutation, internalQuery } from '../_generated/server'
-import { resolveApplicantContact } from '../lib/applicantContact'
-import type { FormField } from '../lib/formFields'
+import { resolveApplicantDisplayName } from '../lib/applicantName'
 import { rateLimiter } from '../lib/rateLimiter'
 import { resend } from './send'
 
@@ -16,15 +16,13 @@ export const applicationStatusValidator = v.union(
 )
 
 /**
- * Get deduplicated recipients for a broadcast email, for an explicit set of
- * selected applications. Resolves email + name via the shared resolver so the
- * send matches exactly what the recipient table shows. Applications that don't
- * belong to the opportunity, or that have no resolvable email, are dropped.
+ * Get deduplicated recipients for a broadcast email.
+ * Resolves email + name from guest or authenticated applicant data.
  */
 export const getRecipientsForEmail = internalQuery({
   args: {
     opportunityId: v.id('orgOpportunities'),
-    applicationIds: v.array(v.id('opportunityApplications')),
+    statuses: v.array(applicationStatusValidator),
   },
   returns: v.array(
     v.object({
@@ -33,28 +31,53 @@ export const getRecipientsForEmail = internalQuery({
       applicationId: v.id('opportunityApplications'),
     }),
   ),
-  handler: async (ctx, { opportunityId, applicationIds }) => {
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    const formFields = opportunity?.formFields as Array<FormField> | undefined
+  handler: async (ctx, { opportunityId, statuses }) => {
+    const allApps = []
+    for (const status of statuses) {
+      const apps = await ctx.db
+        .query('opportunityApplications')
+        .withIndex('by_opportunity_and_status', (q) =>
+          q.eq('opportunityId', opportunityId).eq('status', status),
+        )
+        .collect()
+      allApps.push(...apps)
+    }
 
     const seen = new Set<string>()
     const recipients: Array<{
       email: string
       name: string
-      applicationId: (typeof applicationIds)[number]
+      applicationId: (typeof allApps)[number]['_id']
     }> = []
 
-    for (const applicationId of applicationIds) {
-      const app = await ctx.db.get('opportunityApplications', applicationId)
-      // Safety: ignore ids that aren't applications of this opportunity.
-      if (!app || app.opportunityId !== opportunityId) continue
+    for (const app of allApps) {
+      let email: string | null = null
+      let name = 'there'
 
-      const { name, email } = await resolveApplicantContact(
-        ctx,
-        app,
-        formFields,
-        'there',
-      )
+      if (app.guestEmail) {
+        email = app.guestEmail
+        name = resolveApplicantDisplayName({
+          responses: app.responses,
+          fallback: 'there',
+        })
+      } else if (app.userId) {
+        const profile = await ctx.db
+          .query('profiles')
+          .withIndex('by_user', (q) => q.eq('userId', app.userId!))
+          .first()
+
+        name = resolveApplicantDisplayName({
+          profileName: profile?.name,
+          responses: app.responses,
+          fallback: 'there',
+        })
+
+        if (profile?.email) {
+          email = profile.email
+        } else {
+          email = await getLegacyUserEmail(ctx, app.userId)
+        }
+      }
 
       if (email && !seen.has(email.toLowerCase())) {
         seen.add(email.toLowerCase())
@@ -98,21 +121,6 @@ export const checkBroadcastRateLimit = internalMutation({
   returns: v.null(),
   handler: async (ctx, { userId }) => {
     await rateLimiter.limit(ctx, 'adminBroadcast', {
-      key: userId,
-      throws: true,
-    })
-    return null
-  },
-})
-
-/**
- * Check rate limit for test emails (sent only to the admin themselves).
- */
-export const checkTestEmailRateLimit = internalMutation({
-  args: { userId: v.string() },
-  returns: v.null(),
-  handler: async (ctx, { userId }) => {
-    await rateLimiter.limit(ctx, 'adminTestEmail', {
       key: userId,
       throws: true,
     })

@@ -4,10 +4,11 @@ import { v } from 'convex/values'
 import { marked } from 'marked'
 import { api, internal } from '../_generated/api'
 import { action } from '../_generated/server'
+import { applicationStatusValidator } from './adminBroadcast'
 import { renderAdminBroadcast } from './templates'
 
 /**
- * Send a broadcast email to a selected set of applicants of an opportunity.
+ * Send a broadcast email to applicants of an opportunity.
  * Public action called from the admin email compose page.
  *
  * If `pollId` and `pollLinkBase` are provided, `{{poll_link}}` in the markdown body
@@ -16,7 +17,7 @@ import { renderAdminBroadcast } from './templates'
 export const sendBroadcastToApplicants = action({
   args: {
     opportunityId: v.id('orgOpportunities'),
-    applicationIds: v.array(v.id('opportunityApplications')),
+    statuses: v.array(applicationStatusValidator),
     subject: v.string(),
     markdownBody: v.string(),
     pollId: v.optional(v.id('availabilityPolls')),
@@ -32,7 +33,7 @@ export const sendBroadcastToApplicants = action({
     ctx,
     {
       opportunityId,
-      applicationIds,
+      statuses,
       subject,
       markdownBody,
       pollId,
@@ -62,7 +63,7 @@ export const sendBroadcastToApplicants = action({
       applicationId: string
     }> = await ctx.runQuery(
       internal.emails.adminBroadcast.getRecipientsForEmail,
-      { opportunityId, applicationIds },
+      { opportunityId, statuses },
     )
 
     if (recipients.length === 0) {
@@ -152,76 +153,5 @@ export const sendBroadcastToApplicants = action({
     }
 
     return { sent, failed }
-  },
-})
-
-/**
- * Send a single test email to the admin so they can preview the real rendered
- * email in their inbox before broadcasting.
- *
- * Template variables (`{{poll_link}}` / `{{survey_link}}`) are replaced with the
- * illustrative example links computed on the client — no real respondent tokens
- * are generated. The subject is prefixed with `[TEST]` and the greeting uses a
- * sample name.
- */
-export const sendTestEmail = action({
-  args: {
-    opportunityId: v.id('orgOpportunities'),
-    subject: v.string(),
-    markdownBody: v.string(),
-    toEmail: v.string(),
-    pollExampleLink: v.optional(v.string()),
-    surveyExampleLink: v.optional(v.string()),
-  },
-  returns: v.null(),
-  handler: async (
-    ctx,
-    {
-      opportunityId,
-      subject,
-      markdownBody,
-      toEmail,
-      pollExampleLink,
-      surveyExampleLink,
-    },
-  ) => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new Error('Not authenticated')
-
-    const isAdmin: boolean = await ctx.runQuery(
-      internal.emails.adminBroadcast.verifyOrgAdmin,
-      { userId: identity.subject, opportunityId },
-    )
-    if (!isAdmin) throw new Error('Admin access required')
-
-    const email = toEmail.trim()
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      throw new Error('Invalid email address')
-    }
-
-    await ctx.runMutation(
-      internal.emails.adminBroadcast.checkTestEmailRateLimit,
-      { userId: identity.subject },
-    )
-
-    let md = markdownBody
-    if (pollExampleLink) md = md.replaceAll('{{poll_link}}', pollExampleLink)
-    if (surveyExampleLink) {
-      md = md.replaceAll('{{survey_link}}', surveyExampleLink)
-    }
-
-    const bodyHtml: string = await marked(md, { breaks: true, gfm: true })
-    const html: string = await renderAdminBroadcast({
-      userName: 'Jane Doe',
-      bodyHtml,
-    })
-
-    await ctx.runMutation(internal.emails.adminBroadcast.sendSingleEmail, {
-      to: email,
-      subject: `[TEST] ${subject.trim() || '(no subject)'}`,
-      html,
-    })
-
-    return null
   },
 })
