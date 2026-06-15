@@ -3,14 +3,15 @@ import { useAction, useQuery } from 'convex/react'
 import DOMPurify from 'dompurify'
 import {
   Building2,
-  ChevronDown,
-  ChevronUp,
+  Check,
   Loader2,
   Mail,
+  Minus,
   Send,
   Shield,
 } from 'lucide-react'
 import { marked } from 'marked'
+import { Checkbox as CheckboxPrimitive } from 'radix-ui'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../../convex/_generated/api'
@@ -34,6 +35,7 @@ import { Input } from '~/components/ui/input'
 import { Label } from '~/components/ui/label'
 import { Spinner } from '~/components/ui/spinner'
 import { Textarea } from '~/components/ui/textarea'
+import { cn } from '~/lib/utils'
 
 export const Route = createFileRoute(
   '/org/$slug/admin/opportunities/$oppId/email',
@@ -82,6 +84,47 @@ function substituteExampleLinks(
     out = out.replaceAll('{{survey_link}}', exampleLinkPill(surveyExampleLink))
   }
   return out
+}
+
+type Recipient = {
+  id: Id<'opportunityApplications'>
+  name: string
+  email: string
+  status: ApplicationStatus
+}
+
+/** Tri-state checkbox for category headers (checked / indeterminate / unchecked). */
+function GroupCheckbox({
+  state,
+  onToggle,
+  disabled,
+}: {
+  state: boolean | 'indeterminate'
+  onToggle: () => void
+  disabled?: boolean
+}) {
+  return (
+    <CheckboxPrimitive.Root
+      checked={state}
+      onCheckedChange={onToggle}
+      disabled={disabled}
+      className={cn(
+        'peer border-input size-4 shrink-0 rounded-[4px] border shadow-xs outline-none transition-shadow',
+        'focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]',
+        'data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground data-[state=checked]:border-primary',
+        'data-[state=indeterminate]:bg-primary data-[state=indeterminate]:text-primary-foreground data-[state=indeterminate]:border-primary',
+        'disabled:cursor-not-allowed disabled:opacity-50',
+      )}
+    >
+      <CheckboxPrimitive.Indicator className="grid place-content-center text-current">
+        {state === 'indeterminate' ? (
+          <Minus className="size-3.5" />
+        ) : (
+          <Check className="size-3.5" />
+        )}
+      </CheckboxPrimitive.Indicator>
+    </CheckboxPrimitive.Root>
+  )
 }
 
 function RecipientList({
@@ -147,14 +190,13 @@ function EmailComposePage() {
   // Current admin's profile — used to prefill the test-email address
   const myProfile = useQuery(api.profiles.getOrCreateProfile, {})
 
-  const [selectedStatuses, setSelectedStatuses] = useState<
-    Set<ApplicationStatus>
-  >(new Set(ALL_STATUSES.map((s) => s.value)))
+  // Source of truth = the set of individually selected applications. Category
+  // checkboxes are derived from this set and select/deselect their members.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
   const [isSending, setIsSending] = useState(false)
   const [hasSent, setHasSent] = useState(false)
-  const [showRecipientList, setShowRecipientList] = useState(true)
   const [testEmail, setTestEmail] = useState('')
   const [testEmailTouched, setTestEmailTouched] = useState(false)
   const [isSendingTest, setIsSendingTest] = useState(false)
@@ -186,33 +228,86 @@ function EmailComposePage() {
       ? `${origin}/org/${slug}/survey/example`
       : null
 
-  const filteredRecipients = useMemo(() => {
+  // All applicants (every status), deduped by email — matching the real send's
+  // dedupe; applicants with no email are kept individually so each stays visible.
+  const allRecipients = useMemo<Array<Recipient>>(() => {
     if (!recipientContacts) return []
     const seen = new Set<string>()
-    const recipients: Array<{
-      id: string
-      name: string
-      email: string
-    }> = []
+    const out: Array<Recipient> = []
     for (const r of recipientContacts) {
-      if (!selectedStatuses.has(r.status as ApplicationStatus)) continue
-      // Dedupe by email (matching the real send); applicants with no email are
-      // kept individually so each one stays visible.
       const key = r.email ? r.email.toLowerCase() : r.applicationId
       if (seen.has(key)) continue
       seen.add(key)
-      recipients.push({
+      out.push({
         id: r.applicationId,
         name: r.name,
         email: r.email,
+        status: r.status as ApplicationStatus,
       })
     }
-    return recipients
-  }, [recipientContacts, selectedStatuses])
+    return out
+  }, [recipientContacts])
 
-  const recipientCount = filteredRecipients.length
-  const missingEmailCount = filteredRecipients.filter((r) => !r.email).length
-  const emailableCount = recipientCount - missingEmailCount
+  // Grouped by status, in canonical order, hiding empty groups.
+  const groups = useMemo(
+    () =>
+      ALL_STATUSES.map((s) => ({
+        status: s,
+        members: allRecipients.filter((r) => r.status === s.value),
+      })).filter((g) => g.members.length > 0),
+    [allRecipients],
+  )
+
+  const selectedRecipients = useMemo(
+    () => allRecipients.filter((r) => r.email && selectedIds.has(r.id)),
+    [allRecipients, selectedIds],
+  )
+  const selectedCount = selectedRecipients.length
+  const totalEmailable = allRecipients.filter((r) => r.email).length
+  const missingEmailTotal = allRecipients.length - totalEmailable
+
+  const toggleRecipient = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // Tri-state for a category, computed over its emailable members only.
+  const groupCheckState = (
+    members: Array<Recipient>,
+  ): boolean | 'indeterminate' => {
+    const emailable = members.filter((m) => m.email)
+    if (emailable.length === 0) return false
+    const selected = emailable.filter((m) => selectedIds.has(m.id)).length
+    if (selected === 0) return false
+    if (selected === emailable.length) return true
+    return 'indeterminate'
+  }
+
+  // Clicking a category: select all its emailable members, or deselect them all
+  // if they're already all selected.
+  const toggleGroup = (members: Array<Recipient>) => {
+    const emailable = members.filter((m) => m.email)
+    const allSelected =
+      emailable.length > 0 && emailable.every((m) => selectedIds.has(m.id))
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      for (const m of emailable) {
+        if (allSelected) next.delete(m.id)
+        else next.add(m.id)
+      }
+      return next
+    })
+  }
+
+  const selectAll = () =>
+    setSelectedIds(
+      new Set(allRecipients.filter((r) => r.email).map((r) => r.id)),
+    )
+  const clearAll = () => setSelectedIds(new Set())
 
   const previewHtml = useMemo(() => {
     if (!body.trim()) return ''
@@ -226,25 +321,13 @@ function EmailComposePage() {
     )
   }, [body, pollExampleLink, surveyExampleLink])
 
-  const toggleStatus = (status: ApplicationStatus) => {
-    setSelectedStatuses((prev) => {
-      const next = new Set(prev)
-      if (next.has(status)) {
-        next.delete(status)
-      } else {
-        next.add(status)
-      }
-      return next
-    })
-  }
-
   const handleSend = async () => {
     if (!opportunity || isSending || hasSent) return
     setIsSending(true)
     try {
       const result = await sendBroadcast({
         opportunityId: opportunity._id,
-        statuses: Array.from(selectedStatuses),
+        applicationIds: selectedRecipients.map((r) => r.id),
         subject: subject.trim(),
         markdownBody: body,
         pollId: activePoll?._id,
@@ -374,10 +457,9 @@ function EmailComposePage() {
   }
 
   const canSend =
-    subject.trim() &&
-    body.trim() &&
-    selectedStatuses.size > 0 &&
-    emailableCount > 0 &&
+    Boolean(subject.trim()) &&
+    Boolean(body.trim()) &&
+    selectedCount > 0 &&
     !hasSent
 
   return (
@@ -418,57 +500,110 @@ function EmailComposePage() {
             Email Applicants
           </h1>
 
-          {/* Status filter */}
+          {/* Recipients */}
           <Card className="mb-6">
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
               <CardTitle className="text-base">Recipients</CardTitle>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={selectAll}
+                  disabled={
+                    totalEmailable === 0 || selectedCount === totalEmailable
+                  }
+                >
+                  Select all
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearAll}
+                  disabled={selectedCount === 0}
+                >
+                  Clear all
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
-              <div className="flex flex-wrap gap-4">
-                {ALL_STATUSES.map((s) => (
-                  <label
-                    key={s.value}
-                    className="flex items-center gap-2 cursor-pointer"
-                  >
-                    <Checkbox
-                      checked={selectedStatuses.has(s.value)}
-                      onCheckedChange={() => toggleStatus(s.value)}
-                    />
-                    <span className="text-sm">{s.label}</span>
-                  </label>
-                ))}
-              </div>
               {recipientContacts === undefined ? (
-                <p className="text-sm text-muted-foreground mt-3">
+                <p className="text-sm text-muted-foreground">
                   Loading recipients...
+                </p>
+              ) : allRecipients.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No applicants yet.
                 </p>
               ) : (
                 <>
-                  <button
-                    type="button"
-                    onClick={() => setShowRecipientList((v) => !v)}
-                    className="flex items-center gap-1 text-sm text-muted-foreground mt-3 hover:text-foreground transition-colors"
-                  >
-                    {recipientCount} recipient
-                    {recipientCount !== 1 ? 's' : ''} selected
-                    {recipientCount > 0 &&
-                      (showRecipientList ? (
-                        <ChevronUp className="size-3.5" />
-                      ) : (
-                        <ChevronDown className="size-3.5" />
-                      ))}
-                  </button>
-                  {missingEmailCount > 0 && (
-                    <p className="text-sm text-amber-600 mt-1">
-                      {missingEmailCount} selected applicant
-                      {missingEmailCount !== 1 ? 's have' : ' has'} no email on
-                      file and won&apos;t receive this message.
+                  <p className="text-sm text-muted-foreground mb-3">
+                    {selectedCount} recipient{selectedCount !== 1 ? 's' : ''}{' '}
+                    selected
+                    {totalEmailable > 0 && ` of ${totalEmailable} emailable`}.
+                    Toggle a category to select everyone in it, or pick
+                    individuals.
+                  </p>
+                  <div className="max-h-80 overflow-y-auto rounded-md border divide-y">
+                    {groups.map((g) => {
+                      const emailableInGroup = g.members.filter(
+                        (m) => m.email,
+                      ).length
+                      return (
+                        <div key={g.status.value}>
+                          <label className="flex items-center gap-2 px-3 py-2 bg-muted cursor-pointer sticky top-0 z-10">
+                            <GroupCheckbox
+                              state={groupCheckState(g.members)}
+                              onToggle={() => toggleGroup(g.members)}
+                              disabled={emailableInGroup === 0}
+                            />
+                            <span className="text-sm font-semibold">
+                              {g.status.label}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              ({g.members.length})
+                            </span>
+                          </label>
+                          {g.members.map((m) => (
+                            <label
+                              key={m.id}
+                              className={cn(
+                                'flex items-center justify-between gap-2 px-3 py-1.5 pl-9',
+                                m.email
+                                  ? 'cursor-pointer hover:bg-muted/30'
+                                  : 'cursor-not-allowed',
+                              )}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <Checkbox
+                                  checked={selectedIds.has(m.id)}
+                                  onCheckedChange={() => toggleRecipient(m.id)}
+                                  disabled={!m.email}
+                                />
+                                <span className="text-sm font-medium truncate">
+                                  {m.name}
+                                </span>
+                              </div>
+                              {m.email ? (
+                                <span className="text-muted-foreground text-xs shrink-0">
+                                  {m.email}
+                                </span>
+                              ) : (
+                                <span className="text-amber-600 text-xs shrink-0 font-medium">
+                                  No email on file
+                                </span>
+                              )}
+                            </label>
+                          ))}
+                        </div>
+                      )
+                    })}
+                  </div>
+                  {missingEmailTotal > 0 && (
+                    <p className="text-sm text-amber-600 mt-2">
+                      {missingEmailTotal} applicant
+                      {missingEmailTotal !== 1 ? 's have' : ' has'} no email on
+                      file and can&apos;t be selected.
                     </p>
-                  )}
-                  {showRecipientList && (
-                    <div className="mt-2">
-                      <RecipientList recipients={filteredRecipients} />
-                    </div>
                   )}
                 </>
               )}
@@ -653,8 +788,8 @@ function EmailComposePage() {
                     ) : (
                       <>
                         <Mail className="size-4 mr-2" />
-                        Send to {emailableCount} applicant
-                        {emailableCount !== 1 ? 's' : ''}
+                        Send to {selectedCount} applicant
+                        {selectedCount !== 1 ? 's' : ''}
                       </>
                     )}
                   </Button>
@@ -666,16 +801,12 @@ function EmailComposePage() {
                       <div className="space-y-3">
                         <p>
                           This will send &quot;{subject}&quot; to{' '}
-                          {emailableCount} applicant
-                          {emailableCount !== 1 ? 's' : ''}. This action cannot
+                          {selectedCount} selected applicant
+                          {selectedCount !== 1 ? 's' : ''}. This action cannot
                           be undone.
-                          {missingEmailCount > 0 &&
-                            ` ${missingEmailCount} selected applicant${
-                              missingEmailCount !== 1 ? 's' : ''
-                            } with no email on file will be skipped.`}
                         </p>
                         <RecipientList
-                          recipients={filteredRecipients}
+                          recipients={selectedRecipients}
                           maxHeight="max-h-40"
                         />
                       </div>

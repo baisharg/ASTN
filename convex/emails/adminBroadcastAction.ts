@@ -4,11 +4,10 @@ import { v } from 'convex/values'
 import { marked } from 'marked'
 import { api, internal } from '../_generated/api'
 import { action } from '../_generated/server'
-import { applicationStatusValidator } from './adminBroadcast'
 import { renderAdminBroadcast } from './templates'
 
 /**
- * Send a broadcast email to applicants of an opportunity.
+ * Send a broadcast email to a selected set of applicants of an opportunity.
  * Public action called from the admin email compose page.
  *
  * If `pollId` and `pollLinkBase` are provided, `{{poll_link}}` in the markdown body
@@ -17,7 +16,7 @@ import { renderAdminBroadcast } from './templates'
 export const sendBroadcastToApplicants = action({
   args: {
     opportunityId: v.id('orgOpportunities'),
-    statuses: v.array(applicationStatusValidator),
+    applicationIds: v.array(v.id('opportunityApplications')),
     subject: v.string(),
     markdownBody: v.string(),
     pollId: v.optional(v.id('availabilityPolls')),
@@ -33,7 +32,7 @@ export const sendBroadcastToApplicants = action({
     ctx,
     {
       opportunityId,
-      statuses,
+      applicationIds,
       subject,
       markdownBody,
       pollId,
@@ -63,7 +62,7 @@ export const sendBroadcastToApplicants = action({
       applicationId: string
     }> = await ctx.runQuery(
       internal.emails.adminBroadcast.getRecipientsForEmail,
-      { opportunityId, statuses },
+      { opportunityId, applicationIds },
     )
 
     if (recipients.length === 0) {

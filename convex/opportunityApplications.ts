@@ -1,7 +1,7 @@
 import { ConvexError, v } from 'convex/values'
 import { action, internalQuery, mutation, query } from './_generated/server'
-import { getLegacyUserEmail, getUserId } from './lib/auth'
-import { extractApplicantEmailFromResponses } from './lib/applicantEmail'
+import { getUserId } from './lib/auth'
+import { resolveApplicantContact } from './lib/applicantContact'
 import { resolveApplicantDisplayName } from './lib/applicantName'
 import { rateLimiter } from './lib/rateLimiter'
 import { internal } from './_generated/api'
@@ -564,42 +564,12 @@ export const listRecipientsByOpportunity = query({
     }> = []
 
     for (const app of apps) {
-      let email = ''
-      let name: string
-
-      if (app.guestEmail) {
-        email = app.guestEmail
-        name = resolveApplicantDisplayName({
-          responses: app.responses,
-          fallback: app.guestEmail,
-        })
-      } else if (app.userId) {
-        const profile = await ctx.db
-          .query('profiles')
-          .withIndex('by_user', (q) => q.eq('userId', app.userId!))
-          .first()
-
-        name = resolveApplicantDisplayName({
-          profileName: profile?.name,
-          responses: app.responses,
-          fallback: 'Unknown applicant',
-        })
-
-        email =
-          profile?.email ?? (await getLegacyUserEmail(ctx, app.userId)) ?? ''
-      } else {
-        name = resolveApplicantDisplayName({
-          responses: app.responses,
-          fallback: 'Unknown applicant',
-        })
-      }
-
-      // Final fallback: the email the applicant typed into the form itself.
-      if (!email) {
-        email =
-          extractApplicantEmailFromResponses(app.responses, formFields) ?? ''
-      }
-
+      const { name, email } = await resolveApplicantContact(
+        ctx,
+        app,
+        formFields,
+        'Unknown applicant',
+      )
       recipients.push({
         applicationId: app._id,
         status: app.status,

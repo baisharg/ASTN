@@ -1,8 +1,6 @@
 import { v } from 'convex/values'
-import { getLegacyUserEmail } from '../lib/auth'
 import { internalMutation, internalQuery } from '../_generated/server'
-import { extractApplicantEmailFromResponses } from '../lib/applicantEmail'
-import { resolveApplicantDisplayName } from '../lib/applicantName'
+import { resolveApplicantContact } from '../lib/applicantContact'
 import type { FormField } from '../lib/formFields'
 import { rateLimiter } from '../lib/rateLimiter'
 import { resend } from './send'
@@ -18,13 +16,15 @@ export const applicationStatusValidator = v.union(
 )
 
 /**
- * Get deduplicated recipients for a broadcast email.
- * Resolves email + name from guest or authenticated applicant data.
+ * Get deduplicated recipients for a broadcast email, for an explicit set of
+ * selected applications. Resolves email + name via the shared resolver so the
+ * send matches exactly what the recipient table shows. Applications that don't
+ * belong to the opportunity, or that have no resolvable email, are dropped.
  */
 export const getRecipientsForEmail = internalQuery({
   args: {
     opportunityId: v.id('orgOpportunities'),
-    statuses: v.array(applicationStatusValidator),
+    applicationIds: v.array(v.id('opportunityApplications')),
   },
   returns: v.array(
     v.object({
@@ -33,66 +33,28 @@ export const getRecipientsForEmail = internalQuery({
       applicationId: v.id('opportunityApplications'),
     }),
   ),
-  handler: async (ctx, { opportunityId, statuses }) => {
+  handler: async (ctx, { opportunityId, applicationIds }) => {
     const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
     const formFields = opportunity?.formFields as Array<FormField> | undefined
-
-    const allApps = []
-    for (const status of statuses) {
-      const apps = await ctx.db
-        .query('opportunityApplications')
-        .withIndex('by_opportunity_and_status', (q) =>
-          q.eq('opportunityId', opportunityId).eq('status', status),
-        )
-        .collect()
-      allApps.push(...apps)
-    }
 
     const seen = new Set<string>()
     const recipients: Array<{
       email: string
       name: string
-      applicationId: (typeof allApps)[number]['_id']
+      applicationId: (typeof applicationIds)[number]
     }> = []
 
-    for (const app of allApps) {
-      let email: string | null = null
-      let name = 'there'
+    for (const applicationId of applicationIds) {
+      const app = await ctx.db.get('opportunityApplications', applicationId)
+      // Safety: ignore ids that aren't applications of this opportunity.
+      if (!app || app.opportunityId !== opportunityId) continue
 
-      if (app.guestEmail) {
-        email = app.guestEmail
-        name = resolveApplicantDisplayName({
-          responses: app.responses,
-          fallback: 'there',
-        })
-      } else if (app.userId) {
-        const profile = await ctx.db
-          .query('profiles')
-          .withIndex('by_user', (q) => q.eq('userId', app.userId!))
-          .first()
-
-        name = resolveApplicantDisplayName({
-          profileName: profile?.name,
-          responses: app.responses,
-          fallback: 'there',
-        })
-
-        if (profile?.email) {
-          email = profile.email
-        } else {
-          email = await getLegacyUserEmail(ctx, app.userId)
-        }
-      } else {
-        name = resolveApplicantDisplayName({
-          responses: app.responses,
-          fallback: 'there',
-        })
-      }
-
-      // Final fallback: the email the applicant typed into the form itself.
-      if (!email) {
-        email = extractApplicantEmailFromResponses(app.responses, formFields)
-      }
+      const { name, email } = await resolveApplicantContact(
+        ctx,
+        app,
+        formFields,
+        'there',
+      )
 
       if (email && !seen.has(email.toLowerCase())) {
         seen.add(email.toLowerCase())
