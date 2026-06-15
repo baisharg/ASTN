@@ -496,7 +496,7 @@ function SurveyManagement({
                   <div>
                     <CardTitle>{survey.title}</CardTitle>
                     {survey.description && (
-                      <CardDescription className="mt-1">
+                      <CardDescription className="mt-1 whitespace-pre-line">
                         {survey.description}
                       </CardDescription>
                     )}

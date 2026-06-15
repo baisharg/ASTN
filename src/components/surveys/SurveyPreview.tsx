@@ -89,7 +89,7 @@ export function SurveyPreview({
                     </p>
                   )}
                   {description ? (
-                    <DialogPrimitive.Description className="text-sm text-muted-foreground mt-2">
+                    <DialogPrimitive.Description className="text-sm text-muted-foreground mt-2 whitespace-pre-line">
                       {description}
                     </DialogPrimitive.Description>
                   ) : (

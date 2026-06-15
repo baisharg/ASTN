@@ -150,7 +150,7 @@ function RespondentSurveyPage() {
               {opportunity.title}
             </p>
             {survey.description && (
-              <p className="text-sm text-muted-foreground mt-2">
+              <p className="text-sm text-muted-foreground mt-2 whitespace-pre-line">
                 {survey.description}
               </p>
             )}

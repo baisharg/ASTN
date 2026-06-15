@@ -64,7 +64,7 @@ export function DynamicFormRenderer({
             <CardHeader>
               <CardTitle>{section.title}</CardTitle>
               {section.description && (
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-muted-foreground whitespace-pre-line">
                   {section.description}
                 </p>
               )}
@@ -108,7 +108,9 @@ function FieldRenderer({
             {field.required && <span className="text-red-500"> *</span>}
           </Label>
           {field.description && (
-            <p className="text-xs text-muted-foreground">{field.description}</p>
+            <p className="text-xs text-muted-foreground whitespace-pre-line">
+              {field.description}
+            </p>
           )}
           <Input
             id={field.key}
@@ -134,7 +136,9 @@ function FieldRenderer({
             {field.required && <span className="text-red-500"> *</span>}
           </Label>
           {field.description && (
-            <p className="text-xs text-muted-foreground">{field.description}</p>
+            <p className="text-xs text-muted-foreground whitespace-pre-line">
+              {field.description}
+            </p>
           )}
           <Textarea
             id={field.key}
@@ -160,7 +164,9 @@ function FieldRenderer({
             {field.required && <span className="text-red-500"> *</span>}
           </Label>
           {field.description && (
-            <p className="text-xs text-muted-foreground">{field.description}</p>
+            <p className="text-xs text-muted-foreground whitespace-pre-line">
+              {field.description}
+            </p>
           )}
           <Select
             value={
@@ -197,7 +203,7 @@ function FieldRenderer({
           {field.description && (
             <div className="space-y-1">
               <Label>{field.label}</Label>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground whitespace-pre-line">
                 {field.description}
               </p>
             </div>
@@ -223,7 +229,9 @@ function FieldRenderer({
             {field.required && <span className="text-red-500"> *</span>}
           </Label>
           {field.description && (
-            <p className="text-xs text-muted-foreground">{field.description}</p>
+            <p className="text-xs text-muted-foreground whitespace-pre-line">
+              {field.description}
+            </p>
           )}
           <div className="flex gap-4">
             {(field.options ?? ['Yes', 'No']).map((opt) => (
@@ -266,7 +274,9 @@ function FieldRenderer({
             {field.required && <span className="text-red-500"> *</span>}
           </Label>
           {field.description && (
-            <p className="text-xs text-muted-foreground">{field.description}</p>
+            <p className="text-xs text-muted-foreground whitespace-pre-line">
+              {field.description}
+            </p>
           )}
           <div className="flex gap-2">
             {labels.map((label, i) => {
@@ -301,7 +311,9 @@ function FieldRenderer({
             {field.required && <span className="text-red-500"> *</span>}
           </Label>
           {field.description && (
-            <p className="text-xs text-muted-foreground">{field.description}</p>
+            <p className="text-xs text-muted-foreground whitespace-pre-line">
+              {field.description}
+            </p>
           )}
           <div className="flex gap-1">
             {Array.from({ length: 11 }, (_, i) => {
@@ -365,7 +377,9 @@ function MultiSelectField({
         {field.required && <span className="text-red-500"> *</span>}
       </Label>
       {field.description && (
-        <p className="text-xs text-muted-foreground">{field.description}</p>
+        <p className="text-xs text-muted-foreground whitespace-pre-line">
+          {field.description}
+        </p>
       )}
       <div className="flex flex-wrap gap-2">
         {(field.options ?? []).map((opt) => {
