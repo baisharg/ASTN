@@ -1,7 +1,9 @@
 import { v } from 'convex/values'
 import { getLegacyUserEmail } from '../lib/auth'
 import { internalMutation, internalQuery } from '../_generated/server'
+import { extractApplicantEmailFromResponses } from '../lib/applicantEmail'
 import { resolveApplicantDisplayName } from '../lib/applicantName'
+import type { FormField } from '../lib/formFields'
 import { rateLimiter } from '../lib/rateLimiter'
 import { resend } from './send'
 
@@ -32,6 +34,9 @@ export const getRecipientsForEmail = internalQuery({
     }),
   ),
   handler: async (ctx, { opportunityId, statuses }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    const formFields = opportunity?.formFields as Array<FormField> | undefined
+
     const allApps = []
     for (const status of statuses) {
       const apps = await ctx.db
@@ -77,6 +82,16 @@ export const getRecipientsForEmail = internalQuery({
         } else {
           email = await getLegacyUserEmail(ctx, app.userId)
         }
+      } else {
+        name = resolveApplicantDisplayName({
+          responses: app.responses,
+          fallback: 'there',
+        })
+      }
+
+      // Final fallback: the email the applicant typed into the form itself.
+      if (!email) {
+        email = extractApplicantEmailFromResponses(app.responses, formFields)
       }
 
       if (email && !seen.has(email.toLowerCase())) {

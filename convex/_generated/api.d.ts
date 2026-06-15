@@ -97,6 +97,7 @@ import type * as feedbackSurveys from "../feedbackSurveys.js";
 import type * as guestBookings from "../guestBookings.js";
 import type * as guestProfiles from "../guestProfiles.js";
 import type * as http from "../http.js";
+import type * as lib_applicantEmail from "../lib/applicantEmail.js";
 import type * as lib_applicantName from "../lib/applicantName.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_baishCourseOpportunities from "../lib/baishCourseOpportunities.js";
@@ -253,6 +254,7 @@ declare const fullApi: ApiFromModules<{
   guestBookings: typeof guestBookings;
   guestProfiles: typeof guestProfiles;
   http: typeof http;
+  "lib/applicantEmail": typeof lib_applicantEmail;
   "lib/applicantName": typeof lib_applicantName;
   "lib/auth": typeof lib_auth;
   "lib/baishCourseOpportunities": typeof lib_baishCourseOpportunities;

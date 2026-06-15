@@ -59,56 +59,6 @@ const ALL_STATUSES: Array<{
   { value: 'waitlisted', label: 'Waitlisted' },
 ]
 
-/** Extract applicant name from form responses (mirrors backend logic in convex/lib/applicantName.ts) */
-function extractNameFromResponses(responses: unknown): string | null {
-  if (!responses || typeof responses !== 'object' || Array.isArray(responses))
-    return null
-  const normalize = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, '')
-  const byKey = new Map(
-    Object.entries(responses as Record<string, unknown>).map(([k, v]) => [
-      normalize(k),
-      v,
-    ]),
-  )
-  const toName = (v: unknown): string | null => {
-    if (typeof v !== 'string') return null
-    const t = v.replace(/\s+/g, ' ').trim()
-    if (!t || t.length > 120 || t.split(' ').length > 8) return null
-    return t
-  }
-  const find = (keys: Array<string>) => {
-    for (const k of keys) {
-      const v = toName(byKey.get(k))
-      if (v) return v
-    }
-    return null
-  }
-  const first = find([
-    'firstname',
-    'givenname',
-    'forename',
-    'nombre',
-    'nombres',
-  ])
-  const last = find([
-    'lastname',
-    'familyname',
-    'surname',
-    'apellido',
-    'apellidos',
-  ])
-  if (first || last) return [first, last].filter(Boolean).join(' ')
-  return find([
-    'fullname',
-    'name',
-    'applicantname',
-    'candidatename',
-    'displayname',
-    'respondentname',
-    'nombre',
-  ])
-}
-
 /**
  * Render a recognized template variable as a highlighted example link, so the
  * admin can visually confirm the variable was understood (a literal
@@ -152,9 +102,13 @@ function RecipientList({
           className="px-3 py-1.5 flex items-center justify-between gap-2"
         >
           <span className="font-medium truncate">{r.name}</span>
-          {r.email && (
+          {r.email ? (
             <span className="text-muted-foreground text-xs shrink-0">
               {r.email}
+            </span>
+          ) : (
+            <span className="text-amber-600 text-xs shrink-0 font-medium">
+              No email on file
             </span>
           )}
         </div>
@@ -174,9 +128,10 @@ function EmailComposePage() {
   const opportunity = useQuery(api.orgOpportunities.get, {
     id: oppId as Id<'orgOpportunities'>,
   })
-  // Fetch all applications (no status filter) for client-side filtering
-  const allApplications = useQuery(
-    api.opportunityApplications.listByOpportunity,
+  // Applicants with their resolved name + email (same 3-tier resolution as the
+  // real send), for client-side status filtering.
+  const recipientContacts = useQuery(
+    api.opportunityApplications.listRecipientsByOpportunity,
     opportunity ? { opportunityId: opportunity._id } : 'skip',
   )
   // Check for active poll (for {{poll_link}} support)
@@ -232,32 +187,32 @@ function EmailComposePage() {
       : null
 
   const filteredRecipients = useMemo(() => {
-    if (!allApplications) return []
+    if (!recipientContacts) return []
     const seen = new Set<string>()
     const recipients: Array<{
       id: string
       name: string
       email: string
     }> = []
-    for (const app of allApplications) {
-      if (!selectedStatuses.has(app.status as ApplicationStatus)) continue
-      const key = app.guestEmail ?? app.userId ?? app._id
+    for (const r of recipientContacts) {
+      if (!selectedStatuses.has(r.status as ApplicationStatus)) continue
+      // Dedupe by email (matching the real send); applicants with no email are
+      // kept individually so each one stays visible.
+      const key = r.email ? r.email.toLowerCase() : r.applicationId
       if (seen.has(key)) continue
       seen.add(key)
-      const name =
-        extractNameFromResponses(app.responses) ??
-        app.guestEmail ??
-        'Unknown applicant'
       recipients.push({
-        id: app._id,
-        name,
-        email: app.guestEmail ?? '',
+        id: r.applicationId,
+        name: r.name,
+        email: r.email,
       })
     }
     return recipients
-  }, [allApplications, selectedStatuses])
+  }, [recipientContacts, selectedStatuses])
 
   const recipientCount = filteredRecipients.length
+  const missingEmailCount = filteredRecipients.filter((r) => !r.email).length
+  const emailableCount = recipientCount - missingEmailCount
 
   const previewHtml = useMemo(() => {
     if (!body.trim()) return ''
@@ -422,7 +377,7 @@ function EmailComposePage() {
     subject.trim() &&
     body.trim() &&
     selectedStatuses.size > 0 &&
-    recipientCount > 0 &&
+    emailableCount > 0 &&
     !hasSent
 
   return (
@@ -483,7 +438,7 @@ function EmailComposePage() {
                   </label>
                 ))}
               </div>
-              {allApplications === undefined ? (
+              {recipientContacts === undefined ? (
                 <p className="text-sm text-muted-foreground mt-3">
                   Loading recipients...
                 </p>
@@ -503,6 +458,13 @@ function EmailComposePage() {
                         <ChevronDown className="size-3.5" />
                       ))}
                   </button>
+                  {missingEmailCount > 0 && (
+                    <p className="text-sm text-amber-600 mt-1">
+                      {missingEmailCount} selected applicant
+                      {missingEmailCount !== 1 ? 's have' : ' has'} no email on
+                      file and won&apos;t receive this message.
+                    </p>
+                  )}
                   {showRecipientList && (
                     <div className="mt-2">
                       <RecipientList recipients={filteredRecipients} />
@@ -691,8 +653,8 @@ function EmailComposePage() {
                     ) : (
                       <>
                         <Mail className="size-4 mr-2" />
-                        Send to {recipientCount} applicant
-                        {recipientCount !== 1 ? 's' : ''}
+                        Send to {emailableCount} applicant
+                        {emailableCount !== 1 ? 's' : ''}
                       </>
                     )}
                   </Button>
@@ -704,9 +666,13 @@ function EmailComposePage() {
                       <div className="space-y-3">
                         <p>
                           This will send &quot;{subject}&quot; to{' '}
-                          {recipientCount} applicant
-                          {recipientCount !== 1 ? 's' : ''}. This action cannot
+                          {emailableCount} applicant
+                          {emailableCount !== 1 ? 's' : ''}. This action cannot
                           be undone.
+                          {missingEmailCount > 0 &&
+                            ` ${missingEmailCount} selected applicant${
+                              missingEmailCount !== 1 ? 's' : ''
+                            } with no email on file will be skipped.`}
                         </p>
                         <RecipientList
                           recipients={filteredRecipients}
