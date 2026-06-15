@@ -7,10 +7,11 @@ import {
   ChevronUp,
   Loader2,
   Mail,
+  Send,
   Shield,
 } from 'lucide-react'
 import { marked } from 'marked'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../../convex/_generated/dataModel'
@@ -108,6 +109,31 @@ function extractNameFromResponses(responses: unknown): string | null {
   ])
 }
 
+/**
+ * Render a recognized template variable as a highlighted example link, so the
+ * admin can visually confirm the variable was understood (a literal
+ * `{{survey_link}}` left in the preview means it was NOT recognized).
+ */
+function exampleLinkPill(url: string): string {
+  return `<a href="${url}" class="inline rounded bg-emerald-100 px-1 py-0.5 font-mono text-[0.85em] font-medium text-emerald-700 no-underline break-all">${url}</a>`
+}
+
+/** Replace recognized `{{poll_link}}`/`{{survey_link}}` with highlighted example links. */
+function substituteExampleLinks(
+  markdown: string,
+  pollExampleLink: string | null,
+  surveyExampleLink: string | null,
+): string {
+  let out = markdown
+  if (pollExampleLink) {
+    out = out.replaceAll('{{poll_link}}', exampleLinkPill(pollExampleLink))
+  }
+  if (surveyExampleLink) {
+    out = out.replaceAll('{{survey_link}}', exampleLinkPill(surveyExampleLink))
+  }
+  return out
+}
+
 function RecipientList({
   recipients,
   maxHeight = 'max-h-48',
@@ -163,6 +189,8 @@ function EmailComposePage() {
     api.feedbackSurveys.getSurveyByOpportunity,
     opportunity ? { opportunityId: opportunity._id } : 'skip',
   )
+  // Current admin's profile — used to prefill the test-email address
+  const myProfile = useQuery(api.profiles.getOrCreateProfile, {})
 
   const [selectedStatuses, setSelectedStatuses] = useState<
     Set<ApplicationStatus>
@@ -172,10 +200,36 @@ function EmailComposePage() {
   const [isSending, setIsSending] = useState(false)
   const [hasSent, setHasSent] = useState(false)
   const [showRecipientList, setShowRecipientList] = useState(true)
+  const [testEmail, setTestEmail] = useState('')
+  const [testEmailTouched, setTestEmailTouched] = useState(false)
+  const [isSendingTest, setIsSendingTest] = useState(false)
+
+  // Prefill the test-email field with the admin's own email once it loads,
+  // unless they've already edited it.
+  useEffect(() => {
+    if (!testEmailTouched && myProfile?.email) setTestEmail(myProfile.email)
+  }, [myProfile, testEmailTouched])
 
   const sendBroadcast = useAction(
     api.emails.adminBroadcastAction.sendBroadcastToApplicants,
   )
+  const sendTest = useAction(api.emails.adminBroadcastAction.sendTestEmail)
+
+  // Illustrative example links shown in the preview / test email. Only built
+  // when the poll/survey is actually live, so an unrecognized variable stays
+  // visible as literal `{{...}}` text.
+  const origin =
+    typeof window !== 'undefined'
+      ? window.location.origin
+      : 'https://safetytalent.org'
+  const pollExampleLink =
+    activePoll && activePoll.status !== 'finalized'
+      ? `${origin}/org/${slug}/poll/example`
+      : null
+  const surveyExampleLink =
+    activeSurvey && activeSurvey.status === 'open'
+      ? `${origin}/org/${slug}/survey/example`
+      : null
 
   const filteredRecipients = useMemo(() => {
     if (!allApplications) return []
@@ -207,10 +261,15 @@ function EmailComposePage() {
 
   const previewHtml = useMemo(() => {
     if (!body.trim()) return ''
-    return DOMPurify.sanitize(
-      marked.parse(body, { async: false, breaks: true, gfm: true }),
+    const withLinks = substituteExampleLinks(
+      body,
+      pollExampleLink,
+      surveyExampleLink,
     )
-  }, [body])
+    return DOMPurify.sanitize(
+      marked.parse(withLinks, { async: false, breaks: true, gfm: true }),
+    )
+  }, [body, pollExampleLink, surveyExampleLink])
 
   const toggleStatus = (status: ApplicationStatus) => {
     setSelectedStatuses((prev) => {
@@ -257,6 +316,30 @@ function EmailComposePage() {
       toast.error('Failed to send emails')
     } finally {
       setIsSending(false)
+    }
+  }
+
+  const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(testEmail.trim())
+  const canSendTest = Boolean(body.trim()) && isValidEmail && !isSendingTest
+
+  const handleSendTest = async () => {
+    if (!opportunity || !canSendTest) return
+    setIsSendingTest(true)
+    try {
+      await sendTest({
+        opportunityId: opportunity._id,
+        subject: subject.trim(),
+        markdownBody: body,
+        toEmail: testEmail.trim(),
+        pollExampleLink: pollExampleLink ?? undefined,
+        surveyExampleLink: surveyExampleLink ?? undefined,
+      })
+      toast.success(`Test email sent to ${testEmail.trim()}`)
+    } catch (err) {
+      console.error('Test email send failed:', err)
+      toast.error('Failed to send test email')
+    } finally {
+      setIsSendingTest(false)
     }
   }
 
@@ -522,9 +605,72 @@ function EmailComposePage() {
                     </p>
                   </div>
                 </div>
+                {(pollExampleLink || surveyExampleLink) && (
+                  <p className="text-xs text-muted-foreground mt-3">
+                    Recognized variables show as a{' '}
+                    <span className="rounded bg-emerald-100 px-1 py-0.5 font-mono text-[11px] font-medium text-emerald-700">
+                      green example link
+                    </span>
+                    . If a variable still appears as plain{' '}
+                    <code className="bg-slate-100 px-1 rounded text-[11px]">
+                      {'{{…}}'}
+                    </code>{' '}
+                    text, it wasn&apos;t recognized — check the spelling. Each
+                    applicant gets their own unique link when sent.
+                  </p>
+                )}
               </CardContent>
             </Card>
           </div>
+
+          {/* Test email */}
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle className="text-base">Send a test email</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-3">
+                Send yourself a copy to see exactly how it looks in an inbox.
+                Variables use example links and the subject is prefixed with{' '}
+                <code className="bg-slate-100 px-1 rounded text-[11px]">
+                  [TEST]
+                </code>
+                .
+              </p>
+              <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+                <div className="flex-1 space-y-1">
+                  <Label htmlFor="test-email">Your email</Label>
+                  <Input
+                    id="test-email"
+                    type="email"
+                    value={testEmail}
+                    onChange={(e) => {
+                      setTestEmail(e.target.value)
+                      setTestEmailTouched(true)
+                    }}
+                    placeholder="you@example.com"
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={handleSendTest}
+                  disabled={!canSendTest}
+                >
+                  {isSendingTest ? (
+                    <>
+                      <Loader2 className="size-4 mr-2 animate-spin" />
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="size-4 mr-2" />
+                      Send test email
+                    </>
+                  )}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Send */}
           <div className="mt-6 flex justify-end">

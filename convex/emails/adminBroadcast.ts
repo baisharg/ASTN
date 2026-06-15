@@ -129,6 +129,21 @@ export const checkBroadcastRateLimit = internalMutation({
 })
 
 /**
+ * Check rate limit for test emails (sent only to the admin themselves).
+ */
+export const checkTestEmailRateLimit = internalMutation({
+  args: { userId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { userId }) => {
+    await rateLimiter.limit(ctx, 'adminTestEmail', {
+      key: userId,
+      throws: true,
+    })
+    return null
+  },
+})
+
+/**
  * Send a single broadcast email via Resend.
  */
 export const sendSingleEmail = internalMutation({
