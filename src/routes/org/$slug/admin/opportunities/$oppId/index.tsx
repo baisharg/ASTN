@@ -22,6 +22,7 @@ import { toast } from 'sonner'
 import { api } from '../../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../../convex/_generated/dataModel'
 import type { FormField } from '../../../../../../../convex/lib/formFields'
+import { weekdayShort } from '../../../../../../../convex/lib/availabilityWeek'
 import type { AvailabilityResponse } from '~/components/availability/AvailabilityHeatmap'
 import { AvailabilityHeatmap } from '~/components/availability/AvailabilityHeatmap'
 import { PollCreationForm } from '~/components/availability/PollCreationForm'
@@ -671,7 +672,7 @@ function AvailabilityTab({
   const exportAvailability = useAction(api.availabilityPolls.exportAvailability)
 
   const [selectedSlot, setSelectedSlot] = useState<{
-    date: string
+    day: number
     startMinutes: number
     endMinutes: number
   } | null>(null)
@@ -740,10 +741,10 @@ function AvailabilityTab({
     }
   }
 
-  const handleCellClick = (date: string, startMinutes: number) => {
+  const handleCellClick = (day: number, startMinutes: number) => {
     if (poll.status === 'finalized') return
     setSelectedSlot({
-      date,
+      day,
       startMinutes,
       endMinutes: startMinutes + poll.slotDurationMinutes,
     })
@@ -796,7 +797,7 @@ function AvailabilityTab({
             <div>
               <CardTitle>{poll.title}</CardTitle>
               <CardDescription>
-                {poll.startDate} to {poll.endDate} ·{' '}
+                {poll.days.map((d) => weekdayShort(d)).join(', ')} ·{' '}
                 {poll.timezone.replace(/_/g, ' ')} · {poll.slotDurationMinutes}{' '}
                 min slots
               </CardDescription>
@@ -1027,8 +1028,7 @@ function AvailabilityTab({
           </CardHeader>
           <CardContent>
             <AvailabilityHeatmap
-              startDate={poll.startDate}
-              endDate={poll.endDate}
+              days={poll.days}
               startMinutes={poll.startMinutes}
               endMinutes={poll.endMinutes}
               slotDurationMinutes={poll.slotDurationMinutes}
@@ -1050,8 +1050,7 @@ function AvailabilityTab({
       {/* Schedule Analysis */}
       {pollResults && pollResults.responses.length > 0 && (
         <ScheduleAnalysis
-          startDate={poll.startDate}
-          endDate={poll.endDate}
+          days={poll.days}
           startMinutes={poll.startMinutes}
           endMinutes={poll.endMinutes}
           slotDurationMinutes={poll.slotDurationMinutes}

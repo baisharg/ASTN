@@ -11,6 +11,7 @@ import {
   Shield,
 } from 'lucide-react'
 import { marked } from 'marked'
+import { emojify } from 'node-emoji'
 import { Checkbox as CheckboxPrimitive } from 'radix-ui'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
@@ -312,7 +313,7 @@ function EmailComposePage() {
   const previewHtml = useMemo(() => {
     if (!body.trim()) return ''
     const withLinks = substituteExampleLinks(
-      body,
+      emojify(body),
       pollExampleLink,
       surveyExampleLink,
     )

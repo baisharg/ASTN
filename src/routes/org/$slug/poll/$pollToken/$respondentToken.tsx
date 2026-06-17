@@ -6,6 +6,7 @@ import { Check, CheckCircle2, Clock, Loader2, Lock } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../convex/_generated/api'
+import { weekdayLong } from '../../../../../../convex/lib/availabilityWeek'
 import { AvailabilityGrid } from '~/components/availability/AvailabilityGrid'
 import { GradientBg } from '~/components/layout/GradientBg'
 
@@ -158,15 +159,14 @@ function RespondentPollPage() {
                 </span>
               </div>
               <p className="text-blue-800">
-                {poll.finalizedSlot.date} at{' '}
+                {weekdayLong(poll.finalizedSlot.day)} at{' '}
                 {formatTime(poll.finalizedSlot.startMinutes)} –{' '}
                 {formatTime(poll.finalizedSlot.endMinutes)} ({poll.timezone})
               </p>
             </div>
 
             <AvailabilityGrid
-              startDate={poll.startDate}
-              endDate={poll.endDate}
+              days={poll.days}
               startMinutes={poll.startMinutes}
               endMinutes={poll.endMinutes}
               slotDurationMinutes={poll.slotDurationMinutes}
@@ -219,8 +219,7 @@ function RespondentPollPage() {
           </div>
 
           <AvailabilityGrid
-            startDate={poll.startDate}
-            endDate={poll.endDate}
+            days={poll.days}
             startMinutes={poll.startMinutes}
             endMinutes={poll.endMinutes}
             slotDurationMinutes={poll.slotDurationMinutes}

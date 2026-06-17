@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { eachDayOfInterval, format, parseISO } from 'date-fns'
+import { weekdayShort } from '../../../convex/lib/availabilityWeek'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -12,22 +12,21 @@ export interface AvailabilityResponse {
 }
 
 export interface AvailabilityHeatmapProps {
-  startDate: string
-  endDate: string
+  days: Array<number>
   startMinutes: number
   endMinutes: number
   slotDurationMinutes: number
   timezone: string
   responses: Array<AvailabilityResponse>
   totalRespondents: number
-  onCellClick?: (date: string, startMinutes: number) => void
+  onCellClick?: (day: number, startMinutes: number) => void
   selectedSlot?: {
-    date: string
+    day: number
     startMinutes: number
     endMinutes: number
   } | null
   finalizedSlot?: {
-    date: string
+    day: number
     startMinutes: number
     endMinutes: number
   } | null
@@ -59,16 +58,9 @@ function buildTimeSlots(
   return slots
 }
 
-/** Build the list of date strings (YYYY-MM-DD) for the range. */
-function buildDates(startDate: string, endDate: string): Array<string> {
-  const start = parseISO(startDate)
-  const end = parseISO(endDate)
-  return eachDayOfInterval({ start, end }).map((d) => format(d, 'yyyy-MM-dd'))
-}
-
 /** Produce a slot key matching the format used in AvailabilityResponse.slots. */
-function slotKey(date: string, startMinutes: number): string {
-  return `${date}|${startMinutes}`
+function slotKey(day: number, startMinutes: number): string {
+  return `${day}|${startMinutes}`
 }
 
 // ---------------------------------------------------------------------------
@@ -118,8 +110,7 @@ function aggregateCell(
 // ---------------------------------------------------------------------------
 
 export function AvailabilityHeatmap({
-  startDate,
-  endDate,
+  days,
   startMinutes,
   endMinutes,
   slotDurationMinutes,
@@ -129,10 +120,6 @@ export function AvailabilityHeatmap({
   selectedSlot,
   finalizedSlot,
 }: AvailabilityHeatmapProps) {
-  const dates = useMemo(
-    () => buildDates(startDate, endDate),
-    [startDate, endDate],
-  )
   const timeSlots = useMemo(
     () => buildTimeSlots(startMinutes, endMinutes, slotDurationMinutes),
     [startMinutes, endMinutes, slotDurationMinutes],
@@ -146,9 +133,9 @@ export function AvailabilityHeatmap({
   // Pre-compute all cell data so we don't recalculate on every render
   const cellDataMap = useMemo(() => {
     const map = new Map<string, CellData>()
-    for (const date of dates) {
+    for (const day of days) {
       for (const slot of timeSlots) {
-        const key = slotKey(date, slot)
+        const key = slotKey(day, slot)
         map.set(
           key,
           aggregateCell(key, responses, totalRespondents, allRespondentNames),
@@ -156,7 +143,7 @@ export function AvailabilityHeatmap({
       }
     }
     return map
-  }, [dates, timeSlots, responses, totalRespondents, allRespondentNames])
+  }, [days, timeSlots, responses, totalRespondents, allRespondentNames])
 
   // Track hovered cell for tooltip
   const [hoveredCell, setHoveredCell] = useState<{
@@ -167,16 +154,14 @@ export function AvailabilityHeatmap({
 
   const hoveredData = hoveredCell ? cellDataMap.get(hoveredCell.key) : null
 
-  function isSelected(date: string, slotStart: number): boolean {
+  function isSelected(day: number, slotStart: number): boolean {
     if (!selectedSlot) return false
-    return selectedSlot.date === date && selectedSlot.startMinutes === slotStart
+    return selectedSlot.day === day && selectedSlot.startMinutes === slotStart
   }
 
-  function isFinalized(date: string, slotStart: number): boolean {
+  function isFinalized(day: number, slotStart: number): boolean {
     if (!finalizedSlot) return false
-    return (
-      finalizedSlot.date === date && finalizedSlot.startMinutes === slotStart
-    )
+    return finalizedSlot.day === day && finalizedSlot.startMinutes === slotStart
   }
 
   return (
@@ -193,20 +178,14 @@ export function AvailabilityHeatmap({
             <tr>
               {/* Top-left corner */}
               <th className="sticky left-0 z-10 bg-white border-b border-r px-3 py-2 text-xs font-medium text-slate-500 min-w-[80px]" />
-              {dates.map((date) => {
-                const parsed = parseISO(date)
-                return (
-                  <th
-                    key={date}
-                    className="border-b border-r px-2 py-2 text-center text-xs font-medium text-slate-700 min-w-[80px]"
-                  >
-                    <div>{format(parsed, 'EEE')}</div>
-                    <div className="text-slate-500 font-normal">
-                      {format(parsed, 'MMM d')}
-                    </div>
-                  </th>
-                )
-              })}
+              {days.map((day) => (
+                <th
+                  key={day}
+                  className="border-b border-r px-2 py-2 text-center text-xs font-medium text-slate-700 min-w-[80px]"
+                >
+                  <div>{weekdayShort(day)}</div>
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -217,11 +196,11 @@ export function AvailabilityHeatmap({
                   {formatMinutesToTime(slot)}
                 </td>
 
-                {dates.map((date) => {
-                  const key = slotKey(date, slot)
+                {days.map((day) => {
+                  const key = slotKey(day, slot)
                   const cell = cellDataMap.get(key)!
-                  const selected = isSelected(date, slot)
-                  const finalized = isFinalized(date, slot)
+                  const selected = isSelected(day, slot)
+                  const finalized = isFinalized(day, slot)
 
                   // Background color
                   const bgStyle: React.CSSProperties =
@@ -259,7 +238,7 @@ export function AvailabilityHeatmap({
                         .join(' ')}
                       style={finalized ? {} : bgStyle}
                       title={titleParts.join('\n')}
-                      onClick={() => onCellClick?.(date, slot)}
+                      onClick={() => onCellClick?.(day, slot)}
                       onMouseEnter={(e) => {
                         const rect = (
                           e.currentTarget as HTMLElement

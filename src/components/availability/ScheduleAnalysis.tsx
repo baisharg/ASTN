@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight, Clock } from 'lucide-react'
 import type { AvailabilityResponse } from './AvailabilityHeatmap'
+import { weekdayShort } from '../../../convex/lib/availabilityWeek'
 import { Card, CardContent, CardHeader, CardTitle } from '~/components/ui/card'
 import { Input } from '~/components/ui/input'
 import { Label } from '~/components/ui/label'
@@ -10,8 +11,7 @@ import { Label } from '~/components/ui/label'
 // ---------------------------------------------------------------------------
 
 interface ScheduleAnalysisProps {
-  startDate: string
-  endDate: string
+  days: Array<number>
   startMinutes: number
   endMinutes: number
   slotDurationMinutes: number
@@ -26,7 +26,7 @@ interface BlockAnalysis {
   score: number
   minDayAttendance: number
   perDay: Array<{
-    date: string
+    day: number
     available: Array<string>
     maybe: Array<string>
     unavailable: Array<string>
@@ -52,6 +52,7 @@ const RANK_LABELS = ['🥇', '🥈', '🥉', '#4', '#5']
 // ---------------------------------------------------------------------------
 
 export function ScheduleAnalysis({
+  days,
   startMinutes,
   endMinutes,
   slotDurationMinutes,
@@ -71,15 +72,6 @@ export function ScheduleAnalysis({
       return []
 
     const blockSlots = Math.ceil(sessionMinutes / slotDurationMinutes)
-
-    // Collect all dates from responses
-    const dateSet = new Set<string>()
-    for (const resp of responses) {
-      for (const key of Object.keys(resp.slots)) {
-        dateSet.add(key.split('|')[0])
-      }
-    }
-    const dates = [...dateSet].sort()
 
     // All possible start times
     const possibleStarts: Array<number> = []
@@ -105,7 +97,7 @@ export function ScheduleAnalysis({
       let minDayAttendance = Infinity
       const perDay: BlockAnalysis['perDay'] = []
 
-      for (const date of dates) {
+      for (const day of days) {
         const available: Array<string> = []
         const maybe: Array<string> = []
         const unavailable: Array<string> = []
@@ -116,7 +108,7 @@ export function ScheduleAnalysis({
               ? (qualityScores[resp.respondentName] ?? 50) / 100
               : 1
           const slotStatuses: Array<string | undefined> = blockSlotMinutes.map(
-            (mins) => resp.slots[`${date}|${mins}`],
+            (mins) => resp.slots[`${day}|${mins}`],
           )
           const allAvailable = slotStatuses.every((s) => s === 'available')
           const allAvailableOrMaybe = slotStatuses.every(
@@ -137,7 +129,7 @@ export function ScheduleAnalysis({
         const dayAttendance = available.length + maybe.length
         if (dayAttendance < minDayAttendance) minDayAttendance = dayAttendance
 
-        perDay.push({ date, available, maybe, unavailable })
+        perDay.push({ day, available, maybe, unavailable })
       }
 
       results.push({
@@ -161,6 +153,7 @@ export function ScheduleAnalysis({
     slotDurationMinutes,
     startMinutes,
     endMinutes,
+    days,
     responses,
     qualityScores,
   ])
@@ -251,9 +244,9 @@ export function ScheduleAnalysis({
                     {block.perDay.map((day) => {
                       const dayTotal = day.available.length + day.maybe.length
                       return (
-                        <div key={day.date} className="space-y-1">
+                        <div key={day.day} className="space-y-1">
                           <p className="text-sm font-medium">
-                            {day.date}{' '}
+                            {weekdayShort(day.day)}{' '}
                             <span className="text-muted-foreground font-normal">
                               — {dayTotal}/{totalRespondents} can attend
                             </span>

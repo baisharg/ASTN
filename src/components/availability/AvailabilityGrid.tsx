@@ -1,13 +1,13 @@
 import { useCallback, useRef, useState } from 'react'
 import { Button } from '~/components/ui/button'
 import { cn } from '~/lib/utils'
+import { weekdayShort } from '../../../convex/lib/availabilityWeek'
 
 type SlotStatus = 'available' | 'maybe'
 type PaintMode = SlotStatus | 'clear'
 
 interface AvailabilityGridProps {
-  startDate: string
-  endDate: string
+  days: Array<number>
   startMinutes: number
   endMinutes: number
   slotDurationMinutes: number
@@ -15,7 +15,7 @@ interface AvailabilityGridProps {
   slots: Record<string, SlotStatus>
   onSlotsChange: (slots: Record<string, SlotStatus>) => void
   readOnly?: boolean
-  finalizedSlot?: { date: string; startMinutes: number; endMinutes: number }
+  finalizedSlot?: { day: number; startMinutes: number; endMinutes: number }
 }
 
 const formatTime = (minutes: number) => {
@@ -26,24 +26,6 @@ const formatTime = (minutes: number) => {
   return m === 0
     ? `${h12} ${period}`
     : `${h12}:${String(m).padStart(2, '0')} ${period}`
-}
-
-function generateDates(startDate: string, endDate: string): Array<string> {
-  const dates: Array<string> = []
-  const [startYear, startMonth, startDay] = startDate.split('-').map(Number)
-  const [endYear, endMonth, endDay] = endDate.split('-').map(Number)
-  const start = new Date(startYear, startMonth - 1, startDay)
-  const end = new Date(endYear, endMonth - 1, endDay)
-
-  const current = new Date(start)
-  while (current <= end) {
-    const y = current.getFullYear()
-    const mo = String(current.getMonth() + 1).padStart(2, '0')
-    const d = String(current.getDate()).padStart(2, '0')
-    dates.push(`${y}-${mo}-${d}`)
-    current.setDate(current.getDate() + 1)
-  }
-  return dates
 }
 
 function generateTimeSlots(
@@ -58,42 +40,14 @@ function generateTimeSlots(
   return slots
 }
 
-const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const
-const SHORT_MONTHS = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-] as const
-
-function formatDateHeader(dateStr: string): {
-  dayName: string
-  dayLabel: string
-} {
-  const [year, month, day] = dateStr.split('-').map(Number)
-  const date = new Date(year, month - 1, day)
-  return {
-    dayName: SHORT_DAYS[date.getDay()],
-    dayLabel: `${SHORT_MONTHS[date.getMonth()]} ${date.getDate()}`,
-  }
-}
-
 function isFinalized(
-  dateStr: string,
+  day: number,
   slotMinutes: number,
   slotDuration: number,
   finalizedSlot?: AvailabilityGridProps['finalizedSlot'],
 ): boolean {
   if (!finalizedSlot) return false
-  if (dateStr !== finalizedSlot.date) return false
+  if (day !== finalizedSlot.day) return false
   const slotEnd = slotMinutes + slotDuration
   return (
     slotMinutes >= finalizedSlot.startMinutes &&
@@ -102,8 +56,7 @@ function isFinalized(
 }
 
 export function AvailabilityGrid({
-  startDate,
-  endDate,
+  days,
   startMinutes,
   endMinutes,
   slotDurationMinutes,
@@ -118,7 +71,6 @@ export function AvailabilityGrid({
   const activePaintModeRef = useRef<PaintMode>('available')
   const lastPointerTypeRef = useRef<string>('')
 
-  const dates = generateDates(startDate, endDate)
   const timeSlots = generateTimeSlots(
     startMinutes,
     endMinutes,
@@ -241,18 +193,14 @@ export function AvailabilityGrid({
           <thead>
             <tr>
               <th className="sticky left-0 z-10 bg-background p-1" />
-              {dates.map((dateStr) => {
-                const { dayName, dayLabel } = formatDateHeader(dateStr)
-                return (
-                  <th
-                    key={dateStr}
-                    className="min-w-[60px] px-1 pb-1 text-center text-xs font-medium text-muted-foreground"
-                  >
-                    <div>{dayName}</div>
-                    <div>{dayLabel}</div>
-                  </th>
-                )
-              })}
+              {days.map((day) => (
+                <th
+                  key={day}
+                  className="min-w-[60px] px-1 pb-1 text-center text-xs font-medium text-muted-foreground"
+                >
+                  <div>{weekdayShort(day)}</div>
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -261,11 +209,11 @@ export function AvailabilityGrid({
                 <td className="sticky left-0 z-10 bg-background pr-2 text-right text-xs whitespace-nowrap text-muted-foreground">
                   {formatTime(minutes)}
                 </td>
-                {dates.map((dateStr) => {
-                  const key = `${dateStr}|${minutes}`
+                {days.map((day) => {
+                  const key = `${day}|${minutes}`
                   const hasSlot = key in slots
                   const finalized = isFinalized(
-                    dateStr,
+                    day,
                     minutes,
                     slotDurationMinutes,
                     finalizedSlot,

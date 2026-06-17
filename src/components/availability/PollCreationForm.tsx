@@ -4,6 +4,10 @@ import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
+import {
+  WEEKDAY_SHORT,
+  normalizeDays,
+} from '../../../convex/lib/availabilityWeek'
 import { Button } from '~/components/ui/button'
 import {
   Card,
@@ -21,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '~/components/ui/select'
+import { cn } from '~/lib/utils'
 
 interface PollCreationFormProps {
   opportunityId: string // Id<'orgOpportunities'>
@@ -61,6 +66,9 @@ const SLOT_DURATIONS = [
   { value: 60, label: '60 min' },
 ] as const
 
+// Default selection: weekdays (Mon–Fri). Admin can toggle any day on/off.
+const DEFAULT_DAYS = [0, 1, 2, 3, 4]
+
 function getDefaultTimezone(): string {
   try {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -73,20 +81,12 @@ function getDefaultTimezone(): string {
   return 'America/Argentina/Buenos_Aires'
 }
 
-function daysBetween(startDate: string, endDate: string): number {
-  const start = new Date(startDate)
-  const end = new Date(endDate)
-  const diffMs = end.getTime() - start.getTime()
-  return Math.round(diffMs / (1000 * 60 * 60 * 24))
-}
-
 export function PollCreationForm({
   opportunityId,
   onCreated,
 }: PollCreationFormProps) {
   const [title, setTitle] = useState('')
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
+  const [days, setDays] = useState<Array<number>>(DEFAULT_DAYS)
   const [startTime, setStartTime] = useState(540)
   const [endTime, setEndTime] = useState(1080)
   const [slotDuration, setSlotDuration] = useState(30)
@@ -95,41 +95,35 @@ export function PollCreationForm({
 
   const createPoll = useMutation(api.availabilityPolls.createPoll)
 
-  const isFormValid =
-    title.trim() !== '' &&
-    startDate !== '' &&
-    endDate !== '' &&
-    endDate >= startDate &&
-    endTime > startTime &&
-    daysBetween(startDate, endDate) <= 14
+  // Collect every reason the form can't be submitted, so we can show the admin
+  // exactly what's missing instead of just disabling the button silently.
+  const validationErrors: Array<string> = []
+  if (title.trim() === '') validationErrors.push('Add a title.')
+  if (days.length === 0)
+    validationErrors.push('Select at least one day of the week.')
+  if (endTime <= startTime)
+    validationErrors.push('End time must be after start time.')
+
+  const isFormValid = validationErrors.length === 0
+
+  function toggleDay(day: number) {
+    setDays((prev) =>
+      prev.includes(day)
+        ? prev.filter((d) => d !== day)
+        : normalizeDays([...prev, day]),
+    )
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-
     if (!isFormValid) return
-
-    if (endDate < startDate) {
-      toast.error('End date must be on or after start date')
-      return
-    }
-
-    if (endTime <= startTime) {
-      toast.error('End time must be after start time')
-      return
-    }
-
-    if (daysBetween(startDate, endDate) > 14) {
-      toast.error('Date range cannot exceed 14 days')
-      return
-    }
 
     setIsSubmitting(true)
     try {
       await createPoll({
         opportunityId: opportunityId as Id<'orgOpportunities'>,
         title: title.trim(),
-        startDate,
-        endDate,
+        days: normalizeDays(days),
         startMinutes: startTime,
         endMinutes: endTime,
         slotDurationMinutes: slotDuration,
@@ -151,8 +145,8 @@ export function PollCreationForm({
       <CardHeader>
         <CardTitle>Create Availability Poll</CardTitle>
         <CardDescription>
-          Set up a new availability poll for participants to indicate their
-          preferred times.
+          Ask participants about a generic week. Pick which days to include and
+          the daily time window — no specific calendar dates.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -170,27 +164,30 @@ export function PollCreationForm({
             />
           </div>
 
-          {/* Date fields - two columns */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="poll-start-date">Start Date</Label>
-              <Input
-                id="poll-start-date"
-                type="date"
-                required
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="poll-end-date">End Date</Label>
-              <Input
-                id="poll-end-date"
-                type="date"
-                required
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-              />
+          {/* Days of the week */}
+          <div className="space-y-2">
+            <Label>Days of the week</Label>
+            <div className="flex flex-wrap gap-2">
+              {WEEKDAY_SHORT.map((label, day) => {
+                const selected = days.includes(day)
+                return (
+                  <Button
+                    key={day}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    aria-pressed={selected}
+                    className={cn(
+                      'min-w-[52px]',
+                      selected &&
+                        'bg-primary text-primary-foreground border-primary hover:bg-primary/90 hover:text-primary-foreground',
+                    )}
+                    onClick={() => toggleDay(day)}
+                  >
+                    {label}
+                  </Button>
+                )
+              })}
             </div>
           </div>
 
@@ -270,6 +267,15 @@ export function PollCreationForm({
               </SelectContent>
             </Select>
           </div>
+
+          {/* Why the button is disabled (no silent failures) */}
+          {!isFormValid && (
+            <ul className="space-y-1 text-sm text-amber-600">
+              {validationErrors.map((err) => (
+                <li key={err}>• {err}</li>
+              ))}
+            </ul>
+          )}
 
           {/* Submit */}
           <Button

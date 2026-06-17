@@ -2,6 +2,7 @@
 
 import { v } from 'convex/values'
 import { marked } from 'marked'
+import { emojify } from 'node-emoji'
 import { internal } from '../_generated/api'
 import { internalAction } from '../_generated/server'
 import { renderAdminBroadcast } from './templates'
@@ -80,7 +81,10 @@ export const sendAutoEmail = internalAction({
     }
 
     // Render HTML
-    const bodyHtml: string = await marked(body, { breaks: true, gfm: true })
+    const bodyHtml: string = await marked(emojify(body), {
+      breaks: true,
+      gfm: true,
+    })
     const html: string = await renderAdminBroadcast({
       userName: recipientData.name,
       bodyHtml,

@@ -1485,8 +1485,8 @@ export default defineSchema({
     createdBy: v.string(),
     title: v.string(),
     timezone: v.string(), // IANA, e.g. "America/Argentina/Buenos_Aires"
-    startDate: v.string(), // ISO date "2026-03-01"
-    endDate: v.string(), // ISO date "2026-03-07"
+    // Generic week: which weekdays the poll covers. 0 = Monday … 6 = Sunday.
+    days: v.array(v.number()),
     startMinutes: v.number(), // minutes from midnight (540 = 9 AM)
     endMinutes: v.number(), // minutes from midnight (1080 = 6 PM)
     slotDurationMinutes: v.number(), // 15, 30, or 60
@@ -1498,7 +1498,7 @@ export default defineSchema({
     ),
     finalizedSlot: v.optional(
       v.object({
-        date: v.string(),
+        day: v.number(), // weekday index, 0 = Monday … 6 = Sunday
         startMinutes: v.number(),
         endMinutes: v.number(),
       }),
@@ -1529,7 +1529,7 @@ export default defineSchema({
     respondentId: v.optional(v.id('pollRespondents')),
     respondentName: v.string(),
     // Only available/maybe slots stored. Absent key = unavailable.
-    // Key format: "YYYY-MM-DD|minutesFromMidnight"
+    // Key format: "<weekdayIndex>|minutesFromMidnight" (0 = Monday … 6 = Sunday)
     slots: v.record(
       v.string(),
       v.union(v.literal('available'), v.literal('maybe')),

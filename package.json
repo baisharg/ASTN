@@ -72,6 +72,7 @@
     "lucide-react": "^0.562.0",
     "marked": "^17.0.3",
     "nitro": "^3.0.1-alpha.1",
+    "node-emoji": "^2.2.0",
     "posthog-node": "^5.26.0",
     "radix-ui": "^1.4.3",
     "react": "^19.2.1",

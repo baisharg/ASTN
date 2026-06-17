@@ -6,6 +6,7 @@ import {
   resolveApplicantDisplayNameByApplicationId,
   resolveApplicantDisplayNameFromApplication,
 } from './lib/applicantName'
+import { normalizeDays, weekdayShort } from './lib/availabilityWeek'
 
 const slotValueValidator = v.union(v.literal('available'), v.literal('maybe'))
 
@@ -17,8 +18,7 @@ const pollReturnValidator = v.object({
   createdBy: v.string(),
   title: v.string(),
   timezone: v.string(),
-  startDate: v.string(),
-  endDate: v.string(),
+  days: v.array(v.number()),
   startMinutes: v.number(),
   endMinutes: v.number(),
   slotDurationMinutes: v.number(),
@@ -30,7 +30,7 @@ const pollReturnValidator = v.object({
   ),
   finalizedSlot: v.optional(
     v.object({
-      date: v.string(),
+      day: v.number(),
       startMinutes: v.number(),
       endMinutes: v.number(),
     }),
@@ -58,8 +58,7 @@ export const createPoll = mutation({
     opportunityId: v.id('orgOpportunities'),
     title: v.string(),
     timezone: v.string(),
-    startDate: v.string(),
-    endDate: v.string(),
+    days: v.array(v.number()),
     startMinutes: v.number(),
     endMinutes: v.number(),
     slotDurationMinutes: v.number(),
@@ -83,21 +82,13 @@ export const createPoll = mutation({
     if (!isAdmin) throw new ConvexError('Admin access required')
 
     // Validate config
-    if (args.endDate < args.startDate)
-      throw new ConvexError('End date must be on or after start date')
+    const days = normalizeDays(args.days)
+    if (days.length === 0)
+      throw new ConvexError('Select at least one day of the week')
     if (args.endMinutes <= args.startMinutes)
       throw new ConvexError('End time must be after start time')
     if (![15, 30, 60].includes(args.slotDurationMinutes))
       throw new ConvexError('Slot duration must be 15, 30, or 60 minutes')
-
-    // Max 14-day range
-    const start = new Date(args.startDate)
-    const end = new Date(args.endDate)
-    const dayDiff = Math.round(
-      (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24),
-    )
-    if (dayDiff > 13)
-      throw new ConvexError('Poll cannot span more than 14 days')
 
     // One active poll per opportunity
     const existing = await ctx.db
@@ -117,6 +108,7 @@ export const createPoll = mutation({
     const now = Date.now()
     const pollId = await ctx.db.insert('availabilityPolls', {
       ...args,
+      days,
       orgId: opportunity.orgId,
       createdBy: userId,
       accessToken: crypto.randomUUID(),
@@ -292,7 +284,7 @@ export const finalizePoll = mutation({
   args: {
     pollId: v.id('availabilityPolls'),
     finalizedSlot: v.object({
-      date: v.string(),
+      day: v.number(),
       startMinutes: v.number(),
       endMinutes: v.number(),
     }),
@@ -452,8 +444,7 @@ export const exportAvailability = action({
 
     const data: {
       poll: {
-        startDate: string
-        endDate: string
+        days: Array<number>
         startMinutes: number
         endMinutes: number
         slotDurationMinutes: number
@@ -469,16 +460,9 @@ export const exportAvailability = action({
 
     const { poll, responses } = data
 
-    // Build dates
-    const dates: Array<string> = []
-    const current = new Date(poll.startDate + 'T00:00:00')
-    const end = new Date(poll.endDate + 'T00:00:00')
-    while (current <= end) {
-      dates.push(current.toISOString().split('T')[0])
-      current.setDate(current.getDate() + 1)
-    }
-
-    const totalDays = dates.length
+    // Generic week: iterate over the selected weekdays (0 = Mon … 6 = Sun).
+    const days = poll.days
+    const totalDays = days.length
 
     // Helpers
     const formatTime = (minutes: number): string => {
@@ -516,10 +500,10 @@ export const exportAvailability = action({
       const respondentBlockData = responses.map((r) => {
         const counts = possibleStarts.map((start) => {
           let daysAvailable = 0
-          for (const date of dates) {
+          for (const day of days) {
             let blockOk = true
             for (let i = 0; i < blockSlotsCount; i++) {
-              const key = `${date}|${start + i * poll.slotDurationMinutes}`
+              const key = `${day}|${start + i * poll.slotDurationMinutes}`
               const val = r.slots[key]
               if (val !== 'available' && val !== 'maybe') {
                 blockOk = false
@@ -600,39 +584,22 @@ export const exportAvailability = action({
       timeSlots.push(m)
     }
 
-    const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-    const MONTH_NAMES = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ]
-
     const slotKeys: Array<string> = []
-    for (const date of dates) {
+    for (const day of days) {
       for (const minutes of timeSlots) {
-        slotKeys.push(`${date}|${minutes}`)
+        slotKeys.push(`${day}|${minutes}`)
       }
     }
 
-    const formatSlotHeader = (dateStr: string, minutes: number): string => {
-      const d = new Date(dateStr + 'T00:00:00')
-      return `${DAY_NAMES[d.getDay()]} ${MONTH_NAMES[d.getMonth()]} ${d.getDate()} ${formatTime(minutes)}`
+    const formatSlotHeader = (dayIndex: number, minutes: number): string => {
+      return `${weekdayShort(dayIndex)} ${formatTime(minutes)}`
     }
 
     const headers = [
       'Respondent',
       ...slotKeys.map((key) => {
-        const [date, mins] = key.split('|')
-        return formatSlotHeader(date, parseInt(mins, 10))
+        const [day, mins] = key.split('|')
+        return formatSlotHeader(parseInt(day, 10), parseInt(mins, 10))
       }),
     ]
 

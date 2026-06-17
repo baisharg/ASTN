@@ -2,6 +2,7 @@
 
 import { v } from 'convex/values'
 import { marked } from 'marked'
+import { emojify } from 'node-emoji'
 import { api, internal } from '../_generated/api'
 import { action } from '../_generated/server'
 import { renderAdminBroadcast } from './templates'
@@ -129,7 +130,7 @@ export const sendBroadcastToApplicants = action({
           )
         }
 
-        const recipientHtml: string = await marked(recipientMarkdown, {
+        const recipientHtml: string = await marked(emojify(recipientMarkdown), {
           breaks: true,
           gfm: true,
         })
@@ -210,7 +211,7 @@ export const sendTestEmail = action({
       md = md.replaceAll('{{survey_link}}', surveyExampleLink)
     }
 
-    const bodyHtml: string = await marked(md, { breaks: true, gfm: true })
+    const bodyHtml: string = await marked(emojify(md), { breaks: true, gfm: true })
     const html: string = await renderAdminBroadcast({
       userName: 'Jane Doe',
       bodyHtml,
