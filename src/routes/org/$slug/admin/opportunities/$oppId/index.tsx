@@ -17,6 +17,7 @@ import {
   Save,
   Shield,
   Trash2,
+  Users,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
@@ -33,6 +34,7 @@ import { PollCreationForm } from '~/components/availability/PollCreationForm'
 import { ScheduleAnalysis } from '~/components/availability/ScheduleAnalysis'
 import { FormFieldsEditor } from '~/components/opportunities/FormFieldsEditor'
 import { TagsInput } from '~/components/opportunities/TagsInput'
+import { ApplicationsTable } from '~/components/opportunities/ApplicationsTable'
 import { SurveyTab } from '~/components/surveys/SurveyTab'
 import { AuthHeader } from '~/components/layout/auth-header'
 import {
@@ -579,6 +581,10 @@ function OpportunityEditPage() {
                 <FileText className="size-4" />
                 Details
               </TabsTrigger>
+              <TabsTrigger value="applications" className="gap-2">
+                <Users className="size-4" />
+                Applications
+              </TabsTrigger>
               <TabsTrigger value="availability" className="gap-2">
                 <Calendar className="size-4" />
                 Availability
@@ -647,6 +653,15 @@ function OpportunityEditPage() {
                   </CardContent>
                 </Card>
               </div>
+            </TabsContent>
+
+            <TabsContent value="applications" className="mt-6">
+              <ApplicationsTable
+                slug={slug}
+                opportunityId={opportunity._id}
+                opportunityTitle={opportunity.title}
+                formFields={(opportunity.formFields ?? []) as Array<FormField>}
+              />
             </TabsContent>
 
             <TabsContent value="availability" className="mt-6">
