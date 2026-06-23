@@ -1,5 +1,6 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useAction, useMutation, useQuery } from 'convex/react'
+import { ConvexError } from 'convex/values'
 import {
   Building2,
   Calendar,
@@ -20,7 +21,10 @@ import {
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../../convex/_generated/api'
-import type { Id } from '../../../../../../../convex/_generated/dataModel'
+import type {
+  Doc,
+  Id,
+} from '../../../../../../../convex/_generated/dataModel'
 import type { FormField } from '../../../../../../../convex/lib/formFields'
 import { weekdayShort } from '../../../../../../../convex/lib/availabilityWeek'
 import type { AvailabilityResponse } from '~/components/availability/AvailabilityHeatmap'
@@ -71,6 +75,251 @@ export const Route = createFileRoute('/org/$slug/admin/opportunities/$oppId/')({
 type OpportunityType = 'course' | 'fellowship' | 'job' | 'other'
 type OpportunityStatus = 'active' | 'closed' | 'draft'
 
+// Details editor. State is initialized from `opportunity` props AT MOUNT
+// (not via a post-mount useEffect). This matters: with the React Compiler on,
+// injecting a Radix <Select>'s controlled `value` after mount left the trigger
+// stuck showing nothing — e.g. Status rendered blank even though the saved
+// status was "closed", which then failed to save. Initializing synchronously
+// from props means `value` is correct on the first render. The parent mounts
+// this with key={opportunity._id} so it re-inits when navigating opportunities.
+function OpportunityDetailsForm({
+  opportunity,
+  redirectTargets,
+  sourceOptions,
+}: {
+  opportunity: Doc<'orgOpportunities'>
+  redirectTargets: Array<Doc<'orgOpportunities'>>
+  sourceOptions: Array<Doc<'orgOpportunities'>>
+}) {
+  const updateOpp = useMutation(api.orgOpportunities.update)
+
+  const [title, setTitle] = useState(opportunity.title)
+  const [description, setDescription] = useState(opportunity.description)
+  const [type, setType] = useState<OpportunityType>(opportunity.type)
+  const [status, setStatus] = useState<OpportunityStatus>(opportunity.status)
+  const [deadlineStr, setDeadlineStr] = useState(
+    opportunity.deadline
+      ? new Date(opportunity.deadline).toISOString().split('T')[0]
+      : '',
+  )
+  const [externalUrl, setExternalUrl] = useState(opportunity.externalUrl ?? '')
+  const [featured, setFeatured] = useState(opportunity.featured)
+  const [redirectOpportunityId, setRedirectOpportunityId] = useState<
+    string | null
+  >(opportunity.redirectOpportunityId ?? null)
+  const [sourceOpportunityId, setSourceOpportunityId] = useState<string | null>(
+    opportunity.sourceOpportunityId ?? null,
+  )
+  const [isSavingDetails, setIsSavingDetails] = useState(false)
+
+  const canSaveDetails = title.trim() && description.trim()
+
+  const handleSaveDetails = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!canSaveDetails || isSavingDetails) return
+    setIsSavingDetails(true)
+    try {
+      const deadline = deadlineStr ? new Date(deadlineStr).getTime() : undefined
+      await updateOpp({
+        id: opportunity._id,
+        title: title.trim(),
+        description: description.trim(),
+        type,
+        status,
+        deadline,
+        externalUrl: externalUrl.trim() || undefined,
+        featured,
+        redirectOpportunityId: redirectOpportunityId
+          ? (redirectOpportunityId as Id<'orgOpportunities'>)
+          : null,
+        sourceOpportunityId: sourceOpportunityId
+          ? (sourceOpportunityId as Id<'orgOpportunities'>)
+          : null,
+      })
+      toast.success('Opportunity details saved')
+    } catch (err) {
+      console.error('Failed to save opportunity details:', err)
+      // Show a clear, constant headline; surface the specific reason as a
+      // sub-line only when the backend gave us a readable one (ConvexError).
+      const reason =
+        err instanceof ConvexError && typeof err.data === 'string'
+          ? err.data
+          : 'Something went wrong. Please check the fields and try again.'
+      toast.error("Couldn't save the opportunity", { description: reason })
+    } finally {
+      setIsSavingDetails(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSaveDetails} className="space-y-4">
+      <div className="space-y-1">
+        <Label htmlFor="opp-title">
+          Title <span className="text-red-500">*</span>
+        </Label>
+        <Input
+          id="opp-title"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="e.g. Technical AI Safety Course"
+        />
+      </div>
+
+      <div className="space-y-1">
+        <Label htmlFor="opp-desc">
+          Description <span className="text-red-500">*</span>
+        </Label>
+        <Textarea
+          id="opp-desc"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          rows={3}
+          placeholder="Brief description shown on the apply page"
+        />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-1">
+          <Label>Type</Label>
+          <Select
+            value={type}
+            onValueChange={(v) => setType(v as OpportunityType)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="course">Course</SelectItem>
+              <SelectItem value="fellowship">Fellowship</SelectItem>
+              <SelectItem value="job">Job</SelectItem>
+              <SelectItem value="other">Other</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-1">
+          <Label>Status</Label>
+          <Select
+            value={status}
+            onValueChange={(v) => setStatus(v as OpportunityStatus)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="draft">Draft</SelectItem>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="closed">Closed</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-1">
+          <Label htmlFor="opp-deadline">Deadline (optional)</Label>
+          <Input
+            id="opp-deadline"
+            type="date"
+            value={deadlineStr}
+            onChange={(e) => setDeadlineStr(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="opp-url">External URL (optional)</Label>
+          <Input
+            id="opp-url"
+            value={externalUrl}
+            onChange={(e) => setExternalUrl(e.target.value)}
+            placeholder="https://..."
+          />
+        </div>
+      </div>
+
+      <label className="flex items-center gap-2 cursor-pointer">
+        <Checkbox
+          checked={featured}
+          onCheckedChange={(checked) => setFeatured(checked === true)}
+        />
+        <span className="text-sm">
+          Featured opportunity (shown on org landing page)
+        </span>
+      </label>
+
+      {status === 'closed' && (
+        <div className="space-y-1">
+          <Label>Redirect to (Expression of Interest)</Label>
+          <Select
+            value={redirectOpportunityId ?? 'none'}
+            onValueChange={(v) =>
+              setRedirectOpportunityId(!v || v === 'none' ? null : v)
+            }
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="No redirect" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">No redirect</SelectItem>
+              {redirectTargets.map((t) => (
+                <SelectItem key={t._id} value={t._id}>
+                  {t.title}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            When set, visitors to this opportunity&apos;s apply page will see
+            the target&apos;s form as an Expression of Interest.
+          </p>
+        </div>
+      )}
+
+      <div className="space-y-1">
+        <Label>Pre-fill applicants from a previous opportunity</Label>
+        <Select
+          value={sourceOpportunityId ?? 'none'}
+          onValueChange={(v) =>
+            setSourceOpportunityId(!v || v === 'none' ? null : v)
+          }
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="No pre-fill source" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">No pre-fill source</SelectItem>
+            {sourceOptions.map((t) => (
+              <SelectItem key={t._id} value={t._id}>
+                {t.title}
+                {t.status !== 'active' ? ` (${t.status})` : ''}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          Applicants who previously applied to the source will have matching
+          answers pre-filled here. They can review and edit before submitting.
+          Only fields with the same key carry over; identity fields (name,
+          email, location, LinkedIn) stay sourced from their ASTN profile.
+        </p>
+      </div>
+
+      <Button type="submit" disabled={!canSaveDetails || isSavingDetails}>
+        {isSavingDetails ? (
+          <>
+            <Loader2 className="size-4 mr-2 animate-spin" />
+            Saving...
+          </>
+        ) : (
+          <>
+            <Save className="size-4 mr-2" />
+            Save Details
+          </>
+        )}
+      </Button>
+    </form>
+  )
+}
+
 function OpportunityEditPage() {
   const { slug, oppId } = Route.useParams()
 
@@ -84,21 +333,6 @@ function OpportunityEditPage() {
   })
 
   const updateOpp = useMutation(api.orgOpportunities.update)
-
-  // Form state — details
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
-  const [type, setType] = useState<OpportunityType>('course')
-  const [status, setStatus] = useState<OpportunityStatus>('draft')
-  const [deadlineStr, setDeadlineStr] = useState('')
-  const [externalUrl, setExternalUrl] = useState('')
-  const [featured, setFeatured] = useState(false)
-  const [redirectOpportunityId, setRedirectOpportunityId] = useState<
-    string | null
-  >(null)
-  const [sourceOpportunityId, setSourceOpportunityId] = useState<string | null>(
-    null,
-  )
 
   // Redirect target options: active opportunities in this org (excluding current)
   const activeOpportunities = useQuery(
@@ -121,28 +355,16 @@ function OpportunityEditPage() {
   // Form state — form fields
   const [formFields, setFormFields] = useState<Array<FormField>>([])
 
-  const [isSavingDetails, setIsSavingDetails] = useState(false)
   const [isSavingFields, setIsSavingFields] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
 
   const exportCsv = useAction(api.opportunityApplications.exportApplications)
 
-  // Populate form when opportunity loads
+  // Populate form-fields editor when opportunity loads. (Detail fields are
+  // owned by OpportunityDetailsForm, which initializes from props at mount —
+  // see the note there on why this must not go through a post-mount effect.)
   useEffect(() => {
     if (opportunity) {
-      setTitle(opportunity.title)
-      setDescription(opportunity.description)
-      setType(opportunity.type)
-      setStatus(opportunity.status)
-      setDeadlineStr(
-        opportunity.deadline
-          ? new Date(opportunity.deadline).toISOString().split('T')[0]
-          : '',
-      )
-      setExternalUrl(opportunity.externalUrl ?? '')
-      setFeatured(opportunity.featured)
-      setRedirectOpportunityId(opportunity.redirectOpportunityId ?? null)
-      setSourceOpportunityId(opportunity.sourceOpportunityId ?? null)
       setFormFields(
         (opportunity.formFields as Array<FormField> | undefined) ?? [],
       )
@@ -241,39 +463,6 @@ function OpportunityEditPage() {
       toast.error('Failed to export applications')
     } finally {
       setIsExporting(false)
-    }
-  }
-
-  const canSaveDetails = title.trim() && description.trim()
-
-  const handleSaveDetails = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!canSaveDetails || isSavingDetails) return
-    setIsSavingDetails(true)
-    try {
-      const deadline = deadlineStr ? new Date(deadlineStr).getTime() : undefined
-      await updateOpp({
-        id: opportunity._id,
-        title: title.trim(),
-        description: description.trim(),
-        type,
-        status,
-        deadline,
-        externalUrl: externalUrl.trim() || undefined,
-        featured,
-        redirectOpportunityId: redirectOpportunityId
-          ? (redirectOpportunityId as Id<'orgOpportunities'>)
-          : null,
-        sourceOpportunityId: sourceOpportunityId
-          ? (sourceOpportunityId as Id<'orgOpportunities'>)
-          : null,
-      })
-      toast.success('Opportunity details saved')
-    } catch (err) {
-      console.error('Failed to save opportunity details:', err)
-      toast.error('Failed to save details')
-    } finally {
-      setIsSavingDetails(false)
     }
   }
 
@@ -392,195 +581,14 @@ function OpportunityEditPage() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <form onSubmit={handleSaveDetails} className="space-y-4">
-                      <div className="space-y-1">
-                        <Label htmlFor="opp-title">
-                          Title <span className="text-red-500">*</span>
-                        </Label>
-                        <Input
-                          id="opp-title"
-                          value={title}
-                          onChange={(e) => setTitle(e.target.value)}
-                          placeholder="e.g. Technical AI Safety Course"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <Label htmlFor="opp-desc">
-                          Description <span className="text-red-500">*</span>
-                        </Label>
-                        <Textarea
-                          id="opp-desc"
-                          value={description}
-                          onChange={(e) => setDescription(e.target.value)}
-                          rows={3}
-                          placeholder="Brief description shown on the apply page"
-                        />
-                      </div>
-
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <div className="space-y-1">
-                          <Label>Type</Label>
-                          <Select
-                            value={type}
-                            onValueChange={(v) => setType(v as OpportunityType)}
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="course">Course</SelectItem>
-                              <SelectItem value="fellowship">
-                                Fellowship
-                              </SelectItem>
-                              <SelectItem value="job">Job</SelectItem>
-                              <SelectItem value="other">Other</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div className="space-y-1">
-                          <Label>Status</Label>
-                          <Select
-                            value={status}
-                            onValueChange={(v) =>
-                              setStatus(v as OpportunityStatus)
-                            }
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="draft">Draft</SelectItem>
-                              <SelectItem value="active">Active</SelectItem>
-                              <SelectItem value="closed">Closed</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <div className="space-y-1">
-                          <Label htmlFor="opp-deadline">
-                            Deadline (optional)
-                          </Label>
-                          <Input
-                            id="opp-deadline"
-                            type="date"
-                            value={deadlineStr}
-                            onChange={(e) => setDeadlineStr(e.target.value)}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label htmlFor="opp-url">
-                            External URL (optional)
-                          </Label>
-                          <Input
-                            id="opp-url"
-                            value={externalUrl}
-                            onChange={(e) => setExternalUrl(e.target.value)}
-                            placeholder="https://..."
-                          />
-                        </div>
-                      </div>
-
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <Checkbox
-                          checked={featured}
-                          onCheckedChange={(checked) =>
-                            setFeatured(checked === true)
-                          }
-                        />
-                        <span className="text-sm">
-                          Featured opportunity (shown on org landing page)
-                        </span>
-                      </label>
-
-                      {status === 'closed' && (
-                        <div className="space-y-1">
-                          <Label>Redirect to (Expression of Interest)</Label>
-                          <Select
-                            value={redirectOpportunityId ?? 'none'}
-                            onValueChange={(v) =>
-                              setRedirectOpportunityId(
-                                !v || v === 'none' ? null : v,
-                              )
-                            }
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="No redirect" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none">No redirect</SelectItem>
-                              {redirectTargets.map((t) => (
-                                <SelectItem key={t._id} value={t._id}>
-                                  {t.title}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <p className="text-xs text-muted-foreground">
-                            When set, visitors to this opportunity&apos;s apply
-                            page will see the target&apos;s form as an
-                            Expression of Interest.
-                          </p>
-                        </div>
-                      )}
-
-                      <div className="space-y-1">
-                        <Label>
-                          Pre-fill applicants from a previous opportunity
-                        </Label>
-                        <Select
-                          value={sourceOpportunityId ?? 'none'}
-                          onValueChange={(v) =>
-                            setSourceOpportunityId(
-                              !v || v === 'none' ? null : v,
-                            )
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="No pre-fill source" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">
-                              No pre-fill source
-                            </SelectItem>
-                            {sourceOptions.map((t) => (
-                              <SelectItem key={t._id} value={t._id}>
-                                {t.title}
-                                {t.status !== 'active' ? ` (${t.status})` : ''}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <p className="text-xs text-muted-foreground">
-                          Applicants who previously applied to the source will
-                          have matching answers pre-filled here. They can review
-                          and edit before submitting. Only fields with the same
-                          key carry over; identity fields (name, email,
-                          location, LinkedIn) stay sourced from their ASTN
-                          profile.
-                        </p>
-                      </div>
-
-                      <Button
-                        type="submit"
-                        disabled={!canSaveDetails || isSavingDetails}
-                      >
-                        {isSavingDetails ? (
-                          <>
-                            <Loader2 className="size-4 mr-2 animate-spin" />
-                            Saving...
-                          </>
-                        ) : (
-                          <>
-                            <Save className="size-4 mr-2" />
-                            Save Details
-                          </>
-                        )}
-                      </Button>
-                    </form>
+                    {/* key by _id so the form re-initializes from props when
+                        navigating between opportunities */}
+                    <OpportunityDetailsForm
+                      key={opportunity._id}
+                      opportunity={opportunity}
+                      redirectTargets={redirectTargets}
+                      sourceOptions={sourceOptions}
+                    />
                   </CardContent>
                 </Card>
 
