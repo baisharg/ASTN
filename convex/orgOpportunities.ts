@@ -11,6 +11,24 @@ import {
 import { getUserId } from './lib/auth'
 import { sanitizeFormFieldKeys } from './lib/formFields'
 
+// Normalize freeform tags: trim, drop empties, dedupe (case-insensitive,
+// keeping the first-seen casing), cap length. Returns undefined for an empty
+// result so we don't store empty arrays.
+const MAX_TAG_LEN = 40
+function normalizeTags(tags: Array<string>): Array<string> | undefined {
+  const seen = new Set<string>()
+  const out: Array<string> = []
+  for (const raw of tags) {
+    const t = raw.trim().slice(0, MAX_TAG_LEN)
+    if (!t) continue
+    const key = t.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(t)
+  }
+  return out.length > 0 ? out : undefined
+}
+
 // Validate an opportunity cross-reference (redirect target / pre-fill source).
 // Discriminates "caller didn't pass this field" (`set: false` — skip the
 // patch) from "caller passed null to clear" (`set: true, value: undefined`)
@@ -57,6 +75,7 @@ const opportunityReturnValidator = v.object({
   externalUrl: v.optional(v.string()),
   featured: v.boolean(),
   formFields: v.optional(v.any()),
+  tags: v.optional(v.array(v.string())),
   redirectOpportunityId: v.optional(v.id('orgOpportunities')),
   sourceOpportunityId: v.optional(v.id('orgOpportunities')),
   createdAt: v.number(),
@@ -294,6 +313,7 @@ export const create = mutation({
     externalUrl: v.optional(v.string()),
     featured: v.boolean(),
     formFields: v.optional(v.any()),
+    tags: v.optional(v.array(v.string())),
   },
   returns: v.id('orgOpportunities'),
   handler: async (ctx, args) => {
@@ -317,6 +337,7 @@ export const create = mutation({
       ...(args.formFields !== undefined && {
         formFields: sanitizeFormFieldKeys(args.formFields),
       }),
+      ...(args.tags !== undefined && { tags: normalizeTags(args.tags) }),
       createdAt: now,
       updatedAt: now,
     })
@@ -344,6 +365,7 @@ export const update = mutation({
     externalUrl: v.optional(v.string()),
     featured: v.optional(v.boolean()),
     formFields: v.optional(v.any()),
+    tags: v.optional(v.array(v.string())),
     redirectOpportunityId: v.optional(
       v.union(v.id('orgOpportunities'), v.null()),
     ),
@@ -394,6 +416,7 @@ export const update = mutation({
     }
     if (updates.formFields !== undefined)
       patch.formFields = sanitizeFormFieldKeys(updates.formFields)
+    if (updates.tags !== undefined) patch.tags = normalizeTags(updates.tags)
     if (redirect.set) patch.redirectOpportunityId = redirect.value
     if (source.set) patch.sourceOpportunityId = source.value
 

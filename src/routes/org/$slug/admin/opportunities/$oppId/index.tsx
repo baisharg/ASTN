@@ -32,6 +32,7 @@ import { AvailabilityHeatmap } from '~/components/availability/AvailabilityHeatm
 import { PollCreationForm } from '~/components/availability/PollCreationForm'
 import { ScheduleAnalysis } from '~/components/availability/ScheduleAnalysis'
 import { FormFieldsEditor } from '~/components/opportunities/FormFieldsEditor'
+import { TagsInput } from '~/components/opportunities/TagsInput'
 import { SurveyTab } from '~/components/surveys/SurveyTab'
 import { AuthHeader } from '~/components/layout/auth-header'
 import {
@@ -86,10 +87,12 @@ function OpportunityDetailsForm({
   opportunity,
   redirectTargets,
   sourceOptions,
+  existingTags,
 }: {
   opportunity: Doc<'orgOpportunities'>
   redirectTargets: Array<Doc<'orgOpportunities'>>
   sourceOptions: Array<Doc<'orgOpportunities'>>
+  existingTags: Array<string>
 }) {
   const updateOpp = useMutation(api.orgOpportunities.update)
 
@@ -97,6 +100,7 @@ function OpportunityDetailsForm({
   const [description, setDescription] = useState(opportunity.description)
   const [type, setType] = useState<OpportunityType>(opportunity.type)
   const [status, setStatus] = useState<OpportunityStatus>(opportunity.status)
+  const [tags, setTags] = useState<Array<string>>(opportunity.tags ?? [])
   const [deadlineStr, setDeadlineStr] = useState(
     opportunity.deadline
       ? new Date(opportunity.deadline).toISOString().split('T')[0]
@@ -126,6 +130,7 @@ function OpportunityDetailsForm({
         description: description.trim(),
         type,
         status,
+        tags,
         deadline,
         externalUrl: externalUrl.trim() || undefined,
         featured,
@@ -234,6 +239,15 @@ function OpportunityDetailsForm({
             placeholder="https://..."
           />
         </div>
+      </div>
+
+      <div className="space-y-1">
+        <Label>Tags</Label>
+        <TagsInput value={tags} onChange={setTags} suggestions={existingTags} />
+        <p className="text-xs text-muted-foreground">
+          Group related opportunities (e.g. &quot;TAIS Course&quot;, &quot;TAIS
+          Projects&quot;). Used to filter the opportunities list.
+        </p>
       </div>
 
       <label className="flex items-center gap-2 cursor-pointer">
@@ -351,6 +365,11 @@ function OpportunityEditPage() {
     org && membership?.role === 'admin' ? { orgId: org._id } : 'skip',
   )
   const sourceOptions = (allOpportunities ?? []).filter((o) => o._id !== oppId)
+
+  // Tags already used anywhere in this org, offered as suggestions in the form.
+  const existingTags = Array.from(
+    new Set((allOpportunities ?? []).flatMap((o) => o.tags ?? [])),
+  ).sort((a, b) => a.localeCompare(b))
 
   // Form state — form fields
   const [formFields, setFormFields] = useState<Array<FormField>>([])
@@ -588,6 +607,7 @@ function OpportunityEditPage() {
                       opportunity={opportunity}
                       redirectTargets={redirectTargets}
                       sourceOptions={sourceOptions}
+                      existingTags={existingTags}
                     />
                   </CardContent>
                 </Card>

@@ -8,8 +8,10 @@ import {
   Link2,
   Pencil,
   Plus,
+  Search,
   Shield,
   Star,
+  X,
 } from 'lucide-react'
 import { api } from '../../../../../../convex/_generated/api'
 import { OpportunityFormDialog } from '~/components/opportunities/OpportunityFormDialog'
@@ -17,6 +19,14 @@ import { AuthHeader } from '~/components/layout/auth-header'
 import { Card } from '~/components/ui/card'
 import { Button } from '~/components/ui/button'
 import { Badge } from '~/components/ui/badge'
+import { Input } from '~/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '~/components/ui/select'
 import { Spinner } from '~/components/ui/spinner'
 import { useDotGridStyle } from '~/hooks/use-dot-grid-style'
 
@@ -37,6 +47,18 @@ const TYPE_LABELS: Record<string, string> = {
   other: 'Other',
 }
 
+type SortKey = 'recent' | 'deadline' | 'title' | 'status'
+
+const SORT_LABELS: Record<SortKey, string> = {
+  recent: 'Newest first',
+  deadline: 'Deadline (soonest)',
+  title: 'Title (A–Z)',
+  status: 'Status',
+}
+
+// Order for the "status" sort: live ones first, then drafts, then closed.
+const STATUS_ORDER: Record<string, number> = { active: 0, draft: 1, closed: 2 }
+
 function AdminOpportunitiesPage() {
   const { slug } = Route.useParams()
   const dotGridStyle = useDotGridStyle()
@@ -52,6 +74,56 @@ function AdminOpportunitiesPage() {
   )
 
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const [sort, setSort] = useState<SortKey>('recent')
+  const [selectedTags, setSelectedTags] = useState<Array<string>>([])
+
+  // All tags in use across the org's opportunities (sorted, for the filter bar).
+  const allTags = Array.from(
+    new Set((opportunities ?? []).flatMap((o) => o.tags ?? [])),
+  ).sort((a, b) => a.localeCompare(b))
+
+  const toggleTag = (tag: string) =>
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+    )
+
+  // Filter (search + selected tags) then sort.
+  const q = search.trim().toLowerCase()
+  const visibleOpportunities = (opportunities ?? [])
+    .filter((opp) => {
+      if (q) {
+        const haystack = [opp.title, opp.description, ...(opp.tags ?? [])]
+          .join(' ')
+          .toLowerCase()
+        if (!haystack.includes(q)) return false
+      }
+      if (selectedTags.length > 0) {
+        const tags = opp.tags ?? []
+        if (!selectedTags.some((t) => tags.includes(t))) return false
+      }
+      return true
+    })
+    .sort((a, b) => {
+      switch (sort) {
+        case 'deadline': {
+          // Soonest first; opportunities without a deadline sink to the bottom.
+          const ad = a.deadline ?? Infinity
+          const bd = b.deadline ?? Infinity
+          return ad - bd
+        }
+        case 'title':
+          return a.title.localeCompare(b.title)
+        case 'status':
+          return (
+            (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9) ||
+            a.title.localeCompare(b.title)
+          )
+        case 'recent':
+        default:
+          return b._creationTime - a._creationTime
+      }
+    })
 
   // Loading
   if (org === undefined || membership === undefined) {
@@ -138,6 +210,69 @@ function AdminOpportunitiesPage() {
             </Button>
           </div>
 
+          {/* Search · sort · tag filters (only once there are opportunities) */}
+          {opportunities && opportunities.length > 0 && (
+            <div className="mb-4 space-y-3">
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+                  <Input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search by title, description or tag…"
+                    className="pl-9"
+                  />
+                </div>
+                <Select
+                  value={sort}
+                  onValueChange={(v) => setSort(v as SortKey)}
+                >
+                  <SelectTrigger className="sm:w-56">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(SORT_LABELS) as Array<SortKey>).map((k) => (
+                      <SelectItem key={k} value={k}>
+                        Sort: {SORT_LABELS[k]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {allTags.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {allTags.map((tag) => {
+                    const active = selectedTags.includes(tag)
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => toggleTag(tag)}
+                        className={`text-xs rounded-full border px-2.5 py-1 transition-colors ${
+                          active
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'border-input text-muted-foreground hover:bg-muted hover:text-foreground'
+                        }`}
+                      >
+                        {tag}
+                      </button>
+                    )
+                  })}
+                  {selectedTags.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTags([])}
+                      className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+                    >
+                      <X className="size-3" /> Clear
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* List */}
           {opportunities === undefined ? (
             <div className="py-12 text-center">
@@ -155,9 +290,16 @@ function AdminOpportunitiesPage() {
                 Create First Opportunity
               </Button>
             </Card>
+          ) : visibleOpportunities.length === 0 ? (
+            <Card className="p-8 text-center">
+              <Search className="size-8 text-slate-400 mx-auto mb-4" />
+              <p className="text-muted-foreground">
+                No opportunities match your search or filters.
+              </p>
+            </Card>
           ) : (
             <div className="space-y-3">
-              {opportunities.map((opp) => {
+              {visibleOpportunities.map((opp) => {
                 const fieldCount = Array.isArray(opp.formFields)
                   ? (opp.formFields as Array<unknown>).length
                   : 0
@@ -190,6 +332,19 @@ function AdminOpportunitiesPage() {
                             </>
                           )}
                         </div>
+                        {opp.tags && opp.tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {opp.tags.map((t) => (
+                              <Badge
+                                key={t}
+                                variant="secondary"
+                                className="text-[10px] px-1.5 py-0 font-normal"
+                              >
+                                {t}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
                       <Badge

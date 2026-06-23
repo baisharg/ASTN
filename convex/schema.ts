@@ -1380,6 +1380,7 @@ export default defineSchema({
     externalUrl: v.optional(v.string()),
     featured: v.boolean(),
     formFields: v.optional(v.any()), // Array<FormField> — see convex/lib/formFields.ts
+    tags: v.optional(v.array(v.string())), // freeform labels for grouping/filtering (e.g. "TAIS Course")
     redirectOpportunityId: v.optional(v.id('orgOpportunities')),
     sourceOpportunityId: v.optional(v.id('orgOpportunities')),
     createdAt: v.number(),
