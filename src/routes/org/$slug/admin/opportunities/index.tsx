@@ -48,6 +48,14 @@ const TYPE_LABELS: Record<string, string> = {
 }
 
 type SortKey = 'recent' | 'deadline' | 'title' | 'status'
+type StatusFilter = 'all' | 'active' | 'draft' | 'closed'
+
+const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
+  all: 'All statuses',
+  active: 'Active',
+  draft: 'Draft',
+  closed: 'Closed',
+}
 
 const SORT_LABELS: Record<SortKey, string> = {
   recent: 'Newest first',
@@ -58,6 +66,22 @@ const SORT_LABELS: Record<SortKey, string> = {
 
 // Order for the "status" sort: live ones first, then drafts, then closed.
 const STATUS_ORDER: Record<string, number> = { active: 0, draft: 1, closed: 2 }
+
+// Preferred display order for the tag filter chips. Tags not listed here fall
+// after these, sorted alphabetically.
+const TAG_ORDER = [
+  'TAIS Course',
+  'TAIS Projects',
+  'EOI',
+  'Governance',
+  'Feedback',
+  'Intensive',
+  'Part-time',
+]
+const tagRank = (tag: string) => {
+  const i = TAG_ORDER.indexOf(tag)
+  return i === -1 ? TAG_ORDER.length : i
+}
 
 function AdminOpportunitiesPage() {
   const { slug } = Route.useParams()
@@ -76,12 +100,13 @@ function AdminOpportunitiesPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<SortKey>('recent')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [selectedTags, setSelectedTags] = useState<Array<string>>([])
 
-  // All tags in use across the org's opportunities (sorted, for the filter bar).
+  // All tags in use across the org's opportunities, in the preferred order.
   const allTags = Array.from(
     new Set((opportunities ?? []).flatMap((o) => o.tags ?? [])),
-  ).sort((a, b) => a.localeCompare(b))
+  ).sort((a, b) => tagRank(a) - tagRank(b) || a.localeCompare(b))
 
   const toggleTag = (tag: string) =>
     setSelectedTags((prev) =>
@@ -92,6 +117,7 @@ function AdminOpportunitiesPage() {
   const q = search.trim().toLowerCase()
   const visibleOpportunities = (opportunities ?? [])
     .filter((opp) => {
+      if (statusFilter !== 'all' && opp.status !== statusFilter) return false
       if (q) {
         const haystack = [opp.title, opp.description, ...(opp.tags ?? [])]
           .join(' ')
@@ -223,6 +249,23 @@ function AdminOpportunitiesPage() {
                     className="pl-9"
                   />
                 </div>
+                <Select
+                  value={statusFilter}
+                  onValueChange={(v) => setStatusFilter(v as StatusFilter)}
+                >
+                  <SelectTrigger className="sm:w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(STATUS_FILTER_LABELS) as Array<StatusFilter>).map(
+                      (k) => (
+                        <SelectItem key={k} value={k}>
+                          {STATUS_FILTER_LABELS[k]}
+                        </SelectItem>
+                      ),
+                    )}
+                  </SelectContent>
+                </Select>
                 <Select
                   value={sort}
                   onValueChange={(v) => setSort(v as SortKey)}
