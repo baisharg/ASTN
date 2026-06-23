@@ -1101,15 +1101,6 @@ function AvailabilityTab({
             pollResults.responses as unknown as Array<AvailabilityResponse>
           }
           totalRespondents={totalRespondents}
-          qualityScores={
-            respondentLinks
-              ? Object.fromEntries(
-                  respondentLinks
-                    .filter((r) => r.qualityScore !== undefined)
-                    .map((r) => [r.respondentName, r.qualityScore!]),
-                )
-              : undefined
-          }
         />
       )}
 

@@ -641,7 +641,6 @@ export const getRespondentLinks = query({
       respondentToken: v.string(),
       respondentName: v.string(),
       applicationId: v.id('opportunityApplications'),
-      qualityScore: v.optional(v.number()),
     }),
   ),
   handler: async (ctx, { pollId }) => {
@@ -667,7 +666,6 @@ export const getRespondentLinks = query({
           respondentToken: respondent.respondentToken,
           respondentName,
           applicationId: respondent.applicationId,
-          qualityScore: application?.qualityScore,
         }
       }),
     )

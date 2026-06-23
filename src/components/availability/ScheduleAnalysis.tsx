@@ -17,7 +17,6 @@ interface ScheduleAnalysisProps {
   slotDurationMinutes: number
   responses: Array<AvailabilityResponse>
   totalRespondents: number
-  qualityScores?: Record<string, number>
 }
 
 interface BlockAnalysis {
@@ -58,7 +57,6 @@ export function ScheduleAnalysis({
   slotDurationMinutes,
   responses,
   totalRespondents,
-  qualityScores,
 }: ScheduleAnalysisProps) {
   const [sessionHoursInput, setSessionHoursInput] = useState('')
   const [expandedBlock, setExpandedBlock] = useState<number | null>(null)
@@ -103,10 +101,6 @@ export function ScheduleAnalysis({
         const unavailable: Array<string> = []
 
         for (const resp of responses) {
-          const weight =
-            qualityScores !== undefined
-              ? (qualityScores[resp.respondentName] ?? 50) / 100
-              : 1
           const slotStatuses: Array<string | undefined> = blockSlotMinutes.map(
             (mins) => resp.slots[`${day}|${mins}`],
           )
@@ -117,10 +111,10 @@ export function ScheduleAnalysis({
 
           if (allAvailable) {
             available.push(resp.respondentName)
-            totalAvailable += weight
+            totalAvailable += 1
           } else if (allAvailableOrMaybe) {
             maybe.push(resp.respondentName)
-            totalMaybe += weight
+            totalMaybe += 1
           } else {
             unavailable.push(resp.respondentName)
           }
@@ -155,7 +149,6 @@ export function ScheduleAnalysis({
     endMinutes,
     days,
     responses,
-    qualityScores,
   ])
 
   return (

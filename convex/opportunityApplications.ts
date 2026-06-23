@@ -349,8 +349,6 @@ export const getMyApplication = query({
       reviewedAt: v.optional(v.number()),
       reviewedBy: v.optional(v.string()),
       reviewNotes: v.optional(v.string()),
-      qualityScore: v.optional(v.number()),
-      qualityScoreReason: v.optional(v.string()),
     }),
     v.null(),
   ),
@@ -468,8 +466,6 @@ export const listByOpportunity = query({
       reviewedAt: v.optional(v.number()),
       reviewedBy: v.optional(v.string()),
       reviewNotes: v.optional(v.string()),
-      qualityScore: v.optional(v.number()),
-      qualityScoreReason: v.optional(v.string()),
     }),
   ),
   handler: async (ctx, { opportunityId, statusFilter }) => {
@@ -726,43 +722,6 @@ export const updateStatus = mutation({
   },
 })
 
-// Admin: set quality score for an application (0–100)
-export const setQualityScore = mutation({
-  args: {
-    applicationId: v.id('opportunityApplications'),
-    qualityScore: v.number(),
-    reason: v.optional(v.string()),
-  },
-  returns: v.null(),
-  handler: async (ctx, { applicationId, qualityScore, reason }) => {
-    const userId = await getUserId(ctx)
-    if (!userId) throw new ConvexError('Not authenticated')
-
-    const application = await ctx.db.get(
-      'opportunityApplications',
-      applicationId,
-    )
-    if (!application) throw new ConvexError('Application not found')
-
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .filter((q) => q.eq(q.field('orgId'), application.orgId))
-      .first()
-
-    if (!membership || membership.role !== 'admin') {
-      throw new ConvexError('Admin access required')
-    }
-
-    await ctx.db.patch('opportunityApplications', applicationId, {
-      qualityScore,
-      ...(reason !== undefined ? { qualityScoreReason: reason } : {}),
-    })
-
-    return null
-  },
-})
-
 // Internal query for export action
 export const listForExport = internalQuery({
   args: { opportunityId: v.id('orgOpportunities') },
@@ -788,8 +747,6 @@ export const listForExport = internalQuery({
       reviewedAt: v.optional(v.number()),
       reviewedBy: v.optional(v.string()),
       reviewNotes: v.optional(v.string()),
-      qualityScore: v.optional(v.number()),
-      qualityScoreReason: v.optional(v.string()),
     }),
   ),
   handler: async (ctx, { opportunityId }) => {
@@ -826,8 +783,6 @@ export const exportApplications = action({
           submittedAt: number
           status: string
           guestEmail?: string
-          qualityScore?: number
-          qualityScoreReason?: string
         }>
       >,
       ctx.runQuery(internal.orgOpportunities.getInternal, {
@@ -865,8 +820,6 @@ export const exportApplications = action({
       ...inputFields.map((f) => f.label),
       'Submitted at',
       'Status',
-      'Quality Score',
-      'Score Reasoning',
     ]
 
     const rows = applications.map((app) => {
@@ -875,8 +828,6 @@ export const exportApplications = action({
         ...inputFields.map((f) => formatCell(r[f.key])),
         new Date(app.submittedAt).toISOString(),
         app.status,
-        app.qualityScore !== undefined ? String(app.qualityScore) : '',
-        app.qualityScoreReason ?? '',
       ].map((cell) => escapeCSV(cell))
     })
 
