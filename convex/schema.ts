@@ -1381,6 +1381,9 @@ export default defineSchema({
     featured: v.boolean(),
     formFields: v.optional(v.any()), // Array<FormField> — see convex/lib/formFields.ts
     tags: v.optional(v.array(v.string())), // freeform labels for grouping/filtering (e.g. "TAIS Course")
+    // When true, applicants are auto-emailed the availability poll link on
+    // submit (skipped for EOIs). See opportunityApplications submit handlers.
+    autoSendAvailabilityEmail: v.optional(v.boolean()),
     redirectOpportunityId: v.optional(v.id('orgOpportunities')),
     sourceOpportunityId: v.optional(v.id('orgOpportunities')),
     createdAt: v.number(),
@@ -1403,6 +1406,7 @@ export default defineSchema({
       v.literal('accepted'),
       v.literal('rejected'),
       v.literal('waitlisted'),
+      v.literal('participated'),
     ),
     responses: v.any(),
     submittedAt: v.number(),

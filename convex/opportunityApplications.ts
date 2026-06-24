@@ -6,7 +6,8 @@ import { resolveApplicantDisplayName } from './lib/applicantName'
 import { rateLimiter } from './lib/rateLimiter'
 import { internal } from './_generated/api'
 import type { MutationCtx } from './_generated/server'
-import type { Id } from './_generated/dataModel'
+import type { Doc, Id } from './_generated/dataModel'
+import { inferBaishCourseState } from './lib/baishCourseOpportunities'
 import {
   PROFILE_PREFILL_KEYS,
   sanitizeResponsesForForm,
@@ -104,6 +105,51 @@ async function maybeScheduleAutoEmail(
   }
 }
 
+/**
+ * Auto-send the availability poll email to an applicant on submit, when the
+ * opportunity opts in (autoSendAvailabilityEmail) and isn't an EOI. Skipped if a
+ * custom `new_application` auto-email is configured (that path handles it, so we
+ * don't double-send). Fails silently — never blocks the submission.
+ */
+async function maybeScheduleAvailabilityEmail(
+  ctx: MutationCtx,
+  opts: {
+    opportunity: Doc<'orgOpportunities'>
+    applicationId: Id<'opportunityApplications'>
+  },
+) {
+  try {
+    const opp = opts.opportunity
+    if (!opp.autoSendAvailabilityEmail) return
+
+    // Never auto-send for EOIs (expression-of-interest opportunities).
+    const isEOI =
+      inferBaishCourseState(opp.title, opp.description) === 'eoi_open' ||
+      (opp.tags ?? []).includes('EOI')
+    if (isEOI) return
+
+    // If a custom new_application auto-email is configured, let that handle it.
+    const config = await ctx.db
+      .query('opportunityAutoEmails')
+      .withIndex('by_opportunity', (q) => q.eq('opportunityId', opp._id))
+      .first()
+    const hasCustomNewApp =
+      !!config?.enabled &&
+      ((config.templates?.some((t) => t.trigger === 'new_application') ??
+        false) ||
+        (config.triggers?.includes('new_application') ?? false))
+    if (hasCustomNewApp) return
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.emails.autoEmail.sendAvailabilityEmail,
+      { applicationId: opts.applicationId },
+    )
+  } catch (err) {
+    console.error('Failed to schedule availability email:', err)
+  }
+}
+
 // Submit an application (idempotent — returns existing if already applied)
 // Auto-joins the org if the user is not already a member.
 export const submit = mutation({
@@ -194,6 +240,7 @@ export const submit = mutation({
       applicationId,
       trigger: 'new_application',
     })
+    await maybeScheduleAvailabilityEmail(ctx, { opportunity, applicationId })
 
     return applicationId
   },
@@ -255,6 +302,7 @@ export const submitGuest = mutation({
       applicationId,
       trigger: 'new_application',
     })
+    await maybeScheduleAvailabilityEmail(ctx, { opportunity, applicationId })
 
     return applicationId
   },
@@ -342,6 +390,7 @@ export const getMyApplication = query({
         v.literal('accepted'),
         v.literal('rejected'),
         v.literal('waitlisted'),
+        v.literal('participated'),
       ),
       responses: v.any(),
       submittedAt: v.number(),
@@ -441,6 +490,7 @@ export const listByOpportunity = query({
         v.literal('accepted'),
         v.literal('rejected'),
         v.literal('waitlisted'),
+        v.literal('participated'),
       ),
     ),
   },
@@ -459,6 +509,7 @@ export const listByOpportunity = query({
         v.literal('accepted'),
         v.literal('rejected'),
         v.literal('waitlisted'),
+        v.literal('participated'),
       ),
       responses: v.any(),
       submittedAt: v.number(),
@@ -521,6 +572,7 @@ export const listRecipientsByOpportunity = query({
         v.literal('accepted'),
         v.literal('rejected'),
         v.literal('waitlisted'),
+        v.literal('participated'),
       ),
       name: v.string(),
       email: v.string(),
@@ -672,6 +724,7 @@ export const updateStatus = mutation({
       v.literal('accepted'),
       v.literal('rejected'),
       v.literal('waitlisted'),
+      v.literal('participated'),
     ),
     reviewNotes: v.optional(v.string()),
   },
@@ -740,6 +793,7 @@ export const listForExport = internalQuery({
         v.literal('accepted'),
         v.literal('rejected'),
         v.literal('waitlisted'),
+        v.literal('participated'),
       ),
       responses: v.any(),
       submittedAt: v.number(),

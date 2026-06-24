@@ -85,16 +85,23 @@ export const mcpHandler = httpAction(async (ctx, request) => {
         protocolVersion,
         capabilities: { tools: {} },
         serverInfo: {
-          name: 'astn-crm',
-          title: 'ASTN CRM',
-          version: '0.1.0',
+          name: 'astn',
+          title: 'ASTN',
+          version: '0.2.0',
         },
         instructions:
-          'CRM database of an ASTN organization (contacts, organizations, ' +
-          'opportunities, submissions). Start with list_my_orgs to find your ' +
-          'org slug, crm_stats for an overview, and crm_fields before ' +
-          'creating or updating records. All access is scoped to orgs where ' +
-          'the signed-in user is an admin.',
+          'Manage an ASTN organization: members, opportunities, applications, ' +
+          'programs (modules/sessions/participants), feedback surveys, ' +
+          'availability polls, co-working spaces/bookings, events, member ' +
+          'engagement, and the CRM (contacts/organizations/opportunities/' +
+          'submissions). Start with list_my_orgs for your org slug, ' +
+          'astn_resources to discover the data model, and astn_stats for an ' +
+          'overview. Generic verbs astn_list/get/create/update/delete take a ' +
+          '`resource`; survey_results and availability_heatmap return ' +
+          'aggregated data. All access is scoped to orgs where the signed-in ' +
+          'user is an admin. Reads cover the whole org; writes are limited to ' +
+          'safe changes — sending emails, changing application decisions, ' +
+          'membership changes and publishing/finalizing are not exposed yet.',
       })
     }
     case 'ping':

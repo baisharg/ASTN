@@ -13,6 +13,7 @@ export const applicationStatusValidator = v.union(
   v.literal('accepted'),
   v.literal('rejected'),
   v.literal('waitlisted'),
+  v.literal('participated'),
 )
 
 /**

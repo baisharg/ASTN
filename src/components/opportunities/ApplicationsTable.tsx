@@ -31,6 +31,7 @@ export type ApplicationStatus =
   | 'accepted'
   | 'rejected'
   | 'waitlisted'
+  | 'participated'
 
 const STATUS_LABELS: Record<ApplicationStatus, string> = {
   submitted: 'Submitted',
@@ -38,6 +39,7 @@ const STATUS_LABELS: Record<ApplicationStatus, string> = {
   accepted: 'Accepted',
   rejected: 'Rejected',
   waitlisted: 'Waitlisted',
+  participated: 'Participated',
 }
 
 const STATUS_COLORS: Record<ApplicationStatus, string> = {
@@ -46,6 +48,7 @@ const STATUS_COLORS: Record<ApplicationStatus, string> = {
   accepted: 'bg-green-50 text-green-700 border-green-200',
   rejected: 'bg-red-50 text-red-700 border-red-200',
   waitlisted: 'bg-purple-50 text-purple-700 border-purple-200',
+  participated: 'bg-teal-50 text-teal-700 border-teal-200',
 }
 
 export function ApplicationsTable({
@@ -117,6 +120,7 @@ export function ApplicationsTable({
               <SelectItem value="accepted">Accepted</SelectItem>
               <SelectItem value="rejected">Rejected</SelectItem>
               <SelectItem value="waitlisted">Waitlisted</SelectItem>
+              <SelectItem value="participated">Participated</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -288,6 +292,7 @@ function ApplicationDetail({
             <SelectItem value="accepted">Accepted</SelectItem>
             <SelectItem value="rejected">Rejected</SelectItem>
             <SelectItem value="waitlisted">Waitlisted</SelectItem>
+            <SelectItem value="participated">Participated</SelectItem>
           </SelectContent>
         </Select>
       </div>

@@ -51,6 +51,8 @@ export function OpportunityFormDialog({
   const [deadlineStr, setDeadlineStr] = useState('')
   const [externalUrl, setExternalUrl] = useState('')
   const [featured, setFeatured] = useState(false)
+  const [autoSendAvailabilityEmail, setAutoSendAvailabilityEmail] =
+    useState(true)
   const [isSaving, setIsSaving] = useState(false)
 
   const canSave = title.trim() && description.trim()
@@ -69,6 +71,7 @@ export function OpportunityFormDialog({
         deadline,
         externalUrl: externalUrl.trim() || undefined,
         featured,
+        autoSendAvailabilityEmail,
       })
       onOpenChange(false)
       void navigate({
@@ -184,6 +187,22 @@ export function OpportunityFormDialog({
             />
             <span className="text-sm">
               Featured opportunity (shown on org landing page)
+            </span>
+          </label>
+
+          <label className="flex items-start gap-2 cursor-pointer">
+            <Checkbox
+              checked={autoSendAvailabilityEmail}
+              onCheckedChange={(checked) =>
+                setAutoSendAvailabilityEmail(checked === true)
+              }
+            />
+            <span className="text-sm">
+              Auto-send the availability email when someone applies
+              <span className="block text-xs text-muted-foreground">
+                Applicants get the availability poll link on submit. Not sent
+                for EOIs.
+              </span>
             </span>
           </label>
         </div>

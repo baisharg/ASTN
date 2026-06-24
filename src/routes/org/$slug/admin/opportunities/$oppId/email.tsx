@@ -50,6 +50,7 @@ type ApplicationStatus =
   | 'accepted'
   | 'rejected'
   | 'waitlisted'
+  | 'participated'
 
 const ALL_STATUSES: Array<{
   value: ApplicationStatus
@@ -60,6 +61,7 @@ const ALL_STATUSES: Array<{
   { value: 'accepted', label: 'Accepted' },
   { value: 'rejected', label: 'Rejected' },
   { value: 'waitlisted', label: 'Waitlisted' },
+  { value: 'participated', label: 'Participated' },
 ]
 
 /**

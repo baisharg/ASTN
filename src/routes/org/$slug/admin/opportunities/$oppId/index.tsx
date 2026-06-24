@@ -665,7 +665,11 @@ function OpportunityEditPage() {
             </TabsContent>
 
             <TabsContent value="availability" className="mt-6">
-              <AvailabilityTab opportunityId={opportunity._id} slug={slug} />
+              <AvailabilityTab
+                opportunity={opportunity}
+                opportunityId={opportunity._id}
+                slug={slug}
+              />
             </TabsContent>
 
             <TabsContent value="feedback" className="mt-6">
@@ -686,12 +690,16 @@ function OpportunityEditPage() {
 // ─── Availability Tab ───
 
 function AvailabilityTab({
+  opportunity,
   opportunityId,
   slug,
 }: {
+  opportunity: Doc<'orgOpportunities'>
   opportunityId: Id<'orgOpportunities'>
   slug: string
 }) {
+  const updateOpportunity = useMutation(api.orgOpportunities.update)
+
   const poll = useQuery(api.availabilityPolls.getPollByOpportunity, {
     opportunityId,
   })
@@ -833,6 +841,37 @@ function AvailabilityTab({
 
   return (
     <div className="space-y-6">
+      {/* Auto-send availability email toggle */}
+      <Card>
+        <CardContent className="flex items-center justify-between gap-4 py-4">
+          <div>
+            <p className="text-sm font-medium">Auto-send availability email</p>
+            <p className="text-xs text-muted-foreground">
+              When someone applies, email them this poll&apos;s link
+              automatically. Not sent for EOIs.
+            </p>
+          </div>
+          <Switch
+            checked={opportunity.autoSendAvailabilityEmail ?? false}
+            onCheckedChange={async (checked) => {
+              try {
+                await updateOpportunity({
+                  id: opportunity._id,
+                  autoSendAvailabilityEmail: checked,
+                })
+                toast.success(
+                  checked
+                    ? 'Auto-send enabled'
+                    : 'Auto-send disabled',
+                )
+              } catch {
+                toast.error('Failed to update setting')
+              }
+            }}
+          />
+        </CardContent>
+      </Card>
+
       {/* Poll info card */}
       <Card>
         <CardHeader>

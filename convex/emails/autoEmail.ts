@@ -127,3 +127,92 @@ export const sendAutoEmail = internalAction({
     return null
   },
 })
+
+/**
+ * Send the built-in availability poll email to an applicant. Used by the
+ * per-opportunity "auto-send availability email" toggle — no admin-authored
+ * template required. Skips silently if there's no poll link for the applicant.
+ */
+export const sendAvailabilityEmail = internalAction({
+  args: { applicationId: v.id('opportunityApplications') },
+  returns: v.null(),
+  handler: async (ctx, { applicationId }) => {
+    const data: {
+      application: { _id: string; opportunityId: string; orgId: string }
+    } | null = await ctx.runQuery(
+      internal.emails.autoEmailHelpers.getApplicationAndConfig,
+      { applicationId },
+    )
+    if (!data) return null
+
+    const recipientData: {
+      email: string
+      name: string
+      pollToken: {
+        accessToken: string
+        respondentToken: string
+        orgSlug: string
+      } | null
+    } | null = await ctx.runQuery(
+      internal.emails.autoEmailHelpers.getRecipientAndPollToken,
+      { applicationId },
+    )
+    if (!recipientData) return null
+
+    // The availability email is meaningless without a poll link — skip.
+    if (!recipientData.pollToken) return null
+    const baseUrl = process.env.SITE_URL ?? 'https://safetytalent.org'
+    const { orgSlug, accessToken, respondentToken } = recipientData.pollToken
+    const pollLink = `${baseUrl}/org/${orgSlug}/poll/${accessToken}/${respondentToken}`
+
+    const subject = 'Share your availability'
+    const markdownBody =
+      `Hi ${recipientData.name},\n\n` +
+      `Thanks for applying! To help us schedule sessions that work for you, ` +
+      `please fill out your availability here:\n\n` +
+      `[Set your availability](${pollLink})\n\n` +
+      `It only takes a minute — thank you!`
+
+    const bodyHtml: string = await marked(emojify(markdownBody), {
+      breaks: true,
+      gfm: true,
+    })
+    const html: string = await renderAdminBroadcast({
+      userName: recipientData.name,
+      bodyHtml,
+    })
+    const opportunityId = data.application
+      .opportunityId as Id<'orgOpportunities'>
+
+    try {
+      await ctx.runMutation(internal.emails.adminBroadcast.sendSingleEmail, {
+        to: recipientData.email,
+        subject,
+        html,
+      })
+      await ctx.runMutation(internal.emails.autoEmailHelpers.logAutoEmail, {
+        opportunityId,
+        applicationId,
+        recipientEmail: recipientData.email,
+        recipientName: recipientData.name,
+        trigger: 'availability',
+        subject,
+        status: 'sent',
+      })
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+      await ctx.runMutation(internal.emails.autoEmailHelpers.logAutoEmail, {
+        opportunityId,
+        applicationId,
+        recipientEmail: recipientData.email,
+        recipientName: recipientData.name,
+        trigger: 'availability',
+        subject,
+        status: 'failed',
+        error: errorMessage,
+      })
+    }
+
+    return null
+  },
+})

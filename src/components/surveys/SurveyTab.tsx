@@ -53,6 +53,7 @@ const ALL_STATUSES = [
   { value: 'accepted', label: 'Accepted' },
   { value: 'rejected', label: 'Rejected' },
   { value: 'waitlisted', label: 'Waitlisted' },
+  { value: 'participated', label: 'Participated' },
 ] as const
 
 interface SurveyTabProps {
