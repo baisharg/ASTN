@@ -10,6 +10,7 @@ import {
 } from './lib/baishCourseOpportunities'
 import { getUserId } from './lib/auth'
 import { sanitizeFormFieldKeys } from './lib/formFields'
+import { createDefaultPollForOpportunity } from './availabilityPolls'
 
 // Normalize freeform tags: trim, drop empties, dedupe (case-insensitive,
 // keeping the first-seen casing), cap length. Returns undefined for an empty
@@ -332,7 +333,7 @@ export const create = mutation({
     }
 
     const now = Date.now()
-    return await ctx.db.insert('orgOpportunities', {
+    const opportunityId = await ctx.db.insert('orgOpportunities', {
       ...args,
       ...(args.formFields !== undefined && {
         formFields: sanitizeFormFieldKeys(args.formFields),
@@ -341,6 +342,16 @@ export const create = mutation({
       createdAt: now,
       updatedAt: now,
     })
+
+    // Auto-provision a default availability poll so every opportunity ships
+    // with one (admins can reconfigure by deleting + recreating).
+    await createDefaultPollForOpportunity(ctx, {
+      opportunityId,
+      orgId: args.orgId,
+      createdBy: userId,
+    })
+
+    return opportunityId
   },
 })
 

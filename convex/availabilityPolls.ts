@@ -1,5 +1,7 @@
 import { ConvexError, v } from 'convex/values'
 import { action, internalQuery, mutation, query } from './_generated/server'
+import type { MutationCtx } from './_generated/server'
+import type { Id } from './_generated/dataModel'
 import { internal } from './_generated/api'
 import { getUserId } from './lib/auth'
 import {
@@ -50,6 +52,77 @@ const responseReturnValidator = v.object({
   slots: v.record(v.string(), slotValueValidator),
   updatedAt: v.number(),
 })
+
+// Default config for auto-provisioned polls (mirrors PollCreationForm's
+// defaults): generic week Mon–Fri, 9:00–18:00, 30-minute slots.
+export const DEFAULT_POLL = {
+  days: [0, 1, 2, 3, 4],
+  startMinutes: 540,
+  endMinutes: 1080,
+  slotDurationMinutes: 30,
+  timezone: 'America/Argentina/Buenos_Aires',
+} as const
+
+// Create a default availability poll for an opportunity (unless it already has
+// an active one) and seed respondent rows for its current applicants. Shared by
+// opportunity auto-provisioning and the backfill migration. Returns the new
+// poll id, or null if an active poll already exists (idempotent).
+export async function createDefaultPollForOpportunity(
+  ctx: MutationCtx,
+  opts: {
+    opportunityId: Id<'orgOpportunities'>
+    orgId: Id<'organizations'>
+    createdBy: string
+  },
+): Promise<Id<'availabilityPolls'> | null> {
+  const existing = await ctx.db
+    .query('availabilityPolls')
+    .withIndex('by_opportunity', (q) =>
+      q.eq('opportunityId', opts.opportunityId),
+    )
+    .collect()
+  if (existing.some((p) => p.status === 'open' || p.status === 'closed'))
+    return null
+
+  const now = Date.now()
+  const pollId = await ctx.db.insert('availabilityPolls', {
+    opportunityId: opts.opportunityId,
+    orgId: opts.orgId,
+    createdBy: opts.createdBy,
+    title: 'Availability',
+    timezone: DEFAULT_POLL.timezone,
+    days: [...DEFAULT_POLL.days],
+    startMinutes: DEFAULT_POLL.startMinutes,
+    endMinutes: DEFAULT_POLL.endMinutes,
+    slotDurationMinutes: DEFAULT_POLL.slotDurationMinutes,
+    accessToken: crypto.randomUUID(),
+    status: 'open',
+    createdAt: now,
+    updatedAt: now,
+  })
+
+  // Seed respondent rows for current applicants (none yet for brand-new opps).
+  const applications = await ctx.db
+    .query('opportunityApplications')
+    .withIndex('by_opportunity_and_status', (q) =>
+      q.eq('opportunityId', opts.opportunityId),
+    )
+    .collect()
+  for (const app of applications) {
+    const name = await resolveApplicantDisplayNameFromApplication(
+      ctx.db,
+      app,
+      'Applicant',
+    )
+    await ctx.db.insert('pollRespondents', {
+      pollId,
+      applicationId: app._id,
+      respondentToken: crypto.randomUUID(),
+      respondentName: name,
+    })
+  }
+  return pollId
+}
 
 // ─── Admin mutations ───
 
