@@ -66,8 +66,8 @@ const SLOT_DURATIONS = [
   { value: 60, label: '60 min' },
 ] as const
 
-// Default selection: weekdays (Mon–Fri). Admin can toggle any day on/off.
-const DEFAULT_DAYS = [0, 1, 2, 3, 4]
+// Default selection: Mon–Sat. Admin can toggle any day on/off.
+const DEFAULT_DAYS = [0, 1, 2, 3, 4, 5]
 
 function getDefaultTimezone(): string {
   try {
@@ -88,7 +88,7 @@ export function PollCreationForm({
   const [title, setTitle] = useState('')
   const [days, setDays] = useState<Array<number>>(DEFAULT_DAYS)
   const [startTime, setStartTime] = useState(540)
-  const [endTime, setEndTime] = useState(1080)
+  const [endTime, setEndTime] = useState(1260)
   const [slotDuration, setSlotDuration] = useState(30)
   const [timezone, setTimezone] = useState(getDefaultTimezone)
   const [isSubmitting, setIsSubmitting] = useState(false)

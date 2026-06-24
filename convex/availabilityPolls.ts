@@ -54,11 +54,11 @@ const responseReturnValidator = v.object({
 })
 
 // Default config for auto-provisioned polls (mirrors PollCreationForm's
-// defaults): generic week Mon–Fri, 9:00–18:00, 30-minute slots.
+// defaults): generic week Mon–Sat, 9:00–21:00, 30-minute slots.
 export const DEFAULT_POLL = {
-  days: [0, 1, 2, 3, 4],
+  days: [0, 1, 2, 3, 4, 5],
   startMinutes: 540,
-  endMinutes: 1080,
+  endMinutes: 1260,
   slotDurationMinutes: 30,
   timezone: 'America/Argentina/Buenos_Aires',
 } as const
