@@ -1384,6 +1384,12 @@ export default defineSchema({
     // When true, applicants are auto-emailed the availability poll link on
     // submit (skipped for EOIs). See opportunityApplications submit handlers.
     autoSendAvailabilityEmail: v.optional(v.boolean()),
+    // Explicit expression-of-interest marker (replaces title/tag inference).
+    // EOIs default the on-apply confirmation email to OFF.
+    isEOI: v.optional(v.boolean()),
+    // Email template set this opportunity inherits (issue #20). When set, the
+    // outbox system handles decision emails and legacy auto-emails are skipped.
+    emailTemplateSetId: v.optional(v.id('emailTemplateSets')),
     redirectOpportunityId: v.optional(v.id('orgOpportunities')),
     sourceOpportunityId: v.optional(v.id('orgOpportunities')),
     createdAt: v.number(),
@@ -1405,6 +1411,7 @@ export default defineSchema({
       v.literal('under_review'),
       v.literal('accepted'),
       v.literal('rejected'),
+      v.literal('redirected'), // "Fit for another course"
       v.literal('waitlisted'),
       v.literal('participated'),
     ),
@@ -1579,6 +1586,83 @@ export default defineSchema({
     status: v.union(v.literal('sent'), v.literal('failed')),
     error: v.optional(v.string()),
   }).index('by_opportunity', ['opportunityId']),
+
+  // ── Email redesign (issue #20): template sets, outbox, unified log ────────
+
+  // Org-level library of email template sets (e.g. "TAIS", "Governance").
+  // A set always holds one template per kind — created together, so a linked
+  // opportunity can never hit a missing template.
+  emailTemplateSets: defineTable({
+    orgId: v.id('organizations'),
+    name: v.string(),
+    createdBy: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_org', ['orgId']),
+
+  // Templates. Library templates carry setId; per-opportunity overrides carry
+  // opportunityId instead (exactly one of the two is set).
+  emailTemplates: defineTable({
+    orgId: v.id('organizations'),
+    setId: v.optional(v.id('emailTemplateSets')),
+    opportunityId: v.optional(v.id('orgOpportunities')),
+    kind: v.union(
+      v.literal('application_received'),
+      v.literal('accepted'),
+      v.literal('rejected'),
+      v.literal('redirected'),
+      v.literal('waitlisted'),
+    ),
+    subject: v.string(),
+    markdownBody: v.string(),
+    updatedAt: v.number(),
+  })
+    .index('by_set_and_kind', ['setId', 'kind'])
+    .index('by_opportunity_and_kind', ['opportunityId', 'kind']),
+
+  // Pending decision-email drafts. At most one draft per application; a status
+  // change replaces it. Sending moves the record into emailLog and deletes it.
+  emailOutbox: defineTable({
+    orgId: v.id('organizations'),
+    opportunityId: v.id('orgOpportunities'),
+    applicationId: v.id('opportunityApplications'),
+    kind: v.union(
+      v.literal('accepted'),
+      v.literal('rejected'),
+      v.literal('redirected'),
+      v.literal('waitlisted'),
+    ),
+    subject: v.string(),
+    markdownBody: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_opportunity', ['opportunityId'])
+    .index('by_application', ['applicationId']),
+
+  // Unified send log for every applicant email (outbox, auto, broadcast).
+  // Idempotency: one 'sent' row per (application, kind) — checked before any
+  // outbox send.
+  emailLog: defineTable({
+    orgId: v.id('organizations'),
+    opportunityId: v.id('orgOpportunities'),
+    applicationId: v.optional(v.id('opportunityApplications')),
+    recipientEmail: v.string(),
+    recipientName: v.string(),
+    kind: v.string(), // accepted/rejected/... | application_received | broadcast
+    source: v.union(
+      v.literal('outbox'),
+      v.literal('auto'),
+      v.literal('broadcast'),
+    ),
+    subject: v.string(),
+    sentAt: v.number(),
+    sentBy: v.string(), // admin userId, or 'system' for automatic sends
+    status: v.union(v.literal('sent'), v.literal('failed')),
+    error: v.optional(v.string()),
+  })
+    .index('by_opportunity', ['opportunityId'])
+    .index('by_application_and_kind', ['applicationId', 'kind']),
 
   // Admin agent chat history (per admin per org)
   adminAgentChats: defineTable({

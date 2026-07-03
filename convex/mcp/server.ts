@@ -87,7 +87,7 @@ export const mcpHandler = httpAction(async (ctx, request) => {
         serverInfo: {
           name: 'astn',
           title: 'ASTN',
-          version: '0.3.0',
+          version: '0.4.0',
         },
         instructions:
           'Manage an ASTN organization: members, opportunities, applications, ' +

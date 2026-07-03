@@ -49,6 +49,8 @@ const PLATFORM_READ = [
   'guest_applications',
   'events',
   'engagement',
+  'outbox',
+  'email_log',
 ]
 const PLATFORM_CREATE = ['programs', 'program_modules', 'program_sessions']
 const PLATFORM_UPDATE = Object.keys(UPDATE_FIELDS) // programs, modules, sessions, opportunities, surveys, polls, spaces
@@ -109,7 +111,7 @@ export const TOOL_DEFS = [
     description:
       `List records of a resource. Resources: ${READ_RESOURCES.join(', ')}. ` +
       'Optional filters (resource-dependent): `search` (CRM name/title), ' +
-      '`status`, `level` (engagement), `opportunityId` (applications/polls), ' +
+      '`status`, `level` (engagement), `opportunityId` (applications/polls; required for outbox/email_log), ' +
       '`programId` (required for program_modules/sessions/participants), ' +
       '`spaceId`/`date` (bookings/guest_applications). Returns at most `limit` (default 100, max 500).',
     inputSchema: {
@@ -118,7 +120,10 @@ export const TOOL_DEFS = [
         ...orgProp,
         resource: { type: 'string', enum: READ_RESOURCES },
         search: { type: 'string', description: 'CRM full-text on name/title.' },
-        status: { type: 'string', description: 'Filter by status where applicable.' },
+        status: {
+          type: 'string',
+          description: 'Filter by status where applicable.',
+        },
         level: { type: 'string', description: 'Engagement level filter.' },
         opportunityId: { type: 'string' },
         programId: { type: 'string' },
@@ -161,7 +166,10 @@ export const TOOL_DEFS = [
           type: 'string',
           description: 'Parent program (program_modules / program_sessions).',
         },
-        fields: { type: 'object', description: 'Field values by canonical key.' },
+        fields: {
+          type: 'object',
+          description: 'Field values by canonical key.',
+        },
       },
       required: ['org', 'resource', 'fields'],
     },
@@ -172,7 +180,7 @@ export const TOOL_DEFS = [
     description:
       `Update fields of a record. Updatable resources: ${UPDATE_RESOURCES.join(', ')}. ` +
       'Only allowlisted scalar fields can be changed (see astn_resources). For applications you ' +
-      'can set `status` (submitted/under_review/accepted/rejected/waitlisted/participated) and ' +
+      'can set `status` (submitted/under_review/accepted/rejected/redirected/waitlisted/participated) and ' +
       '`reviewNotes`; this records the decision inside ASTN and never emails the applicant. ' +
       'Other outward-facing actions (sending emails, publishing) are not exposed here. ' +
       'Only the provided keys change.',
@@ -269,7 +277,7 @@ const PLATFORM_FIELD_HINTS: Record<string, string> = {
 
 const PLATFORM_UPDATE_HINTS: Record<string, string> = {
   applications:
-    'status ∈ submitted|under_review|accepted|rejected|waitlisted|participated; reviewNotes is free text. Setting these records the decision in ASTN and stamps reviewedAt/reviewedBy — it does NOT email the applicant.',
+    'status ∈ submitted|under_review|accepted|rejected|redirected|waitlisted|participated (redirected = "Fit for another course"); reviewNotes is free text. Setting these records the decision in ASTN and stamps reviewedAt/reviewedBy — it does NOT email the applicant (decision emails are drafted into the outbox when the opportunity has a template set).',
 }
 
 function describeResource(resource: string) {
@@ -295,7 +303,9 @@ function describeAllResources() {
     update: UPDATE_RESOURCES.includes(r),
     delete: DELETE_RESOURCES.includes(r),
   })
-  const all = [...new Set([...READ_RESOURCES, ...CREATE_RESOURCES, ...UPDATE_RESOURCES])]
+  const all = [
+    ...new Set([...READ_RESOURCES, ...CREATE_RESOURCES, ...UPDATE_RESOURCES]),
+  ]
   return {
     resources: all.map(cap),
     note: 'Pass a `resource` to astn_resources for its field detail. Reads cover the whole org; writes are limited to safe changes. Setting an application status records the decision inside ASTN without emailing the applicant. Sending emails/broadcasts, membership changes, and publishing/finalizing are intentionally not exposed yet.',

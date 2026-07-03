@@ -8,6 +8,7 @@ import { internal } from './_generated/api'
 import type { MutationCtx } from './_generated/server'
 import type { Doc, Id } from './_generated/dataModel'
 import { inferBaishCourseState } from './lib/baishCourseOpportunities'
+import { isOutboxActive, syncOutboxOnStatusChange } from './emails/outbox'
 import {
   PROFILE_PREFILL_KEYS,
   sanitizeResponsesForForm,
@@ -389,6 +390,7 @@ export const getMyApplication = query({
         v.literal('under_review'),
         v.literal('accepted'),
         v.literal('rejected'),
+        v.literal('redirected'),
         v.literal('waitlisted'),
         v.literal('participated'),
       ),
@@ -489,6 +491,7 @@ export const listByOpportunity = query({
         v.literal('under_review'),
         v.literal('accepted'),
         v.literal('rejected'),
+        v.literal('redirected'),
         v.literal('waitlisted'),
         v.literal('participated'),
       ),
@@ -508,6 +511,7 @@ export const listByOpportunity = query({
         v.literal('under_review'),
         v.literal('accepted'),
         v.literal('rejected'),
+        v.literal('redirected'),
         v.literal('waitlisted'),
         v.literal('participated'),
       ),
@@ -571,6 +575,7 @@ export const listRecipientsByOpportunity = query({
         v.literal('under_review'),
         v.literal('accepted'),
         v.literal('rejected'),
+        v.literal('redirected'),
         v.literal('waitlisted'),
         v.literal('participated'),
       ),
@@ -723,6 +728,7 @@ export const updateStatus = mutation({
       v.literal('under_review'),
       v.literal('accepted'),
       v.literal('rejected'),
+      v.literal('redirected'),
       v.literal('waitlisted'),
       v.literal('participated'),
     ),
@@ -765,11 +771,29 @@ export const updateStatus = mutation({
       ...(reviewNotes !== undefined ? { reviewNotes } : {}),
     })
 
-    await maybeScheduleAutoEmail(ctx, {
-      opportunityId: application.opportunityId,
-      applicationId,
-      trigger: `status:${status}`,
-    })
+    // Outbox system (issue #20): opportunities with a linked template set get
+    // a pending decision-email draft instead of the legacy status auto-email.
+    // Deciding never sends — admins review and send from the outbox.
+    const opportunity = await ctx.db.get(
+      'orgOpportunities',
+      application.opportunityId,
+    )
+    if (opportunity && isOutboxActive(opportunity)) {
+      const updated = await ctx.db.get('opportunityApplications', applicationId)
+      if (updated) {
+        await syncOutboxOnStatusChange(ctx, {
+          application: updated,
+          status,
+          opportunity,
+        })
+      }
+    } else {
+      await maybeScheduleAutoEmail(ctx, {
+        opportunityId: application.opportunityId,
+        applicationId,
+        trigger: `status:${status}`,
+      })
+    }
 
     return null
   },
@@ -792,6 +816,7 @@ export const listForExport = internalQuery({
         v.literal('under_review'),
         v.literal('accepted'),
         v.literal('rejected'),
+        v.literal('redirected'),
         v.literal('waitlisted'),
         v.literal('participated'),
       ),

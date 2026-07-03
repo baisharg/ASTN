@@ -1,0 +1,264 @@
+import { ConvexError, v } from 'convex/values'
+import { mutation, query } from '../_generated/server'
+import type { MutationCtx, QueryCtx } from '../_generated/server'
+import type { Doc } from '../_generated/dataModel'
+import { getUserId, requireOrgAdminFor } from '../lib/auth'
+import { assertOnlyKnownVariables } from './outbox'
+
+// Org-level library of email template sets (issue #20). A set (e.g. "TAIS",
+// "Governance") holds exactly one template per kind — the five rows are
+// created together with the set, so a linked opportunity can never hit a
+// missing template. Opportunities link a set via emailTemplateSetId and
+// inherit everything; per-opportunity overrides live in the same table keyed
+// by opportunityId (phase 2 UI).
+
+export const EMAIL_KINDS = [
+  'application_received',
+  'accepted',
+  'rejected',
+  'redirected',
+  'waitlisted',
+] as const
+export type EmailKind = (typeof EMAIL_KINDS)[number]
+
+const emailKindValidator = v.union(
+  v.literal('application_received'),
+  v.literal('accepted'),
+  v.literal('rejected'),
+  v.literal('redirected'),
+  v.literal('waitlisted'),
+)
+
+// Skeleton content for a new set. Orgs edit these; they are valid (only
+// {{applicant_name}}) so a set is usable from the moment it exists.
+const DEFAULT_TEMPLATES: Record<
+  EmailKind,
+  { subject: string; markdownBody: string }
+> = {
+  application_received: {
+    subject: 'We received your application',
+    markdownBody:
+      'Hi {{applicant_name}},\n\nThanks for applying! We received your application and will get back to you soon.',
+  },
+  accepted: {
+    subject: 'Welcome — you have been accepted!',
+    markdownBody:
+      'Hi {{applicant_name}},\n\nCongratulations! You have been accepted. We will follow up shortly with next steps.',
+  },
+  rejected: {
+    subject: 'Update on your application',
+    markdownBody:
+      'Hi {{applicant_name}},\n\nThank you for applying. Unfortunately we cannot offer you a place this time. We encourage you to apply to future cohorts.',
+  },
+  redirected: {
+    subject: 'A better fit for you',
+    markdownBody:
+      'Hi {{applicant_name}},\n\nThank you for applying. Based on your application, we think a different course would be a better starting point for you — we will share the details with you.',
+  },
+  waitlisted: {
+    subject: 'You are on the waitlist',
+    markdownBody:
+      'Hi {{applicant_name}},\n\nThank you for applying. You are currently on the waitlist — we will let you know as soon as a spot opens up.',
+  },
+}
+
+async function requireAdmin(
+  ctx: QueryCtx | MutationCtx,
+  orgId: Doc<'organizations'>['_id'],
+): Promise<string> {
+  const userId = await getUserId(ctx)
+  if (!userId) throw new ConvexError('Not authenticated')
+  await requireOrgAdminFor(ctx, userId, orgId)
+  return userId
+}
+
+// ── Library ─────────────────────────────────────────────────────────────────
+
+export const listSets = query({
+  args: { orgId: v.id('organizations') },
+  returns: v.array(
+    v.object({
+      _id: v.id('emailTemplateSets'),
+      name: v.string(),
+      updatedAt: v.number(),
+      templates: v.array(
+        v.object({
+          _id: v.id('emailTemplates'),
+          kind: emailKindValidator,
+          subject: v.string(),
+          markdownBody: v.string(),
+          updatedAt: v.number(),
+        }),
+      ),
+    }),
+  ),
+  handler: async (ctx, { orgId }) => {
+    await requireAdmin(ctx, orgId)
+    const sets = await ctx.db
+      .query('emailTemplateSets')
+      .withIndex('by_org', (q) => q.eq('orgId', orgId))
+      .collect()
+
+    const out = []
+    for (const set of sets) {
+      const templates = await ctx.db
+        .query('emailTemplates')
+        .withIndex('by_set_and_kind', (q) => q.eq('setId', set._id))
+        .collect()
+      out.push({
+        _id: set._id,
+        name: set.name,
+        updatedAt: set.updatedAt,
+        templates: templates.map((t) => ({
+          _id: t._id,
+          kind: t.kind,
+          subject: t.subject,
+          markdownBody: t.markdownBody,
+          updatedAt: t.updatedAt,
+        })),
+      })
+    }
+    return out
+  },
+})
+
+// Creates the set together with all five kind templates — a set with missing
+// templates is unrepresentable.
+export const createSet = mutation({
+  args: { orgId: v.id('organizations'), name: v.string() },
+  returns: v.id('emailTemplateSets'),
+  handler: async (ctx, { orgId, name }) => {
+    const userId = await requireAdmin(ctx, orgId)
+    if (!name.trim()) throw new ConvexError('Name cannot be empty')
+
+    const now = Date.now()
+    const setId = await ctx.db.insert('emailTemplateSets', {
+      orgId,
+      name: name.trim(),
+      createdBy: userId,
+      createdAt: now,
+      updatedAt: now,
+    })
+    for (const kind of EMAIL_KINDS) {
+      await ctx.db.insert('emailTemplates', {
+        orgId,
+        setId,
+        kind,
+        subject: DEFAULT_TEMPLATES[kind].subject,
+        markdownBody: DEFAULT_TEMPLATES[kind].markdownBody,
+        updatedAt: now,
+      })
+    }
+    return setId
+  },
+})
+
+export const renameSet = mutation({
+  args: { setId: v.id('emailTemplateSets'), name: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { setId, name }) => {
+    const set = await ctx.db.get('emailTemplateSets', setId)
+    if (!set) throw new ConvexError('Set not found')
+    await requireAdmin(ctx, set.orgId)
+    if (!name.trim()) throw new ConvexError('Name cannot be empty')
+    await ctx.db.patch('emailTemplateSets', setId, {
+      name: name.trim(),
+      updatedAt: Date.now(),
+    })
+    return null
+  },
+})
+
+// Deleting a set that opportunities still link to is not allowed — the system
+// refuses rather than leaving opportunities silently template-less.
+export const deleteSet = mutation({
+  args: { setId: v.id('emailTemplateSets') },
+  returns: v.null(),
+  handler: async (ctx, { setId }) => {
+    const set = await ctx.db.get('emailTemplateSets', setId)
+    if (!set) return null
+    await requireAdmin(ctx, set.orgId)
+
+    const opportunities = await ctx.db
+      .query('orgOpportunities')
+      .withIndex('by_org_and_status', (q) => q.eq('orgId', set.orgId))
+      .collect()
+    const linked = opportunities.filter((o) => o.emailTemplateSetId === setId)
+    if (linked.length > 0) {
+      throw new ConvexError(
+        `This set is linked to ${linked.length} opportunit${
+          linked.length === 1 ? 'y' : 'ies'
+        } (e.g. "${linked[0].title}"). Unlink them first.`,
+      )
+    }
+
+    const templates = await ctx.db
+      .query('emailTemplates')
+      .withIndex('by_set_and_kind', (q) => q.eq('setId', setId))
+      .collect()
+    for (const t of templates) {
+      await ctx.db.delete('emailTemplates', t._id)
+    }
+    await ctx.db.delete('emailTemplateSets', setId)
+    return null
+  },
+})
+
+export const updateTemplate = mutation({
+  args: {
+    templateId: v.id('emailTemplates'),
+    subject: v.string(),
+    markdownBody: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, { templateId, subject, markdownBody }) => {
+    const template = await ctx.db.get('emailTemplates', templateId)
+    if (!template) throw new ConvexError('Template not found')
+    await requireAdmin(ctx, template.orgId)
+
+    if (!subject.trim()) throw new ConvexError('Subject cannot be empty')
+    // A typo'd {{variable}} is rejected here — it can never reach an applicant.
+    assertOnlyKnownVariables(subject)
+    assertOnlyKnownVariables(markdownBody)
+
+    const now = Date.now()
+    await ctx.db.patch('emailTemplates', templateId, {
+      subject,
+      markdownBody,
+      updatedAt: now,
+    })
+    if (template.setId) {
+      await ctx.db.patch('emailTemplateSets', template.setId, {
+        updatedAt: now,
+      })
+    }
+    return null
+  },
+})
+
+// Link (or unlink, with setId omitted) an opportunity to a template set.
+// Linking activates the outbox system for that opportunity.
+export const setOpportunityTemplateSet = mutation({
+  args: {
+    opportunityId: v.id('orgOpportunities'),
+    setId: v.optional(v.id('emailTemplateSets')),
+  },
+  returns: v.null(),
+  handler: async (ctx, { opportunityId, setId }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) throw new ConvexError('Opportunity not found')
+    await requireAdmin(ctx, opportunity.orgId)
+
+    if (setId) {
+      const set = await ctx.db.get('emailTemplateSets', setId)
+      if (!set || set.orgId !== opportunity.orgId) {
+        throw new ConvexError('Template set not found')
+      }
+    }
+    await ctx.db.patch('orgOpportunities', opportunityId, {
+      emailTemplateSetId: setId,
+      updatedAt: Date.now(),
+    })
+    return null
+  },
+})

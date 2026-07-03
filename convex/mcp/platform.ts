@@ -3,6 +3,7 @@ import { internalMutation, internalQuery } from '../_generated/server'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc, Id } from '../_generated/dataModel'
 import { requireOrgAdminFor } from '../lib/auth'
+import { isOutboxActive, syncOutboxOnStatusChange } from '../emails/outbox'
 
 // Platform data layer for the MCP endpoint (convex/mcp/server.ts). Like
 // convex/mcp/data.ts (the CRM layer), these are internal functions: the HTTP
@@ -29,6 +30,8 @@ export const readResourceValidator = v.union(
   v.literal('guest_applications'),
   v.literal('events'),
   v.literal('engagement'),
+  v.literal('outbox'),
+  v.literal('email_log'),
 )
 
 // Resources patchable through astn_update (safe, non-outward scalar fields).
@@ -51,6 +54,7 @@ export const APPLICATION_STATUSES = [
   'under_review',
   'accepted',
   'rejected',
+  'redirected', // "Fit for another course"
   'waitlisted',
   'participated',
 ] as const
@@ -71,6 +75,8 @@ const RESOURCE_TABLE: Record<string, string> = {
   guest_applications: 'spaceBookings',
   events: 'events',
   engagement: 'memberEngagement',
+  outbox: 'emailOutbox',
+  email_log: 'emailLog',
 }
 
 // Allowlist of safe scalar fields patchable per resource. Outward-facing or
@@ -284,9 +290,7 @@ export const list = internalQuery({
             .query('opportunityApplications')
             .withIndex('by_opportunity_and_status', (qq) =>
               args.status
-                ? qq
-                    .eq('opportunityId', oppId)
-                    .eq('status', args.status as any)
+                ? qq.eq('opportunityId', oppId).eq('status', args.status as any)
                 : qq.eq('opportunityId', oppId),
             )
             .take(limit)
@@ -296,9 +300,7 @@ export const list = internalQuery({
           .query('opportunityApplications')
           .withIndex('by_org', (qq) => qq.eq('orgId', orgId))
           .take(limit)
-        return args.status
-          ? rows.filter((r) => r.status === args.status)
-          : rows
+        return args.status ? rows.filter((r) => r.status === args.status) : rows
       }
 
       case 'programs': {
@@ -385,9 +387,7 @@ export const list = internalQuery({
             throw new Error('opportunityId not found')
           return await ctx.db
             .query('availabilityPolls')
-            .withIndex('by_opportunity', (qq) =>
-              qq.eq('opportunityId', oppId),
-            )
+            .withIndex('by_opportunity', (qq) => qq.eq('opportunityId', oppId))
             .take(limit)
         }
         // No opportunity filter: gather across this org's opportunities.
@@ -467,6 +467,26 @@ export const list = internalQuery({
           .take(limit)
       }
 
+      case 'outbox':
+      case 'email_log': {
+        if (!args.opportunityId) throw new Error('opportunityId is required')
+        const oppId = ctx.db.normalizeId('orgOpportunities', args.opportunityId)
+        if (!oppId) throw new Error('opportunityId not found')
+        const opp = await ctx.db.get(oppId)
+        if (!opp || opp.orgId !== orgId)
+          throw new Error('opportunityId not found')
+        if (args.resource === 'outbox') {
+          return await ctx.db
+            .query('emailOutbox')
+            .withIndex('by_opportunity', (qq) => qq.eq('opportunityId', oppId))
+            .take(limit)
+        }
+        return await ctx.db
+          .query('emailLog')
+          .withIndex('by_opportunity', (qq) => qq.eq('opportunityId', oppId))
+          .take(limit)
+      }
+
       case 'engagement': {
         const rows = args.level
           ? await ctx.db
@@ -543,9 +563,9 @@ export const update = internalMutation({
     await assertInOrg(ctx, args.resource, doc, org._id)
 
     const allowed = UPDATE_FIELDS[args.resource]
-    const f = (args.fields && typeof args.fields === 'object'
-      ? args.fields
-      : {}) as Record<string, unknown>
+    const f = (
+      args.fields && typeof args.fields === 'object' ? args.fields : {}
+    ) as Record<string, unknown>
     const patch: Record<string, unknown> = {}
     const invalid: Array<string> = []
     for (const [key, value] of Object.entries(f)) {
@@ -584,6 +604,24 @@ export const update = internalMutation({
     // programModules/Sessions/Programs/Opportunities/Spaces track updatedAt;
     // every table in UPDATE_FIELDS has the column.
     await ctx.db.patch(id, { ...patch, updatedAt: Date.now() } as any)
+
+    // Outbox (issue #20): a status change on an opportunity with a linked
+    // template set replaces/enqueues the pending decision-email draft. Still
+    // no email is ever sent from this path.
+    if (args.resource === 'applications' && 'status' in patch) {
+      const updated: any = await ctx.db.get(id)
+      const opportunity: any = updated
+        ? await ctx.db.get(updated.opportunityId)
+        : null
+      if (updated && opportunity && isOutboxActive(opportunity)) {
+        await syncOutboxOnStatusChange(ctx, {
+          application: updated,
+          status: patch.status as string,
+          opportunity,
+        })
+      }
+    }
+
     return { id, resource: args.resource, updated: Object.keys(patch) }
   },
 })
@@ -779,7 +817,12 @@ export const orgStats = internalQuery({
       return out
     }
 
-    const crm = { contacts: 0, organizations: 0, opportunities: 0, submissions: 0 }
+    const crm = {
+      contacts: 0,
+      organizations: 0,
+      opportunities: 0,
+      submissions: 0,
+    }
     for (const r of crmRows) {
       crm.contacts += r.contacts
       crm.organizations += r.organizations
