@@ -171,8 +171,10 @@ export const TOOL_DEFS = [
     name: 'astn_update',
     description:
       `Update fields of a record. Updatable resources: ${UPDATE_RESOURCES.join(', ')}. ` +
-      'Only allowlisted scalar fields can be changed (see astn_resources); outward-facing ' +
-      'actions (sending emails, changing application decisions, publishing) are not exposed here. ' +
+      'Only allowlisted scalar fields can be changed (see astn_resources). For applications you ' +
+      'can set `status` (submitted/under_review/accepted/rejected/waitlisted/participated) and ' +
+      '`reviewNotes`; this records the decision inside ASTN and never emails the applicant. ' +
+      'Other outward-facing actions (sending emails, publishing) are not exposed here. ' +
       'Only the provided keys change.',
     inputSchema: {
       type: 'object',
@@ -265,6 +267,11 @@ const PLATFORM_FIELD_HINTS: Record<string, string> = {
     'create requires: programId, dayNumber, title, date. optional: morningStartTime, afternoonStartTime, lumaUrl.',
 }
 
+const PLATFORM_UPDATE_HINTS: Record<string, string> = {
+  applications:
+    'status ∈ submitted|under_review|accepted|rejected|waitlisted|participated; reviewNotes is free text. Setting these records the decision in ASTN and stamps reviewedAt/reviewedBy — it does NOT email the applicant.',
+}
+
 function describeResource(resource: string) {
   if (isCrm(resource)) return describeCrmFields(CRM_RESOURCES[resource])
   const updatable = UPDATE_FIELDS[resource]
@@ -274,6 +281,7 @@ function describeResource(resource: string) {
     creatable: PLATFORM_CREATE.includes(resource),
     updatableFields: updatable ? [...updatable] : [],
     createHint: PLATFORM_FIELD_HINTS[resource] ?? null,
+    updateHint: PLATFORM_UPDATE_HINTS[resource] ?? null,
     note: 'astn_get/astn_list return the full document; the fields above are what astn_update accepts.',
   }
 }
@@ -290,7 +298,7 @@ function describeAllResources() {
   const all = [...new Set([...READ_RESOURCES, ...CREATE_RESOURCES, ...UPDATE_RESOURCES])]
   return {
     resources: all.map(cap),
-    note: 'Pass a `resource` to astn_resources for its field detail. Reads cover the whole org; writes are limited to safe, non-outward-facing changes (v1). Sending emails, changing application decisions, membership changes, and publishing/finalizing are intentionally not exposed yet.',
+    note: 'Pass a `resource` to astn_resources for its field detail. Reads cover the whole org; writes are limited to safe changes. Setting an application status records the decision inside ASTN without emailing the applicant. Sending emails/broadcasts, membership changes, and publishing/finalizing are intentionally not exposed yet.',
   }
 }
 

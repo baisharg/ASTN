@@ -40,7 +40,20 @@ export const updateResourceValidator = v.union(
   v.literal('surveys'),
   v.literal('polls'),
   v.literal('spaces'),
+  v.literal('applications'),
 )
+
+// Application status is an internal decision marker (accepted/rejected/…). The
+// app's own updateStatus mutation also schedules applicant-facing auto-emails;
+// this MCP path deliberately does NOT — see the note in the `update` handler.
+export const APPLICATION_STATUSES = [
+  'submitted',
+  'under_review',
+  'accepted',
+  'rejected',
+  'waitlisted',
+  'participated',
+] as const
 
 // Table backing each resource, for astn_get / astn_update id resolution.
 const RESOURCE_TABLE: Record<string, string> = {
@@ -101,6 +114,8 @@ export const UPDATE_FIELDS: Record<string, Set<string>> = {
   ]),
   surveys: new Set(['title', 'description']),
   polls: new Set(['title']),
+  // Application decision + review notes. Non-notifying (see `update` handler).
+  applications: new Set(['status', 'reviewNotes']),
   spaces: new Set([
     'name',
     'description',
@@ -547,6 +562,24 @@ export const update = internalMutation({
       )
     }
     if (Object.keys(patch).length === 0) throw new Error('No fields to update')
+
+    // Applications: validate the status enum and stamp review metadata. This
+    // records the decision *inside ASTN only* — unlike the app's updateStatus
+    // mutation, it intentionally does NOT schedule the applicant-facing
+    // auto-email. Outbound mail (e.g. the submit-time availability email)
+    // stays out of the MCP surface by design.
+    if (args.resource === 'applications') {
+      if (
+        'status' in patch &&
+        !APPLICATION_STATUSES.includes(patch.status as any)
+      ) {
+        throw new Error(
+          `Invalid status. Must be one of: ${APPLICATION_STATUSES.join(', ')}`,
+        )
+      }
+      patch.reviewedAt = Date.now()
+      patch.reviewedBy = args.userId
+    }
 
     // programModules/Sessions/Programs/Opportunities/Spaces track updatedAt;
     // every table in UPDATE_FIELDS has the column.

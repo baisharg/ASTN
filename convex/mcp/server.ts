@@ -87,7 +87,7 @@ export const mcpHandler = httpAction(async (ctx, request) => {
         serverInfo: {
           name: 'astn',
           title: 'ASTN',
-          version: '0.2.0',
+          version: '0.3.0',
         },
         instructions:
           'Manage an ASTN organization: members, opportunities, applications, ' +
@@ -100,8 +100,10 @@ export const mcpHandler = httpAction(async (ctx, request) => {
           '`resource`; survey_results and availability_heatmap return ' +
           'aggregated data. All access is scoped to orgs where the signed-in ' +
           'user is an admin. Reads cover the whole org; writes are limited to ' +
-          'safe changes — sending emails, changing application decisions, ' +
-          'membership changes and publishing/finalizing are not exposed yet.',
+          'safe changes. Application status (accepted/rejected/waitlisted/…) ' +
+          'can be set via astn_update — it records the decision in ASTN without ' +
+          'emailing the applicant. Sending emails/broadcasts, membership ' +
+          'changes and publishing/finalizing are not exposed yet.',
       })
     }
     case 'ping':
