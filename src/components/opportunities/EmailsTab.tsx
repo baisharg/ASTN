@@ -400,8 +400,9 @@ function OutboxSection({
                   </p>
                 ))}
                 <p className="pt-2">
-                  Each recipient gets their personalized version. An applicant
-                  can never receive the same decision email twice.
+                  Names and poll/feedback links are filled in per recipient.
+                  If someone already received this email, they are skipped
+                  automatically — no duplicates.
                 </p>
               </div>
             </AlertDialogDescription>
