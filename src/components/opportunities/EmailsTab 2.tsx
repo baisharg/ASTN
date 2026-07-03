@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react'
-import { Link } from '@tanstack/react-router'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import {
   CalendarClock,
@@ -92,7 +91,6 @@ const KIND_COLORS: Record<string, string> = {
 
 export function EmailsTab({
   opportunity,
-  slug,
 }: {
   opportunity: {
     _id: Id<'orgOpportunities'>
@@ -101,36 +99,23 @@ export function EmailsTab({
     isEOI?: boolean
     sendApplicationReceivedEmail?: boolean
   }
-  slug: string
 }) {
   return (
     <Tabs defaultValue="outbox">
-      <div className="flex items-center justify-between">
-        <TabsList>
-          <TabsTrigger value="outbox" className="gap-2">
-            <Inbox className="size-4" />
-            Outbox
-          </TabsTrigger>
-          <TabsTrigger value="history" className="gap-2">
-            <History className="size-4" />
-            History
-          </TabsTrigger>
-          <TabsTrigger value="templates" className="gap-2">
-            <Mail className="size-4" />
-            Templates
-          </TabsTrigger>
-        </TabsList>
-        {/* One-off/free-form mail (reminders etc.) — logged in History too. */}
-        <Button variant="outline" size="sm" asChild>
-          <Link
-            to="/org/$slug/admin/opportunities/$oppId/email"
-            params={{ slug, oppId: opportunity._id }}
-          >
-            <Pencil className="size-4 mr-2" />
-            Compose broadcast
-          </Link>
-        </Button>
-      </div>
+      <TabsList>
+        <TabsTrigger value="outbox" className="gap-2">
+          <Inbox className="size-4" />
+          Outbox
+        </TabsTrigger>
+        <TabsTrigger value="history" className="gap-2">
+          <History className="size-4" />
+          History
+        </TabsTrigger>
+        <TabsTrigger value="templates" className="gap-2">
+          <Mail className="size-4" />
+          Templates
+        </TabsTrigger>
+      </TabsList>
 
       <TabsContent value="outbox" className="mt-6">
         <OutboxSection opportunityId={opportunity._id} />
@@ -400,9 +385,8 @@ function OutboxSection({
                   </p>
                 ))}
                 <p className="pt-2">
-                  Names and poll/feedback links are filled in per recipient. If
-                  someone already received this email, they are skipped
-                  automatically — no duplicates.
+                  Each recipient gets their personalized version. An applicant
+                  can never receive the same decision email twice.
                 </p>
               </div>
             </AlertDialogDescription>
@@ -639,9 +623,8 @@ function TemplatesSection({
           <CardTitle>Email template set</CardTitle>
           <CardDescription>
             Link a set (e.g. TAIS, Governance) and this opportunity inherits all
-            its emails. Linking activates the outbox: every decision — past and
-            future — gets a pending draft. Nothing is sent until you press Send,
-            and applicants who already got an email are never re-queued.
+            its emails. Linking activates the outbox: status changes queue
+            drafts here instead of the legacy auto-emails.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

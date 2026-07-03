@@ -3,7 +3,7 @@ import { mutation, query } from '../_generated/server'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc } from '../_generated/dataModel'
 import { getUserId, requireOrgAdminFor } from '../lib/auth'
-import { assertOnlyKnownVariables } from './outbox'
+import { assertOnlyKnownVariables, syncOutboxOnStatusChange } from './outbox'
 
 // Org-level library of email template sets (issue #20). A set (e.g. "TAIS",
 // "Governance") holds exactly one template per kind — the five rows are
@@ -426,7 +426,10 @@ export const setSendApplicationReceivedEmail = mutation({
 })
 
 // Link (or unlink, with setId omitted) an opportunity to a template set.
-// Linking activates the outbox system for that opportunity.
+// Linking activates the outbox system for that opportunity and backfills
+// drafts for decisions that were made before the set existed — idempotency
+// (one sent email per application+kind) makes this safe to repeat, and
+// nothing is ever sent without an explicit Send from the outbox.
 export const setOpportunityTemplateSet = mutation({
   args: {
     opportunityId: v.id('orgOpportunities'),
@@ -448,6 +451,25 @@ export const setOpportunityTemplateSet = mutation({
       emailTemplateSetId: setId,
       updatedAt: Date.now(),
     })
+
+    if (setId) {
+      const updated = await ctx.db.get('orgOpportunities', opportunityId)
+      if (updated) {
+        const applications = await ctx.db
+          .query('opportunityApplications')
+          .withIndex('by_opportunity_and_status', (q) =>
+            q.eq('opportunityId', opportunityId),
+          )
+          .collect()
+        for (const application of applications) {
+          await syncOutboxOnStatusChange(ctx, {
+            application,
+            status: application.status,
+            opportunity: updated,
+          })
+        }
+      }
+    }
     return null
   },
 })
