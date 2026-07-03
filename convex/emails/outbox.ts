@@ -144,6 +144,8 @@ export async function syncOutboxOnStatusChange(
     )
     return
   }
+  // enabled: false is the explicit "this decision sends no email" choice.
+  if (template.enabled === false) return
 
   const now = Date.now()
   await ctx.db.insert('emailOutbox', {
@@ -153,6 +155,8 @@ export async function syncOutboxOnStatusChange(
     kind,
     subject: template.subject,
     markdownBody: template.markdownBody,
+    includePollLink: template.includePollLink ?? false,
+    includeSurveyLink: template.includeSurveyLink ?? false,
     createdAt: now,
     updatedAt: now,
   })
@@ -182,6 +186,8 @@ export const listForOpportunity = query({
       kind: decisionKindValidator,
       subject: v.string(),
       markdownBody: v.string(),
+      includePollLink: v.boolean(),
+      includeSurveyLink: v.boolean(),
       recipientName: v.string(),
       recipientEmail: v.union(v.string(), v.null()),
       createdAt: v.number(),
@@ -218,6 +224,8 @@ export const listForOpportunity = query({
         kind: draft.kind,
         subject: draft.subject,
         markdownBody: draft.markdownBody,
+        includePollLink: draft.includePollLink ?? false,
+        includeSurveyLink: draft.includeSurveyLink ?? false,
         recipientName: name,
         recipientEmail: email ?? null,
         createdAt: draft.createdAt,
@@ -233,9 +241,14 @@ export const updateDraft = mutation({
     draftId: v.id('emailOutbox'),
     subject: v.optional(v.string()),
     markdownBody: v.optional(v.string()),
+    includePollLink: v.optional(v.boolean()),
+    includeSurveyLink: v.optional(v.boolean()),
   },
   returns: v.null(),
-  handler: async (ctx, { draftId, subject, markdownBody }) => {
+  handler: async (
+    ctx,
+    { draftId, subject, markdownBody, includePollLink, includeSurveyLink },
+  ) => {
     const draft = await ctx.db.get('emailOutbox', draftId)
     if (!draft) throw new ConvexError('Draft not found')
     await requireAdmin(ctx, draft.orgId)
@@ -250,6 +263,9 @@ export const updateDraft = mutation({
       assertOnlyKnownVariables(markdownBody)
       patch.markdownBody = markdownBody
     }
+    if (includePollLink !== undefined) patch.includePollLink = includePollLink
+    if (includeSurveyLink !== undefined)
+      patch.includeSurveyLink = includeSurveyLink
     await ctx.db.patch('emailOutbox', draftId, patch as any)
     return null
   },
@@ -280,6 +296,8 @@ export const getDraftsForSend = internalQuery({
       kind: v.string(),
       subject: v.string(),
       markdownBody: v.string(),
+      includePollLink: v.boolean(),
+      includeSurveyLink: v.boolean(),
       recipientName: v.string(),
       recipientEmail: v.union(v.string(), v.null()),
     }),
@@ -309,11 +327,111 @@ export const getDraftsForSend = internalQuery({
         kind: draft.kind,
         subject: draft.subject,
         markdownBody: draft.markdownBody,
+        includePollLink: draft.includePollLink ?? false,
+        includeSurveyLink: draft.includeSurveyLink ?? false,
         recipientName: name,
         recipientEmail: email ?? null,
       })
     }
     return out
+  },
+})
+
+// Resolve the per-recipient poll/survey links for a draft, creating the
+// respondent rows (with fresh tokens) when missing — a "recipient without a
+// token" is unrepresentable. Returns null links when there is no open
+// poll / open survey: the send action then *blocks* that draft with an
+// explicit outcome instead of sending a mail without the promised link.
+export const ensureLinkTargets = internalMutation({
+  args: { draftId: v.id('emailOutbox') },
+  returns: v.object({
+    pollLink: v.union(v.string(), v.null()),
+    surveyLink: v.union(v.string(), v.null()),
+  }),
+  handler: async (ctx, { draftId }) => {
+    const draft = await ctx.db.get('emailOutbox', draftId)
+    if (!draft) return { pollLink: null, surveyLink: null }
+    const [app, opportunity, org] = await Promise.all([
+      ctx.db.get('opportunityApplications', draft.applicationId),
+      ctx.db.get('orgOpportunities', draft.opportunityId),
+      ctx.db.get('organizations', draft.orgId),
+    ])
+    if (!app || !opportunity || !org) {
+      return { pollLink: null, surveyLink: null }
+    }
+    const formFields = opportunity.formFields as Array<FormField> | undefined
+    const { name } = await resolveApplicantContact(
+      ctx,
+      app,
+      formFields,
+      'Applicant',
+    )
+    const baseUrl = process.env.SITE_URL ?? 'https://safetytalent.org'
+
+    let pollLink: string | null = null
+    if (draft.includePollLink) {
+      const openPoll = await ctx.db
+        .query('availabilityPolls')
+        .withIndex('by_opportunity', (q) =>
+          q.eq('opportunityId', draft.opportunityId),
+        )
+        .filter((q) => q.eq(q.field('status'), 'open'))
+        .first()
+      if (openPoll) {
+        let respondent = await ctx.db
+          .query('pollRespondents')
+          .withIndex('by_poll_and_application', (q) =>
+            q.eq('pollId', openPoll._id).eq('applicationId', app._id),
+          )
+          .first()
+        if (!respondent) {
+          const respondentId = await ctx.db.insert('pollRespondents', {
+            pollId: openPoll._id,
+            applicationId: app._id,
+            respondentToken: crypto.randomUUID(),
+            respondentName: name,
+          })
+          respondent = await ctx.db.get('pollRespondents', respondentId)
+        }
+        if (respondent) {
+          pollLink = `${baseUrl}/org/${org.slug}/poll/${openPoll.accessToken}/${respondent.respondentToken}`
+        }
+      }
+    }
+
+    let surveyLink: string | null = null
+    if (draft.includeSurveyLink) {
+      const openSurvey = await ctx.db
+        .query('feedbackSurveys')
+        .withIndex('by_opportunity', (q) =>
+          q.eq('opportunityId', draft.opportunityId),
+        )
+        .filter((q) => q.eq(q.field('status'), 'open'))
+        .first()
+      if (openSurvey) {
+        let respondent = await ctx.db
+          .query('surveyRespondents')
+          .withIndex('by_survey_and_application', (q) =>
+            q.eq('surveyId', openSurvey._id).eq('applicationId', app._id),
+          )
+          .first()
+        if (!respondent) {
+          const respondentId = await ctx.db.insert('surveyRespondents', {
+            surveyId: openSurvey._id,
+            applicationId: app._id,
+            respondentToken: crypto.randomUUID(),
+            respondentName: name,
+            userId: app.userId,
+          })
+          respondent = await ctx.db.get('surveyRespondents', respondentId)
+        }
+        if (respondent) {
+          surveyLink = `${baseUrl}/org/${org.slug}/survey/${openSurvey.accessToken}/${respondent.respondentToken}`
+        }
+      }
+    }
+
+    return { pollLink, surveyLink }
   },
 })
 

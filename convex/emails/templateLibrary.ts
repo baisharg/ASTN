@@ -8,9 +8,11 @@ import { assertOnlyKnownVariables } from './outbox'
 // Org-level library of email template sets (issue #20). A set (e.g. "TAIS",
 // "Governance") holds exactly one template per kind — the five rows are
 // created together with the set, so a linked opportunity can never hit a
-// missing template. Opportunities link a set via emailTemplateSetId and
-// inherit everything; per-opportunity overrides live in the same table keyed
-// by opportunityId (phase 2 UI).
+// *missing* template: a decision that should send no email is expressed by
+// `enabled: false`, an explicit choice (waitlisted starts disabled).
+// Opportunities link a set via emailTemplateSetId and inherit everything;
+// per-opportunity overrides live in the same table keyed by opportunityId
+// (phase 2 UI).
 
 export const EMAIL_KINDS = [
   'application_received',
@@ -85,8 +87,11 @@ export const listSets = query({
         v.object({
           _id: v.id('emailTemplates'),
           kind: emailKindValidator,
+          enabled: v.boolean(),
           subject: v.string(),
           markdownBody: v.string(),
+          includePollLink: v.boolean(),
+          includeSurveyLink: v.boolean(),
           updatedAt: v.number(),
         }),
       ),
@@ -112,8 +117,11 @@ export const listSets = query({
         templates: templates.map((t) => ({
           _id: t._id,
           kind: t.kind,
+          enabled: t.enabled ?? true,
           subject: t.subject,
           markdownBody: t.markdownBody,
+          includePollLink: t.includePollLink ?? false,
+          includeSurveyLink: t.includeSurveyLink ?? false,
           updatedAt: t.updatedAt,
         })),
       })
@@ -144,8 +152,13 @@ export const createSet = mutation({
         orgId,
         setId,
         kind,
+        // Waitlist is rarely used — starts disabled (an explicit off, not a
+        // missing template). Enable it from the set editor when needed.
+        enabled: kind !== 'waitlisted',
         subject: DEFAULT_TEMPLATES[kind].subject,
         markdownBody: DEFAULT_TEMPLATES[kind].markdownBody,
+        includePollLink: false,
+        includeSurveyLink: false,
         updatedAt: now,
       })
     }
@@ -209,9 +222,22 @@ export const updateTemplate = mutation({
     templateId: v.id('emailTemplates'),
     subject: v.string(),
     markdownBody: v.string(),
+    enabled: v.optional(v.boolean()),
+    includePollLink: v.optional(v.boolean()),
+    includeSurveyLink: v.optional(v.boolean()),
   },
   returns: v.null(),
-  handler: async (ctx, { templateId, subject, markdownBody }) => {
+  handler: async (
+    ctx,
+    {
+      templateId,
+      subject,
+      markdownBody,
+      enabled,
+      includePollLink,
+      includeSurveyLink,
+    },
+  ) => {
     const template = await ctx.db.get('emailTemplates', templateId)
     if (!template) throw new ConvexError('Template not found')
     await requireAdmin(ctx, template.orgId)
@@ -225,6 +251,9 @@ export const updateTemplate = mutation({
     await ctx.db.patch('emailTemplates', templateId, {
       subject,
       markdownBody,
+      ...(enabled !== undefined ? { enabled } : {}),
+      ...(includePollLink !== undefined ? { includePollLink } : {}),
+      ...(includeSurveyLink !== undefined ? { includeSurveyLink } : {}),
       updatedAt: now,
     })
     if (template.setId) {

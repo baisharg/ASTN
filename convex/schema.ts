@@ -1601,7 +1601,10 @@ export default defineSchema({
   }).index('by_org', ['orgId']),
 
   // Templates. Library templates carry setId; per-opportunity overrides carry
-  // opportunityId instead (exactly one of the two is set).
+  // opportunityId instead (exactly one of the two is set). Every kind always
+  // has a row; `enabled: false` is the explicit "this decision sends no email"
+  // choice (never a missing template). Poll/survey links are system-managed
+  // blocks toggled per template — never text variables that can break.
   emailTemplates: defineTable({
     orgId: v.id('organizations'),
     setId: v.optional(v.id('emailTemplateSets')),
@@ -1613,8 +1616,11 @@ export default defineSchema({
       v.literal('redirected'),
       v.literal('waitlisted'),
     ),
+    enabled: v.optional(v.boolean()), // undefined = true
     subject: v.string(),
     markdownBody: v.string(),
+    includePollLink: v.optional(v.boolean()), // undefined = false
+    includeSurveyLink: v.optional(v.boolean()), // undefined = false
     updatedAt: v.number(),
   })
     .index('by_set_and_kind', ['setId', 'kind'])
@@ -1634,6 +1640,8 @@ export default defineSchema({
     ),
     subject: v.string(),
     markdownBody: v.string(),
+    includePollLink: v.optional(v.boolean()), // undefined = false
+    includeSurveyLink: v.optional(v.boolean()), // undefined = false
     createdAt: v.number(),
     updatedAt: v.number(),
   })
