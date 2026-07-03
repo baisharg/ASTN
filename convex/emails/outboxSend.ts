@@ -4,8 +4,122 @@ import { v } from 'convex/values'
 import { marked } from 'marked'
 import { emojify } from 'node-emoji'
 import { internal } from '../_generated/api'
-import { action } from '../_generated/server'
+import { action, internalAction } from '../_generated/server'
 import { renderAdminBroadcast } from './templates'
+
+async function renderBody(
+  markdownBody: string,
+  recipientName: string,
+  links: { pollLink: string | null; surveyLink: string | null },
+): Promise<string> {
+  let bodyMarkdown = markdownBody.replaceAll(
+    '{{applicant_name}}',
+    recipientName,
+  )
+  const blocks: Array<string> = []
+  if (links.pollLink) {
+    blocks.push(`[:hourglass: Set your availability](${links.pollLink})`)
+  }
+  if (links.surveyLink) {
+    blocks.push(`[:speech_balloon: Share your feedback](${links.surveyLink})`)
+  }
+  if (blocks.length > 0) bodyMarkdown += `\n\n${blocks.join('\n\n')}`
+  const bodyHtml: string = await marked(emojify(bodyMarkdown), {
+    breaks: true,
+    gfm: true,
+  })
+  return await renderAdminBroadcast({ userName: recipientName, bodyHtml })
+}
+
+/**
+ * The on-apply confirmation email (kind application_received) — the single
+ * truly-automatic email of the outbox system. Scheduled from submit handlers;
+ * every precondition (kill switch, template enabled, idempotency, resolvable
+ * email) is re-checked in getApplicationReceivedPayload, and finalizeAutoSend
+ * re-checks idempotency atomically. If the template promises a poll/survey
+ * link that can't be resolved, a *failed* log row records it — visible in
+ * History, never a silent skip and never a mail without its link.
+ */
+export const sendApplicationReceivedEmail = internalAction({
+  args: { applicationId: v.id('opportunityApplications') },
+  returns: v.null(),
+  handler: async (ctx, { applicationId }) => {
+    const payload: {
+      opportunityId: string
+      to: string
+      recipientName: string
+      subject: string
+      markdownBody: string
+      includePollLink: boolean
+      includeSurveyLink: boolean
+    } | null = await ctx.runQuery(
+      internal.emails.outbox.getApplicationReceivedPayload,
+      { applicationId },
+    )
+    if (!payload) return null
+
+    const subject = payload.subject.replaceAll(
+      '{{applicant_name}}',
+      payload.recipientName,
+    )
+    let links: { pollLink: string | null; surveyLink: string | null } = {
+      pollLink: null,
+      surveyLink: null,
+    }
+    if (payload.includePollLink || payload.includeSurveyLink) {
+      links = await ctx.runMutation(internal.emails.outbox.ensureLinkTargets, {
+        applicationId,
+        includePollLink: payload.includePollLink,
+        includeSurveyLink: payload.includeSurveyLink,
+      })
+      if (
+        (payload.includePollLink && !links.pollLink) ||
+        (payload.includeSurveyLink && !links.surveyLink)
+      ) {
+        await ctx.runMutation(internal.emails.outbox.logAutoFailure, {
+          applicationId,
+          kind: 'application_received',
+          to: payload.to,
+          recipientName: payload.recipientName,
+          subject,
+          error: `Not sent: template includes a ${
+            payload.includePollLink && !links.pollLink
+              ? 'poll link but there is no open availability poll'
+              : 'feedback link but there is no open survey'
+          } for this opportunity`,
+        })
+        return null
+      }
+    }
+
+    try {
+      const html = await renderBody(
+        payload.markdownBody,
+        payload.recipientName,
+        links,
+      )
+      await ctx.runMutation(internal.emails.outbox.finalizeAutoSend, {
+        applicationId,
+        kind: 'application_received',
+        to: payload.to,
+        recipientName: payload.recipientName,
+        subject,
+        html,
+      })
+    } catch (err) {
+      console.error('Failed to send application_received email:', err)
+      await ctx.runMutation(internal.emails.outbox.logAutoFailure, {
+        applicationId,
+        kind: 'application_received',
+        to: payload.to,
+        recipientName: payload.recipientName,
+        subject,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    return null
+  },
+})
 
 /**
  * Send selected outbox drafts. Public action called from the Emails tab.
@@ -47,6 +161,7 @@ export const sendDrafts = action({
 
     const drafts: Array<{
       draftId: string
+      applicationId: string
       kind: string
       subject: string
       markdownBody: string
@@ -88,7 +203,9 @@ export const sendDrafts = action({
         if (draft.includePollLink || draft.includeSurveyLink) {
           const links: { pollLink: string | null; surveyLink: string | null } =
             await ctx.runMutation(internal.emails.outbox.ensureLinkTargets, {
-              draftId: draft.draftId as any,
+              applicationId: draft.applicationId as any,
+              includePollLink: draft.includePollLink,
+              includeSurveyLink: draft.includeSurveyLink,
             })
           if (
             (draft.includePollLink && !links.pollLink) ||

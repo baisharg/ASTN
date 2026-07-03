@@ -22,10 +22,7 @@ import {
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../../convex/_generated/api'
-import type {
-  Doc,
-  Id,
-} from '../../../../../../../convex/_generated/dataModel'
+import type { Doc, Id } from '../../../../../../../convex/_generated/dataModel'
 import type { FormField } from '../../../../../../../convex/lib/formFields'
 import { weekdayShort } from '../../../../../../../convex/lib/availabilityWeek'
 import type { AvailabilityResponse } from '~/components/availability/AvailabilityHeatmap'
@@ -36,6 +33,7 @@ import { FormFieldsEditor } from '~/components/opportunities/FormFieldsEditor'
 import { TagsInput } from '~/components/opportunities/TagsInput'
 import { ApplicationsTable } from '~/components/opportunities/ApplicationsTable'
 import { SurveyTab } from '~/components/surveys/SurveyTab'
+import { EmailsTab } from '~/components/opportunities/EmailsTab'
 import { AuthHeader } from '~/components/layout/auth-header'
 import {
   AlertDialog,
@@ -348,6 +346,14 @@ function OpportunityEditPage() {
     id: oppId as Id<'orgOpportunities'>,
   })
 
+  // Pending outbox drafts — shown as a count badge on the Emails tab.
+  const outboxDrafts = useQuery(
+    api.emails.outbox.listForOpportunity,
+    opportunity && membership?.role === 'admin'
+      ? { opportunityId: opportunity._id }
+      : 'skip',
+  )
+
   const updateOpp = useMutation(api.orgOpportunities.update)
 
   // Redirect target options: active opportunities in this org (excluding current)
@@ -589,6 +595,15 @@ function OpportunityEditPage() {
                 <Calendar className="size-4" />
                 Availability
               </TabsTrigger>
+              <TabsTrigger value="emails" className="gap-2">
+                <Mail className="size-4" />
+                Emails
+                {(outboxDrafts?.length ?? 0) > 0 && (
+                  <span className="ml-1 rounded-full bg-primary/10 text-primary px-1.5 text-xs font-medium">
+                    {outboxDrafts?.length}
+                  </span>
+                )}
+              </TabsTrigger>
               <TabsTrigger value="feedback" className="gap-2">
                 <ClipboardList className="size-4" />
                 Feedback
@@ -670,6 +685,10 @@ function OpportunityEditPage() {
                 opportunityId={opportunity._id}
                 slug={slug}
               />
+            </TabsContent>
+
+            <TabsContent value="emails" className="mt-6">
+              <EmailsTab opportunity={opportunity} />
             </TabsContent>
 
             <TabsContent value="feedback" className="mt-6">
@@ -841,36 +860,49 @@ function AvailabilityTab({
 
   return (
     <div className="space-y-6">
-      {/* Auto-send availability email toggle */}
-      <Card>
-        <CardContent className="flex items-center justify-between gap-4 py-4">
-          <div>
-            <p className="text-sm font-medium">Auto-send availability email</p>
-            <p className="text-xs text-muted-foreground">
-              When someone applies, email them this poll&apos;s link
-              automatically. Not sent for EOIs.
+      {/* Legacy on-apply email toggle — replaced by the Emails tab when a
+          template set is linked (issue #20). Never show both systems. */}
+      {opportunity.emailTemplateSetId ? (
+        <Card className="border-blue-200 bg-blue-50/50">
+          <CardContent className="py-3">
+            <p className="text-sm text-blue-900">
+              Applicant emails for this opportunity are managed in the{' '}
+              <span className="font-medium">Emails</span> tab (including the
+              on-apply confirmation with this poll&apos;s link).
             </p>
-          </div>
-          <Switch
-            checked={opportunity.autoSendAvailabilityEmail ?? false}
-            onCheckedChange={async (checked) => {
-              try {
-                await updateOpportunity({
-                  id: opportunity._id,
-                  autoSendAvailabilityEmail: checked,
-                })
-                toast.success(
-                  checked
-                    ? 'Auto-send enabled'
-                    : 'Auto-send disabled',
-                )
-              } catch {
-                toast.error('Failed to update setting')
-              }
-            }}
-          />
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent className="flex items-center justify-between gap-4 py-4">
+            <div>
+              <p className="text-sm font-medium">
+                Auto-send availability email
+              </p>
+              <p className="text-xs text-muted-foreground">
+                When someone applies, email them this poll&apos;s link
+                automatically. Not sent for EOIs.
+              </p>
+            </div>
+            <Switch
+              checked={opportunity.autoSendAvailabilityEmail ?? false}
+              onCheckedChange={async (checked) => {
+                try {
+                  await updateOpportunity({
+                    id: opportunity._id,
+                    autoSendAvailabilityEmail: checked,
+                  })
+                  toast.success(
+                    checked ? 'Auto-send enabled' : 'Auto-send disabled',
+                  )
+                } catch {
+                  toast.error('Failed to update setting')
+                }
+              }}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Poll info card */}
       <Card>
@@ -1143,8 +1175,11 @@ function AvailabilityTab({
         />
       )}
 
-      {/* Auto-Email Config */}
-      <AutoEmailConfigSection opportunityId={opportunityId} />
+      {/* Legacy auto-email config — hidden when the outbox system is active
+          so only one email system is ever visible (issue #20). */}
+      {!opportunity.emailTemplateSetId && (
+        <AutoEmailConfigSection opportunityId={opportunityId} />
+      )}
     </div>
   )
 }

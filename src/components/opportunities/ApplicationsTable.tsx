@@ -30,6 +30,7 @@ export type ApplicationStatus =
   | 'under_review'
   | 'accepted'
   | 'rejected'
+  | 'redirected'
   | 'waitlisted'
   | 'participated'
 
@@ -38,6 +39,7 @@ const STATUS_LABELS: Record<ApplicationStatus, string> = {
   under_review: 'Under Review',
   accepted: 'Accepted',
   rejected: 'Rejected',
+  redirected: 'Fit for another course',
   waitlisted: 'Waitlisted',
   participated: 'Participated',
 }
@@ -47,6 +49,7 @@ const STATUS_COLORS: Record<ApplicationStatus, string> = {
   under_review: 'bg-yellow-50 text-yellow-700 border-yellow-200',
   accepted: 'bg-green-50 text-green-700 border-green-200',
   rejected: 'bg-red-50 text-red-700 border-red-200',
+  redirected: 'bg-orange-50 text-orange-700 border-orange-200',
   waitlisted: 'bg-purple-50 text-purple-700 border-purple-200',
   participated: 'bg-teal-50 text-teal-700 border-teal-200',
 }
@@ -119,6 +122,7 @@ export function ApplicationsTable({
               <SelectItem value="under_review">Under Review</SelectItem>
               <SelectItem value="accepted">Accepted</SelectItem>
               <SelectItem value="rejected">Rejected</SelectItem>
+              <SelectItem value="redirected">Fit for another course</SelectItem>
               <SelectItem value="waitlisted">Waitlisted</SelectItem>
               <SelectItem value="participated">Participated</SelectItem>
             </SelectContent>
@@ -135,7 +139,11 @@ export function ApplicationsTable({
               Email Applicants
             </Link>
           </Button>
-          <Button variant="outline" onClick={handleExport} disabled={isExporting}>
+          <Button
+            variant="outline"
+            onClick={handleExport}
+            disabled={isExporting}
+          >
             {isExporting ? (
               <Loader2 className="size-4 mr-2 animate-spin" />
             ) : (
@@ -209,7 +217,9 @@ export function ApplicationsTable({
                     <span>
                       <Badge
                         variant="outline"
-                        className={STATUS_COLORS[app.status as ApplicationStatus]}
+                        className={
+                          STATUS_COLORS[app.status as ApplicationStatus]
+                        }
                       >
                         {STATUS_LABELS[app.status as ApplicationStatus]}
                       </Badge>
@@ -291,6 +301,7 @@ function ApplicationDetail({
             <SelectItem value="under_review">Under Review</SelectItem>
             <SelectItem value="accepted">Accepted</SelectItem>
             <SelectItem value="rejected">Rejected</SelectItem>
+            <SelectItem value="redirected">Fit for another course</SelectItem>
             <SelectItem value="waitlisted">Waitlisted</SelectItem>
             <SelectItem value="participated">Participated</SelectItem>
           </SelectContent>

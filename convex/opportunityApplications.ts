@@ -236,12 +236,22 @@ export const submit = mutation({
       profileName: profile?.name,
       responses,
     })
-    await maybeScheduleAutoEmail(ctx, {
-      opportunityId,
-      applicationId,
-      trigger: 'new_application',
-    })
-    await maybeScheduleAvailabilityEmail(ctx, { opportunity, applicationId })
+    if (isOutboxActive(opportunity)) {
+      // Outbox system (issue #20): the on-apply confirmation replaces both
+      // legacy on-submit emails. All preconditions re-checked in the action.
+      await ctx.scheduler.runAfter(
+        0,
+        internal.emails.outboxSend.sendApplicationReceivedEmail,
+        { applicationId },
+      )
+    } else {
+      await maybeScheduleAutoEmail(ctx, {
+        opportunityId,
+        applicationId,
+        trigger: 'new_application',
+      })
+      await maybeScheduleAvailabilityEmail(ctx, { opportunity, applicationId })
+    }
 
     return applicationId
   },
@@ -298,12 +308,21 @@ export const submitGuest = mutation({
       applicationId,
       responses,
     })
-    await maybeScheduleAutoEmail(ctx, {
-      opportunityId,
-      applicationId,
-      trigger: 'new_application',
-    })
-    await maybeScheduleAvailabilityEmail(ctx, { opportunity, applicationId })
+    if (isOutboxActive(opportunity)) {
+      // Outbox system (issue #20): see the authenticated submit path above.
+      await ctx.scheduler.runAfter(
+        0,
+        internal.emails.outboxSend.sendApplicationReceivedEmail,
+        { applicationId },
+      )
+    } else {
+      await maybeScheduleAutoEmail(ctx, {
+        opportunityId,
+        applicationId,
+        trigger: 'new_application',
+      })
+      await maybeScheduleAvailabilityEmail(ctx, { opportunity, applicationId })
+    }
 
     return applicationId
   },

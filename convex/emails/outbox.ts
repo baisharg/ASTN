@@ -88,7 +88,7 @@ async function hasSentKind(
 async function resolveTemplate(
   ctx: QueryCtx | MutationCtx,
   opportunity: Doc<'orgOpportunities'>,
-  kind: DecisionKind,
+  kind: Doc<'emailTemplates'>['kind'],
 ): Promise<Doc<'emailTemplates'> | null> {
   const override = await ctx.db
     .query('emailTemplates')
@@ -293,6 +293,7 @@ export const getDraftsForSend = internalQuery({
   returns: v.array(
     v.object({
       draftId: v.id('emailOutbox'),
+      applicationId: v.id('opportunityApplications'),
       kind: v.string(),
       subject: v.string(),
       markdownBody: v.string(),
@@ -324,6 +325,7 @@ export const getDraftsForSend = internalQuery({
       )
       out.push({
         draftId: draft._id,
+        applicationId: draft.applicationId,
         kind: draft.kind,
         subject: draft.subject,
         markdownBody: draft.markdownBody,
@@ -337,26 +339,32 @@ export const getDraftsForSend = internalQuery({
   },
 })
 
-// Resolve the per-recipient poll/survey links for a draft, creating the
-// respondent rows (with fresh tokens) when missing — a "recipient without a
-// token" is unrepresentable. Returns null links when there is no open
-// poll / open survey: the send action then *blocks* that draft with an
-// explicit outcome instead of sending a mail without the promised link.
+// Resolve the per-recipient poll/survey links for an application, creating
+// the respondent rows (with fresh tokens) when missing — a "recipient without
+// a token" is unrepresentable. Returns null links when there is no open
+// poll / open survey: the caller then *blocks* the send with an explicit
+// outcome instead of sending a mail without the promised link.
 export const ensureLinkTargets = internalMutation({
-  args: { draftId: v.id('emailOutbox') },
+  args: {
+    applicationId: v.id('opportunityApplications'),
+    includePollLink: v.boolean(),
+    includeSurveyLink: v.boolean(),
+  },
   returns: v.object({
     pollLink: v.union(v.string(), v.null()),
     surveyLink: v.union(v.string(), v.null()),
   }),
-  handler: async (ctx, { draftId }) => {
-    const draft = await ctx.db.get('emailOutbox', draftId)
-    if (!draft) return { pollLink: null, surveyLink: null }
-    const [app, opportunity, org] = await Promise.all([
-      ctx.db.get('opportunityApplications', draft.applicationId),
-      ctx.db.get('orgOpportunities', draft.opportunityId),
-      ctx.db.get('organizations', draft.orgId),
+  handler: async (
+    ctx,
+    { applicationId, includePollLink, includeSurveyLink },
+  ) => {
+    const app = await ctx.db.get('opportunityApplications', applicationId)
+    if (!app) return { pollLink: null, surveyLink: null }
+    const [opportunity, org] = await Promise.all([
+      ctx.db.get('orgOpportunities', app.opportunityId),
+      ctx.db.get('organizations', app.orgId),
     ])
-    if (!app || !opportunity || !org) {
+    if (!opportunity || !org) {
       return { pollLink: null, surveyLink: null }
     }
     const formFields = opportunity.formFields as Array<FormField> | undefined
@@ -369,11 +377,11 @@ export const ensureLinkTargets = internalMutation({
     const baseUrl = process.env.SITE_URL ?? 'https://safetytalent.org'
 
     let pollLink: string | null = null
-    if (draft.includePollLink) {
+    if (includePollLink) {
       const openPoll = await ctx.db
         .query('availabilityPolls')
         .withIndex('by_opportunity', (q) =>
-          q.eq('opportunityId', draft.opportunityId),
+          q.eq('opportunityId', app.opportunityId),
         )
         .filter((q) => q.eq(q.field('status'), 'open'))
         .first()
@@ -400,11 +408,11 @@ export const ensureLinkTargets = internalMutation({
     }
 
     let surveyLink: string | null = null
-    if (draft.includeSurveyLink) {
+    if (includeSurveyLink) {
       const openSurvey = await ctx.db
         .query('feedbackSurveys')
         .withIndex('by_opportunity', (q) =>
-          q.eq('opportunityId', draft.opportunityId),
+          q.eq('opportunityId', app.opportunityId),
         )
         .filter((q) => q.eq(q.field('status'), 'open'))
         .first()
@@ -484,6 +492,196 @@ export const finalizeDraftSend = internalMutation({
     })
     await ctx.db.delete('emailOutbox', draftId)
     return 'sent'
+  },
+})
+
+// ── On-apply confirmation (application_received) ────────────────────────────
+
+// The single truly-automatic email: sent right after a first submission when
+// the opportunity uses the outbox system and the kill switch is on. The switch
+// defaults ON, except EOIs (explicit isEOI flag) which default OFF. Because it
+// only ever fires at submission time, toggling it can never send retroactively.
+export function shouldSendApplicationReceived(
+  opportunity: Doc<'orgOpportunities'>,
+): boolean {
+  if (!isOutboxActive(opportunity)) return false
+  return (
+    opportunity.sendApplicationReceivedEmail ?? !(opportunity.isEOI ?? false)
+  )
+}
+
+// Everything the send action needs, or null when the email shouldn't go out
+// (switch off, template disabled, no email, already sent). All checks re-run
+// here so the scheduled action is race-safe.
+export const getApplicationReceivedPayload = internalQuery({
+  args: { applicationId: v.id('opportunityApplications') },
+  returns: v.union(
+    v.null(),
+    v.object({
+      opportunityId: v.id('orgOpportunities'),
+      to: v.string(),
+      recipientName: v.string(),
+      subject: v.string(),
+      markdownBody: v.string(),
+      includePollLink: v.boolean(),
+      includeSurveyLink: v.boolean(),
+    }),
+  ),
+  handler: async (ctx, { applicationId }) => {
+    const app = await ctx.db.get('opportunityApplications', applicationId)
+    if (!app) return null
+    const opportunity = await ctx.db.get('orgOpportunities', app.opportunityId)
+    if (!opportunity || !shouldSendApplicationReceived(opportunity)) return null
+    if (await hasSentKind(ctx, applicationId, 'application_received'))
+      return null
+
+    const template = await resolveTemplate(
+      ctx,
+      opportunity,
+      'application_received',
+    )
+    if (!template || template.enabled === false) return null
+
+    const formFields = opportunity.formFields as Array<FormField> | undefined
+    const { name, email } = await resolveApplicantContact(
+      ctx,
+      app,
+      formFields,
+      'there',
+    )
+    if (!email) return null
+
+    return {
+      opportunityId: opportunity._id,
+      to: email,
+      recipientName: name,
+      subject: template.subject,
+      markdownBody: template.markdownBody,
+      includePollLink: template.includePollLink ?? false,
+      includeSurveyLink: template.includeSurveyLink ?? false,
+    }
+  },
+})
+
+// Atomic auto-send: idempotency + send + unified log in one transaction.
+export const finalizeAutoSend = internalMutation({
+  args: {
+    applicationId: v.id('opportunityApplications'),
+    kind: v.string(),
+    to: v.string(),
+    recipientName: v.string(),
+    subject: v.string(),
+    html: v.string(),
+  },
+  returns: v.union(
+    v.literal('sent'),
+    v.literal('already_sent'),
+    v.literal('gone'),
+  ),
+  handler: async (
+    ctx,
+    { applicationId, kind, to, recipientName, subject, html },
+  ) => {
+    const app = await ctx.db.get('opportunityApplications', applicationId)
+    if (!app) return 'gone'
+    if (await hasSentKind(ctx, applicationId, kind)) return 'already_sent'
+
+    await resend.sendEmail(ctx, { from: FROM_ADDRESS, to, subject, html })
+    await ctx.db.insert('emailLog', {
+      orgId: app.orgId,
+      opportunityId: app.opportunityId,
+      applicationId,
+      recipientEmail: to,
+      recipientName,
+      kind,
+      source: 'auto',
+      subject,
+      sentAt: Date.now(),
+      sentBy: 'system',
+      status: 'sent',
+    })
+    return 'sent'
+  },
+})
+
+// Visible failure record for automatic sends (e.g. promised poll link with no
+// open poll) — surfaces in History instead of vanishing silently.
+export const logAutoFailure = internalMutation({
+  args: {
+    applicationId: v.id('opportunityApplications'),
+    kind: v.string(),
+    to: v.string(),
+    recipientName: v.string(),
+    subject: v.string(),
+    error: v.string(),
+  },
+  returns: v.null(),
+  handler: async (
+    ctx,
+    { applicationId, kind, to, recipientName, subject, error },
+  ) => {
+    const app = await ctx.db.get('opportunityApplications', applicationId)
+    if (!app) return null
+    await ctx.db.insert('emailLog', {
+      orgId: app.orgId,
+      opportunityId: app.opportunityId,
+      applicationId,
+      recipientEmail: to,
+      recipientName,
+      kind,
+      source: 'auto',
+      subject,
+      sentAt: Date.now(),
+      sentBy: 'system',
+      status: 'failed',
+      error,
+    })
+    return null
+  },
+})
+
+// ── History (unified log) ───────────────────────────────────────────────────
+
+export const listLogForOpportunity = query({
+  args: { opportunityId: v.id('orgOpportunities') },
+  returns: v.array(
+    v.object({
+      _id: v.id('emailLog'),
+      applicationId: v.union(v.id('opportunityApplications'), v.null()),
+      recipientEmail: v.string(),
+      recipientName: v.string(),
+      kind: v.string(),
+      source: v.string(),
+      subject: v.string(),
+      sentAt: v.number(),
+      sentBy: v.string(),
+      status: v.string(),
+      error: v.union(v.string(), v.null()),
+    }),
+  ),
+  handler: async (ctx, { opportunityId }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) throw new ConvexError('Opportunity not found')
+    await requireAdmin(ctx, opportunity.orgId)
+
+    const rows = await ctx.db
+      .query('emailLog')
+      .withIndex('by_opportunity', (q) => q.eq('opportunityId', opportunityId))
+      .order('desc')
+      .take(200)
+    return rows.map((r) => ({
+      _id: r._id,
+      applicationId: r.applicationId ?? null,
+      recipientEmail: r.recipientEmail,
+      recipientName: r.recipientName,
+      kind: r.kind,
+      source: r.source,
+      subject: r.subject,
+      sentAt: r.sentAt,
+      sentBy: r.sentBy,
+      status: r.status,
+      error: r.error ?? null,
+    }))
   },
 })
 

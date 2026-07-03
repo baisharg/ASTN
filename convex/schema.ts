@@ -1390,6 +1390,10 @@ export default defineSchema({
     // Email template set this opportunity inherits (issue #20). When set, the
     // outbox system handles decision emails and legacy auto-emails are skipped.
     emailTemplateSetId: v.optional(v.id('emailTemplateSets')),
+    // On-apply confirmation email kill switch (outbox system only). undefined
+    // defaults to ON, except EOIs which default OFF. Toggling never sends
+    // retroactively — it only affects future submissions.
+    sendApplicationReceivedEmail: v.optional(v.boolean()),
     redirectOpportunityId: v.optional(v.id('orgOpportunities')),
     sourceOpportunityId: v.optional(v.id('orgOpportunities')),
     createdAt: v.number(),

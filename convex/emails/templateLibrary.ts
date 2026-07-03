@@ -265,6 +265,166 @@ export const updateTemplate = mutation({
   },
 })
 
+// ── Per-opportunity view (Emails tab) ───────────────────────────────────────
+
+// The five effective templates for an opportunity: override → set template.
+// Returns null when no set is linked (outbox system inactive).
+export const getEffectiveTemplates = query({
+  args: { opportunityId: v.id('orgOpportunities') },
+  returns: v.union(
+    v.null(),
+    v.object({
+      setId: v.id('emailTemplateSets'),
+      setName: v.string(),
+      templates: v.array(
+        v.object({
+          kind: emailKindValidator,
+          enabled: v.boolean(),
+          subject: v.string(),
+          markdownBody: v.string(),
+          includePollLink: v.boolean(),
+          includeSurveyLink: v.boolean(),
+          overridden: v.boolean(),
+        }),
+      ),
+    }),
+  ),
+  handler: async (ctx, { opportunityId }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) throw new ConvexError('Opportunity not found')
+    await requireAdmin(ctx, opportunity.orgId)
+
+    const setId = opportunity.emailTemplateSetId
+    if (!setId) return null
+    const set = await ctx.db.get('emailTemplateSets', setId)
+    if (!set) return null
+
+    const templates = []
+    for (const kind of EMAIL_KINDS) {
+      const override = await ctx.db
+        .query('emailTemplates')
+        .withIndex('by_opportunity_and_kind', (q) =>
+          q.eq('opportunityId', opportunityId).eq('kind', kind),
+        )
+        .first()
+      const base = override
+        ? null
+        : await ctx.db
+            .query('emailTemplates')
+            .withIndex('by_set_and_kind', (q) =>
+              q.eq('setId', setId).eq('kind', kind),
+            )
+            .first()
+      const t = override ?? base
+      if (!t) continue
+      templates.push({
+        kind,
+        enabled: t.enabled ?? true,
+        subject: t.subject,
+        markdownBody: t.markdownBody,
+        includePollLink: t.includePollLink ?? false,
+        includeSurveyLink: t.includeSurveyLink ?? false,
+        overridden: override != null,
+      })
+    }
+    return { setId, setName: set.name, templates }
+  },
+})
+
+// Customize one template for this opportunity without touching the set.
+export const upsertOpportunityTemplate = mutation({
+  args: {
+    opportunityId: v.id('orgOpportunities'),
+    kind: emailKindValidator,
+    subject: v.string(),
+    markdownBody: v.string(),
+    enabled: v.boolean(),
+    includePollLink: v.boolean(),
+    includeSurveyLink: v.boolean(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const opportunity = await ctx.db.get('orgOpportunities', args.opportunityId)
+    if (!opportunity) throw new ConvexError('Opportunity not found')
+    await requireAdmin(ctx, opportunity.orgId)
+
+    if (!args.subject.trim()) throw new ConvexError('Subject cannot be empty')
+    assertOnlyKnownVariables(args.subject)
+    assertOnlyKnownVariables(args.markdownBody)
+
+    const now = Date.now()
+    const existing = await ctx.db
+      .query('emailTemplates')
+      .withIndex('by_opportunity_and_kind', (q) =>
+        q.eq('opportunityId', args.opportunityId).eq('kind', args.kind),
+      )
+      .first()
+    const fields = {
+      enabled: args.enabled,
+      subject: args.subject,
+      markdownBody: args.markdownBody,
+      includePollLink: args.includePollLink,
+      includeSurveyLink: args.includeSurveyLink,
+      updatedAt: now,
+    }
+    if (existing) {
+      await ctx.db.patch('emailTemplates', existing._id, fields)
+    } else {
+      await ctx.db.insert('emailTemplates', {
+        orgId: opportunity.orgId,
+        opportunityId: args.opportunityId,
+        kind: args.kind,
+        ...fields,
+      })
+    }
+    return null
+  },
+})
+
+// Remove this opportunity's customization for a kind (revert to the set).
+export const clearOpportunityTemplate = mutation({
+  args: {
+    opportunityId: v.id('orgOpportunities'),
+    kind: emailKindValidator,
+  },
+  returns: v.null(),
+  handler: async (ctx, { opportunityId, kind }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) throw new ConvexError('Opportunity not found')
+    await requireAdmin(ctx, opportunity.orgId)
+
+    const existing = await ctx.db
+      .query('emailTemplates')
+      .withIndex('by_opportunity_and_kind', (q) =>
+        q.eq('opportunityId', opportunityId).eq('kind', kind),
+      )
+      .first()
+    if (existing) await ctx.db.delete('emailTemplates', existing._id)
+    return null
+  },
+})
+
+// On-apply confirmation kill switch. Never sends retroactively — the email
+// only ever fires at submission time, so toggling has no effect on existing
+// applications by construction.
+export const setSendApplicationReceivedEmail = mutation({
+  args: {
+    opportunityId: v.id('orgOpportunities'),
+    enabled: v.boolean(),
+  },
+  returns: v.null(),
+  handler: async (ctx, { opportunityId, enabled }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) throw new ConvexError('Opportunity not found')
+    await requireAdmin(ctx, opportunity.orgId)
+    await ctx.db.patch('orgOpportunities', opportunityId, {
+      sendApplicationReceivedEmail: enabled,
+      updatedAt: Date.now(),
+    })
+    return null
+  },
+})
+
 // Link (or unlink, with setId omitted) an opportunity to a template set.
 // Linking activates the outbox system for that opportunity.
 export const setOpportunityTemplateSet = mutation({
