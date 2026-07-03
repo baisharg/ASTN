@@ -6,8 +6,7 @@ import { resolveApplicantDisplayName } from './lib/applicantName'
 import { rateLimiter } from './lib/rateLimiter'
 import { internal } from './_generated/api'
 import type { MutationCtx } from './_generated/server'
-import type { Doc, Id } from './_generated/dataModel'
-import { inferBaishCourseState } from './lib/baishCourseOpportunities'
+import type { Id } from './_generated/dataModel'
 import { isOutboxActive, syncOutboxOnStatusChange } from './emails/outbox'
 import {
   PROFILE_PREFILL_KEYS,
@@ -72,84 +71,11 @@ async function maybeAddPollRespondent(
   }
 }
 
-/**
- * Schedule an auto-email if the opportunity has a matching auto-email config.
- * Fails silently so it never blocks the main operation.
- */
-async function maybeScheduleAutoEmail(
-  ctx: MutationCtx,
-  opts: {
-    opportunityId: Id<'orgOpportunities'>
-    applicationId: Id<'opportunityApplications'>
-    trigger: string
-  },
-) {
-  try {
-    const config = await ctx.db
-      .query('opportunityAutoEmails')
-      .withIndex('by_opportunity', (q) =>
-        q.eq('opportunityId', opts.opportunityId),
-      )
-      .first()
-    const hasMatchingTrigger =
-      config?.templates?.some((t) => t.trigger === opts.trigger) ??
-      config?.triggers?.includes(opts.trigger) ??
-      false
-    if (config?.enabled && hasMatchingTrigger) {
-      await ctx.scheduler.runAfter(0, internal.emails.autoEmail.sendAutoEmail, {
-        applicationId: opts.applicationId,
-        trigger: opts.trigger,
-      })
-    }
-  } catch (err) {
-    console.error('Failed to schedule auto-email:', err)
-  }
-}
-
-/**
- * Auto-send the availability poll email to an applicant on submit, when the
- * opportunity opts in (autoSendAvailabilityEmail) and isn't an EOI. Skipped if a
- * custom `new_application` auto-email is configured (that path handles it, so we
- * don't double-send). Fails silently — never blocks the submission.
- */
-async function maybeScheduleAvailabilityEmail(
-  ctx: MutationCtx,
-  opts: {
-    opportunity: Doc<'orgOpportunities'>
-    applicationId: Id<'opportunityApplications'>
-  },
-) {
-  try {
-    const opp = opts.opportunity
-    if (!opp.autoSendAvailabilityEmail) return
-
-    // Never auto-send for EOIs (expression-of-interest opportunities).
-    const isEOI =
-      inferBaishCourseState(opp.title, opp.description) === 'eoi_open' ||
-      (opp.tags ?? []).includes('EOI')
-    if (isEOI) return
-
-    // If a custom new_application auto-email is configured, let that handle it.
-    const config = await ctx.db
-      .query('opportunityAutoEmails')
-      .withIndex('by_opportunity', (q) => q.eq('opportunityId', opp._id))
-      .first()
-    const hasCustomNewApp =
-      !!config?.enabled &&
-      ((config.templates?.some((t) => t.trigger === 'new_application') ??
-        false) ||
-        (config.triggers?.includes('new_application') ?? false))
-    if (hasCustomNewApp) return
-
-    await ctx.scheduler.runAfter(
-      0,
-      internal.emails.autoEmail.sendAvailabilityEmail,
-      { applicationId: opts.applicationId },
-    )
-  } catch (err) {
-    console.error('Failed to schedule availability email:', err)
-  }
-}
+// Applicant emails run through the outbox system (issue #20): the on-apply
+// confirmation is scheduled from the submit handlers when the opportunity
+// links a template set, and decision emails are drafted by
+// syncOutboxOnStatusChange. The legacy auto-email paths were removed in
+// phase 3.
 
 // Submit an application (idempotent — returns existing if already applied)
 // Auto-joins the org if the user is not already a member.
@@ -237,20 +163,13 @@ export const submit = mutation({
       responses,
     })
     if (isOutboxActive(opportunity)) {
-      // Outbox system (issue #20): the on-apply confirmation replaces both
-      // legacy on-submit emails. All preconditions re-checked in the action.
+      // On-apply confirmation (issue #20). All preconditions (kill switch,
+      // template enabled, idempotency) are re-checked in the action.
       await ctx.scheduler.runAfter(
         0,
         internal.emails.outboxSend.sendApplicationReceivedEmail,
         { applicationId },
       )
-    } else {
-      await maybeScheduleAutoEmail(ctx, {
-        opportunityId,
-        applicationId,
-        trigger: 'new_application',
-      })
-      await maybeScheduleAvailabilityEmail(ctx, { opportunity, applicationId })
     }
 
     return applicationId
@@ -309,19 +228,12 @@ export const submitGuest = mutation({
       responses,
     })
     if (isOutboxActive(opportunity)) {
-      // Outbox system (issue #20): see the authenticated submit path above.
+      // On-apply confirmation (issue #20): see the authenticated path above.
       await ctx.scheduler.runAfter(
         0,
         internal.emails.outboxSend.sendApplicationReceivedEmail,
         { applicationId },
       )
-    } else {
-      await maybeScheduleAutoEmail(ctx, {
-        opportunityId,
-        applicationId,
-        trigger: 'new_application',
-      })
-      await maybeScheduleAvailabilityEmail(ctx, { opportunity, applicationId })
     }
 
     return applicationId
@@ -791,7 +703,7 @@ export const updateStatus = mutation({
     })
 
     // Outbox system (issue #20): opportunities with a linked template set get
-    // a pending decision-email draft instead of the legacy status auto-email.
+    // a pending decision-email draft.
     // Deciding never sends — admins review and send from the outbox.
     const opportunity = await ctx.db.get(
       'orgOpportunities',
@@ -806,12 +718,6 @@ export const updateStatus = mutation({
           opportunity,
         })
       }
-    } else {
-      await maybeScheduleAutoEmail(ctx, {
-        opportunityId: application.opportunityId,
-        applicationId,
-        trigger: `status:${status}`,
-      })
     }
 
     return null

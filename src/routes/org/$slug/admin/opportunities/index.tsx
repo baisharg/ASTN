@@ -257,13 +257,13 @@ function AdminOpportunitiesPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {(Object.keys(STATUS_FILTER_LABELS) as Array<StatusFilter>).map(
-                      (k) => (
-                        <SelectItem key={k} value={k}>
-                          {STATUS_FILTER_LABELS[k]}
-                        </SelectItem>
-                      ),
-                    )}
+                    {(
+                      Object.keys(STATUS_FILTER_LABELS) as Array<StatusFilter>
+                    ).map((k) => (
+                      <SelectItem key={k} value={k}>
+                        {STATUS_FILTER_LABELS[k]}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <Select

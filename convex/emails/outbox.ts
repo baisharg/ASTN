@@ -640,6 +640,43 @@ export const logAutoFailure = internalMutation({
   },
 })
 
+// Record a manual broadcast send in the unified log (kind 'broadcast' never
+// participates in decision idempotency — broadcasts are repeatable by design).
+export const logBroadcastSend = internalMutation({
+  args: {
+    opportunityId: v.id('orgOpportunities'),
+    applicationId: v.id('opportunityApplications'),
+    to: v.string(),
+    recipientName: v.string(),
+    subject: v.string(),
+    sentBy: v.string(),
+    error: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (
+    ctx,
+    { opportunityId, applicationId, to, recipientName, subject, sentBy, error },
+  ) => {
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) return null
+    await ctx.db.insert('emailLog', {
+      orgId: opportunity.orgId,
+      opportunityId,
+      applicationId,
+      recipientEmail: to,
+      recipientName,
+      kind: 'broadcast',
+      source: 'broadcast',
+      subject,
+      sentAt: Date.now(),
+      sentBy,
+      status: error ? 'failed' : 'sent',
+      error,
+    })
+    return null
+  },
+})
+
 // ── History (unified log) ───────────────────────────────────────────────────
 
 export const listLogForOpportunity = query({

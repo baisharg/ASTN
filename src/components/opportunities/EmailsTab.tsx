@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Link } from '@tanstack/react-router'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import {
   CalendarClock,
@@ -91,6 +92,7 @@ const KIND_COLORS: Record<string, string> = {
 
 export function EmailsTab({
   opportunity,
+  slug,
 }: {
   opportunity: {
     _id: Id<'orgOpportunities'>
@@ -99,23 +101,36 @@ export function EmailsTab({
     isEOI?: boolean
     sendApplicationReceivedEmail?: boolean
   }
+  slug: string
 }) {
   return (
     <Tabs defaultValue="outbox">
-      <TabsList>
-        <TabsTrigger value="outbox" className="gap-2">
-          <Inbox className="size-4" />
-          Outbox
-        </TabsTrigger>
-        <TabsTrigger value="history" className="gap-2">
-          <History className="size-4" />
-          History
-        </TabsTrigger>
-        <TabsTrigger value="templates" className="gap-2">
-          <Mail className="size-4" />
-          Templates
-        </TabsTrigger>
-      </TabsList>
+      <div className="flex items-center justify-between">
+        <TabsList>
+          <TabsTrigger value="outbox" className="gap-2">
+            <Inbox className="size-4" />
+            Outbox
+          </TabsTrigger>
+          <TabsTrigger value="history" className="gap-2">
+            <History className="size-4" />
+            History
+          </TabsTrigger>
+          <TabsTrigger value="templates" className="gap-2">
+            <Mail className="size-4" />
+            Templates
+          </TabsTrigger>
+        </TabsList>
+        {/* One-off/free-form mail (reminders etc.) — logged in History too. */}
+        <Button variant="outline" size="sm" asChild>
+          <Link
+            to="/org/$slug/admin/opportunities/$oppId/email"
+            params={{ slug, oppId: opportunity._id }}
+          >
+            <Pencil className="size-4 mr-2" />
+            Compose broadcast
+          </Link>
+        </Button>
+      </div>
 
       <TabsContent value="outbox" className="mt-6">
         <OutboxSection opportunityId={opportunity._id} />

@@ -320,6 +320,7 @@ export const create = mutation({
     formFields: v.optional(v.any()),
     tags: v.optional(v.array(v.string())),
     autoSendAvailabilityEmail: v.optional(v.boolean()),
+    isEOI: v.optional(v.boolean()),
   },
   returns: v.id('orgOpportunities'),
   handler: async (ctx, args) => {
@@ -383,6 +384,7 @@ export const update = mutation({
     formFields: v.optional(v.any()),
     tags: v.optional(v.array(v.string())),
     autoSendAvailabilityEmail: v.optional(v.boolean()),
+    isEOI: v.optional(v.boolean()),
     redirectOpportunityId: v.optional(
       v.union(v.id('orgOpportunities'), v.null()),
     ),

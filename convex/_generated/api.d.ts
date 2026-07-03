@@ -133,6 +133,7 @@ import type * as mcp_tools from "../mcp/tools.js";
 import type * as migrations_backfillAvailabilityPolls from "../migrations/backfillAvailabilityPolls.js";
 import type * as migrations_backfillBaishFormFields from "../migrations/backfillBaishFormFields.js";
 import type * as migrations_backfillProfileEmails from "../migrations/backfillProfileEmails.js";
+import type * as migrations_emailRedesignPhase3 from "../migrations/emailRedesignPhase3.js";
 import type * as migrations_fixBackfilledPollDefaults from "../migrations/fixBackfilledPollDefaults.js";
 import type * as migrations_migrateAutoEmailTemplates from "../migrations/migrateAutoEmailTemplates.js";
 import type * as migrations_migrateAvailabilityWeekdays from "../migrations/migrateAvailabilityWeekdays.js";
@@ -299,6 +300,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/backfillAvailabilityPolls": typeof migrations_backfillAvailabilityPolls;
   "migrations/backfillBaishFormFields": typeof migrations_backfillBaishFormFields;
   "migrations/backfillProfileEmails": typeof migrations_backfillProfileEmails;
+  "migrations/emailRedesignPhase3": typeof migrations_emailRedesignPhase3;
   "migrations/fixBackfilledPollDefaults": typeof migrations_fixBackfilledPollDefaults;
   "migrations/migrateAutoEmailTemplates": typeof migrations_migrateAutoEmailTemplates;
   "migrations/migrateAvailabilityWeekdays": typeof migrations_migrateAvailabilityWeekdays;

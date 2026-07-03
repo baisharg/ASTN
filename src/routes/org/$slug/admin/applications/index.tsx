@@ -150,7 +150,6 @@ function AdminApplicationsPage() {
 
           {currentOpportunity ? (
             <ApplicationsTable
-              slug={slug}
               opportunityId={currentOpportunity._id}
               opportunityTitle={currentOpportunity.title}
               formFields={
@@ -171,4 +170,3 @@ function AdminApplicationsPage() {
     </div>
   )
 }
-

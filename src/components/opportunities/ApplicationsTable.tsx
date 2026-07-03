@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { Link } from '@tanstack/react-router'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import {
   ChevronDown,
@@ -7,7 +6,6 @@ import {
   Download,
   FileText,
   Loader2,
-  Mail,
 } from 'lucide-react'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
@@ -55,12 +53,10 @@ const STATUS_COLORS: Record<ApplicationStatus, string> = {
 }
 
 export function ApplicationsTable({
-  slug,
   opportunityId,
   opportunityTitle,
   formFields,
 }: {
-  slug: string
   opportunityId: Id<'orgOpportunities'>
   opportunityTitle: string
   formFields: Array<FormField>
@@ -130,15 +126,6 @@ export function ApplicationsTable({
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="outline" asChild>
-            <Link
-              to="/org/$slug/admin/opportunities/$oppId/email"
-              params={{ slug, oppId: opportunityId }}
-            >
-              <Mail className="size-4 mr-2" />
-              Email Applicants
-            </Link>
-          </Button>
           <Button
             variant="outline"
             onClick={handleExport}

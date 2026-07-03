@@ -10,9 +10,7 @@ export const fixBackfilledPollDefaults = internalMutation({
   args: {},
   returns: v.object({ updated: v.number(), skipped: v.number() }),
   handler: async (ctx) => {
-    const polls = await ctx.db
-      .query('availabilityPolls')
-      .collect()
+    const polls = await ctx.db.query('availabilityPolls').collect()
     let updated = 0
     let skipped = 0
     for (const p of polls) {

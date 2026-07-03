@@ -145,9 +145,26 @@ export const sendBroadcastToApplicants = action({
           subject,
           html,
         })
+        await ctx.runMutation(internal.emails.outbox.logBroadcastSend, {
+          opportunityId,
+          applicationId: recipient.applicationId as any,
+          to: recipient.email,
+          recipientName: recipient.name,
+          subject,
+          sentBy: identity.subject,
+        })
         sent++
       } catch (err) {
         console.error(`Failed to send to ${recipient.email}:`, err)
+        await ctx.runMutation(internal.emails.outbox.logBroadcastSend, {
+          opportunityId,
+          applicationId: recipient.applicationId as any,
+          to: recipient.email,
+          recipientName: recipient.name,
+          subject,
+          sentBy: identity.subject,
+          error: err instanceof Error ? err.message : String(err),
+        })
         failed++
       }
     }
@@ -211,7 +228,10 @@ export const sendTestEmail = action({
       md = md.replaceAll('{{survey_link}}', surveyExampleLink)
     }
 
-    const bodyHtml: string = await marked(emojify(md), { breaks: true, gfm: true })
+    const bodyHtml: string = await marked(emojify(md), {
+      breaks: true,
+      gfm: true,
+    })
     const html: string = await renderAdminBroadcast({
       userName: 'Jane Doe',
       bodyHtml,

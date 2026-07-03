@@ -5,8 +5,6 @@ import {
   Building2,
   Calendar,
   Check,
-  ChevronDown,
-  ChevronRight,
   ClipboardCopy,
   ClipboardList,
   Link2,
@@ -65,7 +63,6 @@ import {
   SelectValue,
 } from '~/components/ui/select'
 import { Spinner } from '~/components/ui/spinner'
-import { Switch } from '~/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { Textarea } from '~/components/ui/textarea'
 
@@ -568,15 +565,6 @@ function OpportunityEditPage() {
                   )}
                   Export CSV
                 </Button>
-                <Button variant="outline" asChild>
-                  <Link
-                    to="/org/$slug/admin/opportunities/$oppId/email"
-                    params={{ slug, oppId }}
-                  >
-                    <Mail className="size-4 mr-2" />
-                    Email Applicants
-                  </Link>
-                </Button>
               </div>
             </div>
           </div>
@@ -672,7 +660,6 @@ function OpportunityEditPage() {
 
             <TabsContent value="applications" className="mt-6">
               <ApplicationsTable
-                slug={slug}
                 opportunityId={opportunity._id}
                 opportunityTitle={opportunity.title}
                 formFields={(opportunity.formFields ?? []) as Array<FormField>}
@@ -680,15 +667,11 @@ function OpportunityEditPage() {
             </TabsContent>
 
             <TabsContent value="availability" className="mt-6">
-              <AvailabilityTab
-                opportunity={opportunity}
-                opportunityId={opportunity._id}
-                slug={slug}
-              />
+              <AvailabilityTab opportunityId={opportunity._id} slug={slug} />
             </TabsContent>
 
             <TabsContent value="emails" className="mt-6">
-              <EmailsTab opportunity={opportunity} />
+              <EmailsTab opportunity={opportunity} slug={slug} />
             </TabsContent>
 
             <TabsContent value="feedback" className="mt-6">
@@ -709,16 +692,12 @@ function OpportunityEditPage() {
 // ─── Availability Tab ───
 
 function AvailabilityTab({
-  opportunity,
   opportunityId,
   slug,
 }: {
-  opportunity: Doc<'orgOpportunities'>
   opportunityId: Id<'orgOpportunities'>
   slug: string
 }) {
-  const updateOpportunity = useMutation(api.orgOpportunities.update)
-
   const poll = useQuery(api.availabilityPolls.getPollByOpportunity, {
     opportunityId,
   })
@@ -860,49 +839,17 @@ function AvailabilityTab({
 
   return (
     <div className="space-y-6">
-      {/* Legacy on-apply email toggle — replaced by the Emails tab when a
-          template set is linked (issue #20). Never show both systems. */}
-      {opportunity.emailTemplateSetId ? (
-        <Card className="border-blue-200 bg-blue-50/50">
-          <CardContent className="py-3">
-            <p className="text-sm text-blue-900">
-              Applicant emails for this opportunity are managed in the{' '}
-              <span className="font-medium">Emails</span> tab (including the
-              on-apply confirmation with this poll&apos;s link).
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <CardContent className="flex items-center justify-between gap-4 py-4">
-            <div>
-              <p className="text-sm font-medium">
-                Auto-send availability email
-              </p>
-              <p className="text-xs text-muted-foreground">
-                When someone applies, email them this poll&apos;s link
-                automatically. Not sent for EOIs.
-              </p>
-            </div>
-            <Switch
-              checked={opportunity.autoSendAvailabilityEmail ?? false}
-              onCheckedChange={async (checked) => {
-                try {
-                  await updateOpportunity({
-                    id: opportunity._id,
-                    autoSendAvailabilityEmail: checked,
-                  })
-                  toast.success(
-                    checked ? 'Auto-send enabled' : 'Auto-send disabled',
-                  )
-                } catch {
-                  toast.error('Failed to update setting')
-                }
-              }}
-            />
-          </CardContent>
-        </Card>
-      )}
+      {/* Applicant emails (incl. the on-apply confirmation with this poll's
+          link) live in the Emails tab (issue #20). */}
+      <Card className="border-blue-200 bg-blue-50/50">
+        <CardContent className="py-3">
+          <p className="text-sm text-blue-900">
+            Applicant emails for this opportunity are managed in the{' '}
+            <span className="font-medium">Emails</span> tab (including the
+            on-apply confirmation with this poll&apos;s link).
+          </p>
+        </CardContent>
+      </Card>
 
       {/* Poll info card */}
       <Card>
@@ -1174,280 +1121,6 @@ function AvailabilityTab({
           totalRespondents={totalRespondents}
         />
       )}
-
-      {/* Legacy auto-email config — hidden when the outbox system is active
-          so only one email system is ever visible (issue #20). */}
-      {!opportunity.emailTemplateSetId && (
-        <AutoEmailConfigSection opportunityId={opportunityId} />
-      )}
     </div>
-  )
-}
-
-// ─── Auto-Email Config Section ───
-
-const TRIGGER_OPTIONS = [
-  { value: 'new_application', label: 'New application' },
-  { value: 'status:accepted', label: 'Accepted' },
-  { value: 'status:under_review', label: 'Under Review' },
-  { value: 'status:rejected', label: 'Rejected' },
-  { value: 'status:waitlisted', label: 'Waitlisted' },
-] as const
-
-type TemplateState = {
-  subject: string
-  markdownBody: string
-  requiresPoll: boolean
-}
-
-const emptyTemplate: TemplateState = {
-  subject: '',
-  markdownBody: '',
-  requiresPoll: false,
-}
-
-function AutoEmailConfigSection({
-  opportunityId,
-}: {
-  opportunityId: Id<'orgOpportunities'>
-}) {
-  const config = useQuery(api.autoEmailConfig.getConfig, { opportunityId })
-  const logEntries = useQuery(api.autoEmailConfig.getLog, { opportunityId })
-  const saveConfig = useMutation(api.autoEmailConfig.saveConfig)
-
-  const [enabled, setEnabled] = useState(false)
-  const [templates, setTemplates] = useState<
-    Partial<Record<string, TemplateState>>
-  >({})
-  const [isSaving, setIsSaving] = useState(false)
-  const [logOpen, setLogOpen] = useState(false)
-  const [initialized, setInitialized] = useState(false)
-
-  // Reset when opportunity changes
-  useEffect(() => {
-    setInitialized(false)
-  }, [opportunityId])
-
-  // Populate form when config loads
-  useEffect(() => {
-    if (config && !initialized) {
-      setEnabled(config.enabled)
-      const tplMap: Record<string, TemplateState> = {}
-      for (const t of config.templates) {
-        tplMap[t.trigger] = {
-          subject: t.subject,
-          markdownBody: t.markdownBody,
-          requiresPoll: t.requiresPoll,
-        }
-      }
-      setTemplates(tplMap)
-      setInitialized(true)
-    } else if (config === null && !initialized) {
-      setInitialized(true)
-    }
-  }, [config, initialized])
-
-  const updateTemplate = (
-    trigger: string,
-    field: keyof TemplateState,
-    value: string | boolean,
-  ) => {
-    setTemplates((prev) => ({
-      ...prev,
-      [trigger]: {
-        ...(prev[trigger] ?? emptyTemplate),
-        [field]: value,
-      },
-    }))
-  }
-
-  const configuredCount = Object.values(templates).filter((t) =>
-    t?.subject.trim(),
-  ).length
-
-  const handleSave = async () => {
-    setIsSaving(true)
-    try {
-      // Only include templates with a non-empty subject
-      const templatesToSave = TRIGGER_OPTIONS.flatMap((opt) => {
-        const tpl = templates[opt.value]
-        if (!tpl?.subject.trim()) return []
-        return [
-          {
-            trigger: opt.value,
-            subject: tpl.subject,
-            markdownBody: tpl.markdownBody,
-            requiresPoll: tpl.requiresPoll,
-          },
-        ]
-      })
-      await saveConfig({
-        opportunityId,
-        enabled,
-        templates: templatesToSave,
-      })
-      toast.success('Auto-email config saved')
-    } catch (err) {
-      console.error('Failed to save auto-email config:', err)
-      toast.error('Failed to save config')
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
-  if (config === undefined) return null
-
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Mail className="size-5" />
-              Auto-Email
-            </CardTitle>
-            <CardDescription>
-              Configure a different email template for each trigger
-            </CardDescription>
-          </div>
-          <div className="flex items-center gap-2">
-            <span
-              className={`inline-block size-2 rounded-full ${enabled ? 'bg-green-500' : 'bg-slate-300'}`}
-            />
-            <Switch checked={enabled} onCheckedChange={setEnabled} />
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-5">
-        <p className="text-xs text-muted-foreground">
-          Variables: <code>{'{{applicant_name}}'}</code>,{' '}
-          <code>{'{{poll_link}}'}</code>
-        </p>
-
-        {/* Per-trigger template sections */}
-        {TRIGGER_OPTIONS.map((opt) => {
-          const tpl = templates[opt.value] ?? emptyTemplate
-          const isConfigured = tpl.subject.trim().length > 0
-          return (
-            <div key={opt.value} className="space-y-2 rounded-md border p-3">
-              <div className="flex items-center gap-2">
-                <span
-                  className={`inline-block size-2 rounded-full ${isConfigured ? 'bg-green-500' : 'bg-slate-300'}`}
-                />
-                <span className="text-sm font-medium">{opt.label}</span>
-              </div>
-
-              <div className="space-y-1">
-                <Label htmlFor={`subject-${opt.value}`}>Subject</Label>
-                <Input
-                  id={`subject-${opt.value}`}
-                  value={tpl.subject}
-                  onChange={(e) =>
-                    updateTemplate(opt.value, 'subject', e.target.value)
-                  }
-                  placeholder="Leave empty to skip this trigger"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <Label htmlFor={`body-${opt.value}`}>Body (Markdown)</Label>
-                <Textarea
-                  id={`body-${opt.value}`}
-                  value={tpl.markdownBody}
-                  onChange={(e) =>
-                    updateTemplate(opt.value, 'markdownBody', e.target.value)
-                  }
-                  rows={4}
-                  placeholder="Write your email body in markdown..."
-                />
-              </div>
-
-              <label className="flex items-center gap-2 cursor-pointer">
-                <Checkbox
-                  checked={tpl.requiresPoll}
-                  onCheckedChange={(checked) =>
-                    updateTemplate(opt.value, 'requiresPoll', checked === true)
-                  }
-                />
-                <span className="text-xs text-muted-foreground">
-                  Only send when an open availability poll exists
-                </span>
-              </label>
-            </div>
-          )
-        })}
-
-        {/* Save */}
-        <Button
-          onClick={handleSave}
-          disabled={isSaving || configuredCount === 0}
-        >
-          {isSaving ? (
-            <>
-              <Loader2 className="size-4 mr-2 animate-spin" />
-              Saving...
-            </>
-          ) : (
-            <>
-              <Save className="size-4 mr-2" />
-              Save Auto-Email Config
-              {configuredCount > 0 && (
-                <span className="ml-1 text-xs opacity-70">
-                  ({configuredCount} trigger
-                  {configuredCount !== 1 ? 's' : ''})
-                </span>
-              )}
-            </>
-          )}
-        </Button>
-
-        {/* Send log */}
-        {logEntries && logEntries.length > 0 && (
-          <div className="pt-2 border-t">
-            <button
-              type="button"
-              className="flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-              onClick={() => setLogOpen(!logOpen)}
-            >
-              {logOpen ? (
-                <ChevronDown className="size-4" />
-              ) : (
-                <ChevronRight className="size-4" />
-              )}
-              Send Log ({logEntries.length})
-            </button>
-            {logOpen && (
-              <div className="mt-2 space-y-1 max-h-48 overflow-y-auto rounded-md border p-2">
-                {logEntries.map((entry) => (
-                  <div
-                    key={entry._id}
-                    className="flex items-center justify-between gap-2 py-1 px-1 text-sm"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span
-                        className={`inline-block size-1.5 rounded-full shrink-0 ${
-                          entry.status === 'sent'
-                            ? 'bg-green-500'
-                            : 'bg-red-500'
-                        }`}
-                      />
-                      <span className="truncate">
-                        {entry.recipientName} ({entry.recipientEmail})
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 text-muted-foreground shrink-0">
-                      <span className="text-xs">{entry.trigger}</span>
-                      <span className="text-xs">
-                        {new Date(entry.sentAt).toLocaleDateString()}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </CardContent>
-    </Card>
   )
 }

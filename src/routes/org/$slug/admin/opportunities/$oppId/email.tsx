@@ -500,7 +500,7 @@ function EmailComposePage() {
           </div>
 
           <h1 className="text-2xl font-display font-semibold text-foreground mb-6">
-            Email Applicants
+            Broadcast email
           </h1>
 
           {/* Recipients */}
