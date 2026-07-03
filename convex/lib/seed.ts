@@ -1609,8 +1609,6 @@ export const clearDevData = internalMutation({
       'availabilityResponses',
       'pollRespondents',
       'availabilityPolls',
-      'opportunityAutoEmails',
-      'autoEmailLog',
       'visitApplicationResponses',
       'spaceBookings',
       'guestProfiles',

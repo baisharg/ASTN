@@ -77,7 +77,6 @@ const opportunityReturnValidator = v.object({
   featured: v.boolean(),
   formFields: v.optional(v.any()),
   tags: v.optional(v.array(v.string())),
-  autoSendAvailabilityEmail: v.optional(v.boolean()),
   isEOI: v.optional(v.boolean()),
   emailTemplateSetId: v.optional(v.id('emailTemplateSets')),
   sendApplicationReceivedEmail: v.optional(v.boolean()),
@@ -319,8 +318,7 @@ export const create = mutation({
     featured: v.boolean(),
     formFields: v.optional(v.any()),
     tags: v.optional(v.array(v.string())),
-    autoSendAvailabilityEmail: v.optional(v.boolean()),
-    isEOI: v.optional(v.boolean()),
+      isEOI: v.optional(v.boolean()),
   },
   returns: v.id('orgOpportunities'),
   handler: async (ctx, args) => {
@@ -383,8 +381,7 @@ export const update = mutation({
     featured: v.optional(v.boolean()),
     formFields: v.optional(v.any()),
     tags: v.optional(v.array(v.string())),
-    autoSendAvailabilityEmail: v.optional(v.boolean()),
-    isEOI: v.optional(v.boolean()),
+      isEOI: v.optional(v.boolean()),
     redirectOpportunityId: v.optional(
       v.union(v.id('orgOpportunities'), v.null()),
     ),

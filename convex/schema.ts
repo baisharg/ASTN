@@ -1381,9 +1381,6 @@ export default defineSchema({
     featured: v.boolean(),
     formFields: v.optional(v.any()), // Array<FormField> — see convex/lib/formFields.ts
     tags: v.optional(v.array(v.string())), // freeform labels for grouping/filtering (e.g. "TAIS Course")
-    // When true, applicants are auto-emailed the availability poll link on
-    // submit (skipped for EOIs). See opportunityApplications submit handlers.
-    autoSendAvailabilityEmail: v.optional(v.boolean()),
     // Explicit expression-of-interest marker (replaces title/tag inference).
     // EOIs default the on-apply confirmation email to OFF.
     isEOI: v.optional(v.boolean()),
@@ -1552,44 +1549,6 @@ export default defineSchema({
   })
     .index('by_poll', ['pollId'])
     .index('by_poll_and_respondent', ['pollId', 'respondentId']),
-
-  // Per-opportunity auto-email config
-  opportunityAutoEmails: defineTable({
-    opportunityId: v.id('orgOpportunities'),
-    orgId: v.id('organizations'),
-    enabled: v.boolean(),
-    // Per-trigger templates (new format)
-    templates: v.optional(
-      v.array(
-        v.object({
-          trigger: v.string(),
-          subject: v.string(),
-          markdownBody: v.string(),
-          requiresPoll: v.boolean(),
-        }),
-      ),
-    ),
-    // Legacy flat fields (kept optional for backward compat)
-    triggers: v.optional(v.array(v.string())),
-    subject: v.optional(v.string()),
-    markdownBody: v.optional(v.string()),
-    requiresPoll: v.optional(v.boolean()),
-    createdBy: v.string(),
-    updatedAt: v.number(),
-  }).index('by_opportunity', ['opportunityId']),
-
-  // Auto-email audit log
-  autoEmailLog: defineTable({
-    opportunityId: v.id('orgOpportunities'),
-    applicationId: v.id('opportunityApplications'),
-    recipientEmail: v.string(),
-    recipientName: v.string(),
-    trigger: v.string(),
-    subject: v.string(),
-    sentAt: v.number(),
-    status: v.union(v.literal('sent'), v.literal('failed')),
-    error: v.optional(v.string()),
-  }).index('by_opportunity', ['opportunityId']),
 
   // ── Email redesign (issue #20): template sets, outbox, unified log ────────
 
