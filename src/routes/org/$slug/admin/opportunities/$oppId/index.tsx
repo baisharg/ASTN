@@ -245,7 +245,7 @@ function OpportunityDetailsForm({
         <Label htmlFor="opp-slug">Application link</Label>
         <div className="flex items-center gap-1 text-sm">
           <span className="text-muted-foreground shrink-0 font-mono text-xs">
-            \u2026/apply/
+            /apply/
           </span>
           <Input
             id="opp-slug"
