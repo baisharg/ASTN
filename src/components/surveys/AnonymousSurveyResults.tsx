@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight, Download } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { escapeCSV, formatValue } from './SurveyResultsTable'
+import { ResponseFieldValue, escapeCSV } from './SurveyResultsTable'
 import type { FormField } from '../../../convex/lib/formFields'
 import type { Id } from '../../../convex/_generated/dataModel'
 import { Button } from '~/components/ui/button'
@@ -24,10 +24,13 @@ export function AnonymousSurveyResults({
   formFields,
   responses,
   surveyTitle,
+  imageUrls,
 }: {
   formFields: Array<FormField>
   responses: Array<AnonymousResponse>
   surveyTitle: string
+  /** storage id -> displayable url, for `image` fields. */
+  imageUrls?: Record<string, string>
 }) {
   const [expanded, setExpanded] = useState<string | null>(null)
 
@@ -116,9 +119,11 @@ export function AnonymousSurveyResults({
                           <span className="text-muted-foreground">
                             {field.label}:
                           </span>{' '}
-                          <span className="font-medium">
-                            {formatValue(r.responses[field.key], field)}
-                          </span>
+                          <ResponseFieldValue
+                            val={r.responses[field.key]}
+                            field={field}
+                            imageUrls={imageUrls}
+                          />
                         </div>
                       ))}
                     </div>

@@ -25,6 +25,10 @@ export const rateLimiter = new RateLimiter(components.rateLimiter, {
   // --- CRITICAL: Anonymous / unauthenticated ---
   feedbackSubmit: { kind: 'fixed window', rate: 10, period: HOUR },
   guestApplication: { kind: 'fixed window', rate: 5, period: HOUR },
+  // Upload slots for `image` form fields, requested by respondents who are not
+  // logged in. Keyed by survey token, so a leaked link cannot be turned into
+  // open file hosting. A form has a handful of image fields at most.
+  surveyFileUpload: { kind: 'fixed window', rate: 10, period: HOUR },
 
   // --- MEDIUM: Admin actions ---
   adminBroadcast: { kind: 'fixed window', rate: 5, period: HOUR },

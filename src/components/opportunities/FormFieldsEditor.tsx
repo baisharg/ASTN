@@ -40,6 +40,7 @@ const KIND_LABELS: Record<FormFieldKind, string> = {
   section_header: 'Section Header',
   rating: 'Rating (1-5)',
   nps: 'NPS (0-10)',
+  image: 'Image Upload',
 }
 
 const KIND_COLORS: Record<FormFieldKind, string> = {
@@ -54,6 +55,7 @@ const KIND_COLORS: Record<FormFieldKind, string> = {
   section_header: 'bg-slate-100 text-slate-700',
   rating: 'bg-purple-50 text-purple-700',
   nps: 'bg-orange-50 text-orange-700',
+  image: 'bg-pink-50 text-pink-700',
 }
 
 export function FormFieldsEditor({ fields, onChange }: FormFieldsEditorProps) {

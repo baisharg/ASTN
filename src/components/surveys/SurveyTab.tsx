@@ -298,6 +298,14 @@ function SurveyManagement({
   opportunityTitle?: string
 }) {
   const results = useQuery(api.feedbackSurveys.getSurveyResults, { surveyId })
+  // Storage ids are meaningless on screen, so resolve the ones this survey
+  // actually collected into urls the results view can render.
+  const imageUrlList = useQuery(api.feedbackSurveys.getFormImageUrls, {
+    surveyId,
+  })
+  const imageUrls = Object.fromEntries(
+    (imageUrlList ?? []).map((i) => [i.storageId, i.url]),
+  )
   const updateSurvey = useMutation(api.feedbackSurveys.updateSurvey)
   const deleteSurvey = useMutation(api.feedbackSurveys.deleteSurvey)
   const backfill = useMutation(api.feedbackSurveys.backfillRespondents)
@@ -754,6 +762,7 @@ function SurveyManagement({
           formFields={survey.formFields}
           responses={anonymousResponses}
           surveyTitle={survey.title}
+          imageUrls={imageUrls}
         />
       ) : (
         /* Results table with remove buttons */
@@ -764,6 +773,7 @@ function SurveyManagement({
           onRemoveRespondent={
             isDraft || isOpen ? handleRemoveRespondent : undefined
           }
+          imageUrls={imageUrls}
         />
       )}
     </div>

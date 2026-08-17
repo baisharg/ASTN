@@ -14,6 +14,9 @@ export type FormFieldKind =
   | 'section_header'
   | 'rating'
   | 'nps'
+  // Uploaded image. The stored response value is the Convex `_storage` id as a
+  // plain string; resolve it to a URL with `feedbackSurveys.getFormImageUrls`.
+  | 'image'
 
 export interface FormField {
   key: string
@@ -43,6 +46,7 @@ export const formFieldValidator = v.object({
     v.literal('section_header'),
     v.literal('rating'),
     v.literal('nps'),
+    v.literal('image'),
   ),
   label: v.string(),
   description: v.optional(v.string()),
@@ -176,7 +180,10 @@ export function sanitizeResponsesForForm(
     if (stripped.has(key)) continue
     const field = byKey.get(key)
     if (!field || field.kind === 'section_header') continue
-    // Defensive: never carry storage-id-shaped blobs (no file kind exists today).
+    // `image` has no case in the switch below, so an uploaded photo is never
+    // carried into a new form. That is deliberate: a picture someone attached
+    // to one submission should not silently reappear attached to another.
+    // Defensive: never carry storage-id-shaped blobs either.
     if (
       value &&
       typeof value === 'object' &&

@@ -1,3 +1,6 @@
+import { useMutation } from 'convex/react'
+import { useState } from 'react'
+import { api } from '../../../convex/_generated/api'
 import type { FormField } from '../../../convex/lib/formFields'
 import { Card, CardContent, CardHeader, CardTitle } from '~/components/ui/card'
 import { Input } from '~/components/ui/input'
@@ -12,16 +15,28 @@ import {
   SelectValue,
 } from '~/components/ui/select'
 
+/** Generous enough for a phone photo, small enough to stop accidents. */
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
 interface DynamicFormRendererProps {
   formFields: Array<FormField>
   responses: Record<string, unknown>
   onChange: (key: string, value: unknown) => void
+  /**
+   * Survey token (personal or, for an anonymous survey, the generic one) that
+   * authorises uploads for `image` fields. Respondents are guests, so this
+   * token is what stands in for a login. Omit it where uploads do not apply —
+   * previews, and forms outside surveys — and image fields will say so rather
+   * than offer a control that cannot work.
+   */
+  uploadToken?: string
 }
 
 export function DynamicFormRenderer({
   formFields,
   responses,
   onChange,
+  uploadToken,
 }: DynamicFormRendererProps) {
   // Group fields into sections. Each section_header starts a new card.
   // Fields before the first section_header go into an untitled card.
@@ -79,6 +94,7 @@ export function DynamicFormRenderer({
                 field={field}
                 value={responses[field.key]}
                 onChange={(val) => onChange(field.key, val)}
+                uploadToken={uploadToken}
               />
             ))}
           </CardContent>
@@ -92,12 +108,24 @@ function FieldRenderer({
   field,
   value,
   onChange,
+  uploadToken,
 }: {
   field: FormField
   value: unknown
   onChange: (val: unknown) => void
+  uploadToken?: string
 }) {
   switch (field.kind) {
+    case 'image':
+      return (
+        <ImageField
+          field={field}
+          value={value}
+          onChange={onChange}
+          uploadToken={uploadToken}
+        />
+      )
+
     case 'text':
     case 'email':
     case 'url':
@@ -404,6 +432,117 @@ function MultiSelectField({
           )
         })}
       </div>
+    </div>
+  )
+}
+
+/**
+ * Upload control for an `image` form field. The response value is the Convex
+ * storage id as a plain string; the preview shown after upload comes from the
+ * local file, so no extra round trip is needed to display what was just sent.
+ */
+function ImageField({
+  field,
+  value,
+  onChange,
+  uploadToken,
+}: {
+  field: FormField
+  value: unknown
+  onChange: (val: unknown) => void
+  uploadToken?: string
+}) {
+  const generateUploadUrl = useMutation(api.upload.generateSurveyUploadUrl)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const hasUpload = typeof value === 'string' && value.length > 0
+
+  const handleFile = async (file: File | undefined) => {
+    if (!file || !uploadToken || isUploading) return
+    if (!file.type.startsWith('image/')) {
+      setError('That file is not an image. Pick a JPG or PNG.')
+      return
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setError('That image is over 10 MB. Pick a smaller one.')
+      return
+    }
+    setError(null)
+    setIsUploading(true)
+    try {
+      const uploadUrl = await generateUploadUrl({ token: uploadToken })
+      const res = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': file.type },
+        body: file,
+      })
+      if (!res.ok) throw new Error(`Upload failed (${res.status})`)
+      const { storageId } = (await res.json()) as { storageId: string }
+      onChange(storageId)
+      setPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev)
+        return URL.createObjectURL(file)
+      })
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Could not upload the image. Try again.',
+      )
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={field.key}>
+        {field.label}
+        {field.required && <span className="text-red-500"> *</span>}
+      </Label>
+      {field.description && (
+        <p className="text-xs text-muted-foreground whitespace-pre-line">
+          {field.description}
+        </p>
+      )}
+
+      {!uploadToken ? (
+        <p className="text-xs text-muted-foreground italic">
+          Image uploads are only available on the live form.
+        </p>
+      ) : (
+        <div className="flex items-center gap-3">
+          {previewUrl && (
+            <img
+              src={previewUrl}
+              alt=""
+              className="size-16 rounded-md object-cover border"
+            />
+          )}
+          <div className="space-y-1">
+            <Input
+              id={field.key}
+              type="file"
+              accept="image/*"
+              disabled={isUploading}
+              onChange={(e) => void handleFile(e.target.files?.[0])}
+              className="max-w-xs"
+            />
+            {isUploading && (
+              <p className="text-xs text-muted-foreground">Uploading…</p>
+            )}
+            {!isUploading && hasUpload && (
+              <p className="text-xs text-green-600">
+                Image uploaded. Choose another file to replace it.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {error && <p className="text-xs text-red-600">{error}</p>}
     </div>
   )
 }

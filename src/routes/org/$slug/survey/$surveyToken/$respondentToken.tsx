@@ -163,6 +163,7 @@ function RespondentSurveyPage() {
             formFields={survey.formFields}
             responses={responses}
             onChange={handleChange}
+            uploadToken={respondentToken}
           />
 
           <div className="flex items-center justify-end gap-3 mt-6">

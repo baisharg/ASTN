@@ -25,6 +25,8 @@ interface SurveyResultsTableProps {
   respondents: Array<Respondent>
   surveyTitle: string
   onRemoveRespondent?: (id: Id<'surveyRespondents'>, name: string) => void
+  /** storage id -> displayable url, for `image` fields. */
+  imageUrls?: Record<string, string>
 }
 
 export function SurveyResultsTable({
@@ -32,6 +34,7 @@ export function SurveyResultsTable({
   respondents,
   surveyTitle,
   onRemoveRespondent,
+  imageUrls,
 }: SurveyResultsTableProps) {
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
 
@@ -101,6 +104,7 @@ export function SurveyResultsTable({
                 key={r._id}
                 respondent={r}
                 inputFields={inputFields}
+                imageUrls={imageUrls}
                 isExpanded={expandedRow === r._id}
                 onToggle={() =>
                   setExpandedRow(expandedRow === r._id ? null : r._id)
@@ -148,11 +152,13 @@ export function SurveyResultsTable({
 function RespondentRow({
   respondent,
   inputFields,
+  imageUrls,
   isExpanded,
   onToggle,
 }: {
   respondent: Respondent
   inputFields: Array<FormField>
+  imageUrls?: Record<string, string>
   isExpanded: boolean
   onToggle: () => void
 }) {
@@ -184,7 +190,11 @@ function RespondentRow({
             return (
               <div key={field.key} className="text-sm">
                 <span className="text-muted-foreground">{field.label}:</span>{' '}
-                <span className="font-medium">{formatValue(val, field)}</span>
+                <ResponseFieldValue
+                  val={val}
+                  field={field}
+                  imageUrls={imageUrls}
+                />
               </div>
             )
           })}
@@ -192,6 +202,42 @@ function RespondentRow({
       )}
     </div>
   )
+}
+
+/**
+ * Render one answer. Image fields store a storage id, which means nothing to a
+ * reader, so they render as the picture itself — falling back to plain text
+ * when the url map has not loaded or the upload has gone missing.
+ */
+export function ResponseFieldValue({
+  val,
+  field,
+  imageUrls,
+}: {
+  val: unknown
+  field: FormField
+  imageUrls?: Record<string, string>
+}) {
+  if (field.kind === 'image') {
+    const url = typeof val === 'string' ? imageUrls?.[val] : undefined
+    if (url) {
+      return (
+        <a href={url} target="_blank" rel="noopener noreferrer">
+          <img
+            src={url}
+            alt={field.label}
+            className="mt-1 size-24 rounded-md object-cover border"
+          />
+        </a>
+      )
+    }
+    return (
+      <span className="font-medium">
+        {typeof val === 'string' && val ? 'Image uploaded' : '—'}
+      </span>
+    )
+  }
+  return <span className="font-medium">{formatValue(val, field)}</span>
 }
 
 export function formatValue(val: unknown, field: FormField): string {

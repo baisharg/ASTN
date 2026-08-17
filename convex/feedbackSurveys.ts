@@ -424,6 +424,69 @@ export const getSurveyResults = query({
   },
 })
 
+/**
+ * Resolve the storage ids collected by `image` form fields into displayable
+ * URLs, for a survey's results view. Admin-only and scoped to one survey:
+ * the ids live inside response blobs, so without this the admin UI would have
+ * an opaque string where a photo should be.
+ *
+ * Only ids that actually appear in this survey's responses are resolved, so an
+ * arbitrary storage id passed in from elsewhere returns nothing.
+ */
+export const getFormImageUrls = query({
+  args: { surveyId: v.id('feedbackSurveys') },
+  returns: v.array(v.object({ storageId: v.string(), url: v.string() })),
+  handler: async (ctx, { surveyId }) => {
+    const survey = await ctx.db.get('feedbackSurveys', surveyId)
+    if (!survey) throw new ConvexError('Survey not found')
+
+    await requireOrgAdmin(ctx, survey.orgId)
+
+    const formFields = Array.isArray(survey.formFields)
+      ? (survey.formFields as Array<FormField>)
+      : []
+    const imageKeys = formFields
+      .filter((f) => f.kind === 'image')
+      .map((f) => f.key)
+    if (imageKeys.length === 0) return []
+
+    const [responses, anonResponses] = await Promise.all([
+      ctx.db
+        .query('surveyResponses')
+        .withIndex('by_survey', (q) => q.eq('surveyId', surveyId))
+        .collect(),
+      ctx.db
+        .query('anonymousSurveyResponses')
+        .withIndex('by_survey', (q) => q.eq('surveyId', surveyId))
+        .collect(),
+    ])
+
+    const storageIds = new Set<string>()
+    for (const r of [...responses, ...anonResponses]) {
+      const values = r.responses as Record<string, unknown>
+      for (const key of imageKeys) {
+        const val = values?.[key]
+        if (typeof val === 'string' && val) storageIds.add(val)
+      }
+    }
+
+    const resolved = await Promise.all(
+      [...storageIds].map(async (storageId) => {
+        try {
+          const url = await ctx.storage.getUrl(storageId as Id<'_storage'>)
+          return url ? { storageId, url } : null
+        } catch {
+          // A malformed id (stale client, hand-edited data) is a missing
+          // image, not a broken results page.
+          return null
+        }
+      }),
+    )
+
+    return resolved.filter((r): r is { storageId: string; url: string } => !!r)
+  },
+})
+
 export const getRespondentLinks = query({
   args: { surveyId: v.id('feedbackSurveys') },
   returns: v.array(

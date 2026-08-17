@@ -171,6 +171,7 @@ function SurveyGenericLinkPage() {
             formFields={survey.formFields}
             responses={responses}
             onChange={handleChange}
+            uploadToken={surveyToken}
           />
 
           <div className="flex items-center justify-end gap-3 mt-6">
