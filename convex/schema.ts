@@ -1793,6 +1793,12 @@ export default defineSchema({
     accessToken: v.string(), // UUID for generic shareable link
     status: v.union(v.literal('draft'), v.literal('open'), v.literal('closed')),
     applicantStatuses: v.optional(v.array(v.string())), // which application statuses were included
+    // Anonymous surveys have no respondents and no personal links: the generic
+    // accessToken link is the only way in, and answers land in
+    // `anonymousSurveyResponses`, which has nowhere to put an identity.
+    // Set at creation and never toggled — flipping it would either strand
+    // existing answers or retroactively de-anonymise them.
+    anonymous: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1826,6 +1832,17 @@ export default defineSchema({
     .index('by_survey', ['surveyId'])
     .index('by_survey_and_respondent', ['surveyId', 'respondentId'])
     .index('by_userId', ['userId']),
+
+  // Answers to an anonymous survey. Deliberately has no respondentId, name or
+  // userId column: the anonymity is a property of the schema, not of what the
+  // admin UI chooses to display, so there is nothing to correlate even with
+  // direct database access. One row per submission — with no identity there is
+  // no way to upsert, so a person submitting twice produces two rows.
+  anonymousSurveyResponses: defineTable({
+    surveyId: v.id('feedbackSurveys'),
+    responses: v.any(), // Record<string, unknown> keyed by formField.key
+    submittedAt: v.number(),
+  }).index('by_survey', ['surveyId']),
 
   // Push notification tokens for mobile (Tauri) clients
   pushTokens: defineTable({

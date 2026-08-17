@@ -194,7 +194,7 @@ function RespondentRow({
   )
 }
 
-function formatValue(val: unknown, field: FormField): string {
+export function formatValue(val: unknown, field: FormField): string {
   if (val === undefined || val === null) return '—'
   if (field.kind === 'rating') {
     const num = Number(val)
@@ -209,7 +209,7 @@ function formatValue(val: unknown, field: FormField): string {
     : String(val as string | number)
 }
 
-function escapeCSV(value: string): string {
+export function escapeCSV(value: string): string {
   if (value.includes(',') || value.includes('"') || value.includes('\n')) {
     return `"${value.replace(/"/g, '""')}"`
   }

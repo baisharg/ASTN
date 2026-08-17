@@ -864,6 +864,34 @@ export const surveyResults = internalQuery({
     if (!survey || survey.orgId !== org._id)
       throw new Error('surveyId not found')
 
+    const surveyInfo = {
+      _id: survey._id,
+      title: survey.title,
+      description: survey.description,
+      status: survey.status,
+      anonymous: survey.anonymous === true,
+      formFields: survey.formFields,
+    }
+
+    // Anonymous surveys keep their answers in a table with no identity column,
+    // so there is no respondent roster and no name to report here either.
+    if (survey.anonymous) {
+      const anonResponses = await ctx.db
+        .query('anonymousSurveyResponses')
+        .withIndex('by_survey', (q) => q.eq('surveyId', surveyId))
+        .collect()
+
+      return {
+        survey: surveyInfo,
+        respondentCount: null,
+        responseCount: anonResponses.length,
+        responses: anonResponses.map((r) => ({
+          submittedAt: r.submittedAt,
+          responses: r.responses,
+        })),
+      }
+    }
+
     const respondents = await ctx.db
       .query('surveyRespondents')
       .withIndex('by_survey', (q) => q.eq('surveyId', surveyId))
@@ -874,13 +902,7 @@ export const surveyResults = internalQuery({
       .collect()
 
     return {
-      survey: {
-        _id: survey._id,
-        title: survey.title,
-        description: survey.description,
-        status: survey.status,
-        formFields: survey.formFields,
-      },
+      survey: surveyInfo,
       respondentCount: respondents.length,
       responseCount: responses.length,
       responses: responses.map((r) => ({

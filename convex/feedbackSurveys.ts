@@ -38,6 +38,7 @@ const surveyReturnValidator = v.object({
   accessToken: v.string(),
   status: surveyStatusValidator,
   applicantStatuses: v.optional(v.array(v.string())),
+  anonymous: v.optional(v.boolean()),
   createdAt: v.number(),
   updatedAt: v.number(),
 })
@@ -52,6 +53,7 @@ export const createSurvey = mutation({
     formFields: v.any(), // Array<FormField>
     programId: v.optional(v.id('programs')),
     applicantStatuses: v.optional(v.array(v.string())), // filter: only include these statuses
+    anonymous: v.optional(v.boolean()), // no respondents, no personal links
   },
   returns: v.id('feedbackSurveys'),
   handler: async (ctx, args) => {
@@ -89,9 +91,16 @@ export const createSurvey = mutation({
       accessToken: crypto.randomUUID(),
       status: 'draft',
       applicantStatuses: statusFilter.length > 0 ? statusFilter : undefined,
+      anonymous: args.anonymous === true ? true : undefined,
       createdAt: now,
       updatedAt: now,
     })
+
+    // An anonymous survey gets no respondent rows at all. That is the whole
+    // mechanism: with nobody on the list there are no personal tokens to hand
+    // out and nothing to join an answer back to. It also means we cannot tell
+    // who has not replied yet — an accepted trade, decided with Gaspar.
+    if (args.anonymous === true) return surveyId
 
     // Generate respondent rows for matching applicants
     const applications = await ctx.db
@@ -169,13 +178,17 @@ export const deleteSurvey = mutation({
     await requireOrgAdmin(ctx, survey.orgId)
 
     // Fetch responses and respondents in parallel
-    const [responses, respondents] = await Promise.all([
+    const [responses, respondents, anonResponses] = await Promise.all([
       ctx.db
         .query('surveyResponses')
         .withIndex('by_survey', (q) => q.eq('surveyId', surveyId))
         .collect(),
       ctx.db
         .query('surveyRespondents')
+        .withIndex('by_survey', (q) => q.eq('surveyId', surveyId))
+        .collect(),
+      ctx.db
+        .query('anonymousSurveyResponses')
         .withIndex('by_survey', (q) => q.eq('surveyId', surveyId))
         .collect(),
     ])
@@ -185,6 +198,9 @@ export const deleteSurvey = mutation({
     }
     for (const r of respondents) {
       await ctx.db.delete('surveyRespondents', r._id)
+    }
+    for (const r of anonResponses) {
+      await ctx.db.delete('anonymousSurveyResponses', r._id)
     }
 
     await ctx.db.delete('feedbackSurveys', surveyId)
@@ -200,6 +216,11 @@ export const backfillRespondents = mutation({
     if (!survey) throw new ConvexError('Survey not found')
 
     await requireOrgAdmin(ctx, survey.orgId)
+
+    // Creating respondents for an anonymous survey would hand out personal
+    // tokens and break the guarantee the survey was created under.
+    if (survey.anonymous)
+      throw new ConvexError('An anonymous survey has no respondents')
 
     // Get existing respondent applicationIds
     const existingRespondents = await ctx.db
@@ -319,6 +340,15 @@ export const getSurveyResults = query({
         ),
       }),
     ),
+    // Anonymous surveys fill this instead of `respondents`: the answers with
+    // no one attached to them.
+    anonymousResponses: v.array(
+      v.object({
+        _id: v.id('anonymousSurveyResponses'),
+        responses: v.any(),
+        submittedAt: v.number(),
+      }),
+    ),
     responseCount: v.number(),
     totalRespondents: v.number(),
   }),
@@ -327,6 +357,27 @@ export const getSurveyResults = query({
     if (!survey) throw new ConvexError('Survey not found')
 
     await requireOrgAdmin(ctx, survey.orgId)
+
+    if (survey.anonymous) {
+      const anonResponses = await ctx.db
+        .query('anonymousSurveyResponses')
+        .withIndex('by_survey', (q) => q.eq('surveyId', surveyId))
+        .collect()
+
+      return {
+        survey,
+        respondents: [],
+        anonymousResponses: anonResponses.map((r) => ({
+          _id: r._id,
+          responses: r.responses,
+          submittedAt: r.submittedAt,
+        })),
+        // How many came in is just a row count — it needs no identity.
+        responseCount: anonResponses.length,
+        // There is no roster, so "how many were expected" is unknowable.
+        totalRespondents: 0,
+      }
+    }
 
     // Batch fetch respondents and responses in parallel
     const [respondents, allResponses] = await Promise.all([
@@ -366,6 +417,7 @@ export const getSurveyResults = query({
     return {
       survey,
       respondents: enrichedRespondents,
+      anonymousResponses: [],
       responseCount: allResponses.length,
       totalRespondents: respondents.length,
     }
@@ -612,6 +664,64 @@ export const submitResponse = mutation({
       })
     } catch (err) {
       // Surface a legible error to the respondent instead of a raw server error.
+      throw new ConvexError(
+        `Could not save your response: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+    }
+  },
+})
+
+/**
+ * Submit to an anonymous survey. Reached only through the generic access-token
+ * link, because an anonymous survey never issues personal ones.
+ *
+ * Nothing identifying is accepted or derived here — not the caller's identity,
+ * not a respondent row, not an IP. The row that gets written has three columns
+ * and none of them is a person. There is deliberately no upsert: recognising a
+ * returning submitter is exactly the capability this is meant not to have.
+ */
+export const submitAnonymousResponse = mutation({
+  args: {
+    accessToken: v.string(),
+    responses: v.any(), // Record<string, unknown>
+  },
+  returns: v.id('anonymousSurveyResponses'),
+  handler: async (ctx, { accessToken, responses }) => {
+    const survey = await ctx.db
+      .query('feedbackSurveys')
+      .withIndex('by_accessToken', (q) => q.eq('accessToken', accessToken))
+      .unique()
+
+    if (!survey) throw new ConvexError('Survey not found')
+    if (!survey.anonymous)
+      throw new ConvexError('This survey uses individual links')
+    if (survey.status !== 'open')
+      throw new ConvexError('Survey is no longer accepting responses')
+
+    // Same hardening as the identified path: coerce keys so a bad form-field
+    // key cannot crash the write with an opaque server error.
+    const safeResponses = sanitizeResponseKeys(
+      responses && typeof responses === 'object' && !Array.isArray(responses)
+        ? (responses as Record<string, unknown>)
+        : {},
+    )
+
+    const formFields = Array.isArray(survey.formFields)
+      ? (survey.formFields as Array<FormField>)
+      : []
+    const errors = validateResponses(formFields, safeResponses)
+    if (errors.length > 0)
+      throw new ConvexError(`Validation errors: ${errors.join(', ')}`)
+
+    try {
+      return await ctx.db.insert('anonymousSurveyResponses', {
+        surveyId: survey._id,
+        responses: safeResponses,
+        submittedAt: Date.now(),
+      })
+    } catch (err) {
       throw new ConvexError(
         `Could not save your response: ${
           err instanceof Error ? err.message : String(err)

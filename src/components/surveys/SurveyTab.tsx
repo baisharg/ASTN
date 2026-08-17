@@ -22,6 +22,7 @@ import type { FormField } from '../../../convex/lib/formFields'
 import { FormFieldsEditor } from '~/components/opportunities/FormFieldsEditor'
 import { SurveyPreview } from '~/components/surveys/SurveyPreview'
 import { SurveyResultsTable } from '~/components/surveys/SurveyResultsTable'
+import { AnonymousSurveyResults } from '~/components/surveys/AnonymousSurveyResults'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -118,6 +119,7 @@ function CreateSurveyForm({
   const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(
     new Set(['accepted']),
   )
+  const [anonymous, setAnonymous] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
 
   const createSurvey = useMutation(api.feedbackSurveys.createSurvey)
@@ -141,7 +143,8 @@ function CreateSurveyForm({
       toast.error('Add at least one form field')
       return
     }
-    if (selectedStatuses.size === 0) {
+    // An anonymous survey has no recipient list, so the status filter is moot.
+    if (!anonymous && selectedStatuses.size === 0) {
       toast.error('Select at least one applicant status')
       return
     }
@@ -152,7 +155,8 @@ function CreateSurveyForm({
         title: title.trim(),
         description: description.trim() || undefined,
         formFields: validFields,
-        applicantStatuses: Array.from(selectedStatuses),
+        applicantStatuses: anonymous ? [] : Array.from(selectedStatuses),
+        anonymous: anonymous || undefined,
       })
       toast.success('Survey created as draft — review and publish when ready')
     } catch (err) {
@@ -195,26 +199,44 @@ function CreateSurveyForm({
               placeholder="Intro text shown to respondents before the form"
             />
           </div>
-          <div className="space-y-2">
-            <Label>Include applicants with status</Label>
-            <div className="flex flex-wrap gap-4">
-              {ALL_STATUSES.map((s) => (
-                <label
-                  key={s.value}
-                  className="flex items-center gap-2 cursor-pointer"
-                >
-                  <Checkbox
-                    checked={selectedStatuses.has(s.value)}
-                    onCheckedChange={() => toggleStatus(s.value)}
-                  />
-                  <span className="text-sm">{s.label}</span>
-                </label>
-              ))}
-            </div>
+          <div className="space-y-2 rounded-md border border-input p-3">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <Checkbox
+                checked={anonymous}
+                onCheckedChange={(c) => setAnonymous(c === true)}
+                className="mt-0.5"
+              />
+              <span className="text-sm font-medium">Anonymous survey</span>
+            </label>
             <p className="text-xs text-muted-foreground">
-              Only applicants with these statuses will receive survey links.
+              {anonymous
+                ? 'Answers are stored with no name, no account and no link back to a person — not even in the database. One shared link for the whole group, no individual links. You will see how many answers came in, but never who has not answered yet, and you cannot chase the people still missing. This cannot be changed later.'
+                : 'Everyone gets their own link and you can see who has and has not answered. Turn this on for feedback about facilitators, where a name attached to the answer stops people from being honest.'}
             </p>
           </div>
+
+          {!anonymous && (
+            <div className="space-y-2">
+              <Label>Include applicants with status</Label>
+              <div className="flex flex-wrap gap-4">
+                {ALL_STATUSES.map((s) => (
+                  <label
+                    key={s.value}
+                    className="flex items-center gap-2 cursor-pointer"
+                  >
+                    <Checkbox
+                      checked={selectedStatuses.has(s.value)}
+                      onCheckedChange={() => toggleStatus(s.value)}
+                    />
+                    <span className="text-sm">{s.label}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Only applicants with these statuses will receive survey links.
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -304,9 +326,16 @@ function SurveyManagement({
     )
   }
 
-  const { survey, respondents, responseCount, totalRespondents } = results
+  const {
+    survey,
+    respondents,
+    anonymousResponses,
+    responseCount,
+    totalRespondents,
+  } = results
   const isDraft = survey.status === 'draft'
   const isOpen = survey.status === 'open'
+  const isAnonymous = survey.anonymous === true
   const genericLink = `${window.location.origin}/org/${slug}/survey/${accessToken}`
 
   const handlePublish = async () => {
@@ -527,14 +556,30 @@ function SurveyManagement({
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground mb-4">
-            <span>
-              <strong className="text-foreground">{responseCount}</strong> of{' '}
-              {totalRespondents} responded
-            </span>
+            {isAnonymous ? (
+              <span>
+                <strong className="text-foreground">{responseCount}</strong>{' '}
+                anonymous response{responseCount !== 1 ? 's' : ''}
+              </span>
+            ) : (
+              <span>
+                <strong className="text-foreground">{responseCount}</strong> of{' '}
+                {totalRespondents} responded
+              </span>
+            )}
             <span>
               Created {new Date(survey.createdAt).toLocaleDateString()}
             </span>
           </div>
+
+          {isAnonymous && (
+            <p className="text-xs text-muted-foreground mb-4">
+              Answers to this survey are stored with nothing attached to them,
+              so the count above is answers received, not people — the shared
+              link does not stop someone submitting twice. There is no way to
+              see who is still missing.
+            </p>
+          )}
 
           <div className="flex flex-wrap gap-2">
             {!isDraft && (
@@ -572,19 +617,22 @@ function SurveyManagement({
               </Button>
             )}
 
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleBackfill}
-              disabled={isBackfilling}
-            >
-              {isBackfilling ? (
-                <Loader2 className="size-4 mr-1 animate-spin" />
-              ) : (
-                <CheckCircle2 className="size-4 mr-1" />
-              )}
-              Add New Applicants
-            </Button>
+            {/* No roster to add anyone to on an anonymous survey. */}
+            {!isAnonymous && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleBackfill}
+                disabled={isBackfilling}
+              >
+                {isBackfilling ? (
+                  <Loader2 className="size-4 mr-1 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="size-4 mr-1" />
+                )}
+                Add New Applicants
+              </Button>
+            )}
 
             <AlertDialog>
               <AlertDialogTrigger asChild>
@@ -701,15 +749,23 @@ function SurveyManagement({
         </Card>
       )}
 
-      {/* Results table with remove buttons */}
-      <SurveyResultsTable
-        formFields={survey.formFields}
-        respondents={respondents}
-        surveyTitle={survey.title}
-        onRemoveRespondent={
-          isDraft || isOpen ? handleRemoveRespondent : undefined
-        }
-      />
+      {isAnonymous ? (
+        <AnonymousSurveyResults
+          formFields={survey.formFields}
+          responses={anonymousResponses}
+          surveyTitle={survey.title}
+        />
+      ) : (
+        /* Results table with remove buttons */
+        <SurveyResultsTable
+          formFields={survey.formFields}
+          respondents={respondents}
+          surveyTitle={survey.title}
+          onRemoveRespondent={
+            isDraft || isOpen ? handleRemoveRespondent : undefined
+          }
+        />
+      )}
     </div>
   )
 }
