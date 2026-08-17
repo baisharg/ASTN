@@ -956,10 +956,16 @@ export const availabilityHeatmap = internalQuery({
     const poll = await ctx.db.get(pollId)
     if (!poll || poll.orgId !== org._id) throw new Error('pollId not found')
 
-    const responses = await ctx.db
-      .query('availabilityResponses')
-      .withIndex('by_poll', (q) => q.eq('pollId', pollId))
-      .collect()
+    const [responses, roster] = await Promise.all([
+      ctx.db
+        .query('availabilityResponses')
+        .withIndex('by_poll', (q) => q.eq('pollId', pollId))
+        .collect(),
+      ctx.db
+        .query('pollRespondents')
+        .withIndex('by_poll', (q) => q.eq('pollId', pollId))
+        .collect(),
+    ])
 
     // Aggregate each "<weekday>|minutes" slot into available/maybe counts.
     const slots: Record<string, { available: number; maybe: number }> = {}
@@ -970,6 +976,46 @@ export const availabilityHeatmap = internalQuery({
         else if (val === 'maybe') slots[key].maybe += 1
       }
     }
+
+    // Per-person availability. The aggregate above answers "when is the group
+    // free"; splitting people into cohorts needs "who is free when", which the
+    // names on each response already carry — this used to discard them.
+    //
+    // Two arrays of slot keys rather than a key→value map: for a 6-day poll at
+    // 30-minute slots this is the difference between 39 KB and 19 KB of payload
+    // for one cohort, and an agent reads it on every planning pass.
+    //
+    // respondentToken is deliberately never returned: it is a private link.
+    const answered = responses.map((r) => {
+      const entries = Object.entries(r.slots ?? {})
+      return {
+        name: r.respondentName,
+        respondentId: r.respondentId ?? null,
+        available: entries.filter(([, v]) => v === 'available').map(([k]) => k),
+        maybe: entries.filter(([, v]) => v === 'maybe').map(([k]) => k),
+        updatedAt: r.updatedAt,
+      }
+    })
+
+    // Who was invited and has not answered. Responses predating the respondent
+    // rows carry only a name, so fall back to matching on that.
+    const answeredIds = new Set(
+      responses.map((r) => r.respondentId).filter(Boolean) as Array<string>,
+    )
+    const answeredNames = new Set(
+      responses.map((r) => r.respondentName.trim().toLowerCase()),
+    )
+    const pending = roster
+      .filter(
+        (p) =>
+          !answeredIds.has(p._id) &&
+          !answeredNames.has(p.respondentName.trim().toLowerCase()),
+      )
+      .map((p) => ({
+        name: p.respondentName,
+        respondentId: p._id,
+        applicationId: p.applicationId,
+      }))
 
     return {
       poll: {
@@ -984,7 +1030,10 @@ export const availabilityHeatmap = internalQuery({
         finalizedSlot: poll.finalizedSlot,
       },
       respondentCount: responses.length,
+      invitedCount: roster.length,
       slots,
+      respondents: answered,
+      pending,
     }
   },
 })

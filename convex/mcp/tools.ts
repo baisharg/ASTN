@@ -241,7 +241,12 @@ export const TOOL_DEFS = [
   {
     name: 'availability_heatmap',
     description:
-      'Aggregated availability for a poll: per generic-week slot ("<weekday 0=Mon>|<minutes-from-midnight>") the count of available vs maybe respondents, plus poll config. Get the pollId from astn_list resource=polls.',
+      'Availability for a poll, aggregated and per person. Slot keys are ' +
+      '"<weekday 0=Mon>|<minutes-from-midnight>" on a generic week. `slots` gives the ' +
+      'available/maybe counts per slot; `respondents` gives each person by name with the ' +
+      'slots they picked, which is what splitting a cohort into groups needs; `pending` ' +
+      'lists people invited who have not answered. Plus poll config and finalizedSlot. ' +
+      'Get the pollId from astn_list resource=polls.',
     inputSchema: {
       type: 'object',
       properties: {
