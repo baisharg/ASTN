@@ -4,6 +4,9 @@ import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc, Id } from '../_generated/dataModel'
 import { requireOrgAdminFor } from '../lib/auth'
 import { isOutboxActive, syncOutboxOnStatusChange } from '../emails/outbox'
+import { sanitizeFormFieldKeys } from '../lib/formFields'
+import type { FormField } from '../lib/formFields'
+import { describeImpact, impactOnApplications } from '../lib/formFieldChanges'
 
 // Platform data layer for the MCP endpoint (convex/mcp/server.ts). Like
 // convex/mcp/data.ts (the CRM layer), these are internal functions: the HTTP
@@ -79,9 +82,10 @@ const RESOURCE_TABLE: Record<string, string> = {
   email_log: 'emailLog',
 }
 
-// Allowlist of safe scalar fields patchable per resource. Outward-facing or
-// structural fields (formFields, accessToken, status transitions that notify,
-// materials/storage) are deliberately excluded — those belong to v2 actions.
+// Allowlist of fields patchable per resource. What stays out is what cannot be
+// undone: anything that leaves the system (accessToken, mail) or destroys other
+// people's data. Structural-but-reversible edits are allowed and guarded by
+// their consequence instead — see the formFields block in `update`.
 export const UPDATE_FIELDS: Record<string, Set<string>> = {
   programs: new Set([
     'name',
@@ -117,6 +121,12 @@ export const UPDATE_FIELDS: Record<string, Set<string>> = {
     'externalUrl',
     'featured',
     'tags',
+    // Writable since 2026-08-17. Excluding it did not remove the risk, it moved
+    // it: building a form by hand in the UI is slow enough that the team was
+    // pasting JSON straight into the Convex dashboard, which skips every
+    // validation this path applies. The guard is now on the consequence — see
+    // the formFields block in the handler — not on the field name.
+    'formFields',
   ]),
   surveys: new Set(['title', 'description']),
   polls: new Set(['title']),
@@ -552,6 +562,8 @@ export const update = internalMutation({
     resource: updateResourceValidator,
     id: v.string(),
     fields: v.any(),
+    // Required only when the edit would strand already-submitted answers.
+    confirmDiscardsAnswers: v.optional(v.boolean()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -599,6 +611,26 @@ export const update = internalMutation({
       }
       patch.reviewedAt = Date.now()
       patch.reviewedBy = args.userId
+    }
+
+    // Opportunities: an application form is free to grow, but shrinking it
+    // strands answers people already submitted. Refuse once, with the count and
+    // the question names, and let the caller repeat the call meaning it.
+    if (args.resource === 'opportunities' && 'formFields' in patch) {
+      const sanitized = sanitizeFormFieldKeys(patch.formFields)
+      const impact = await impactOnApplications(
+        ctx,
+        id as Id<'orgOpportunities'>,
+        ((doc as any).formFields ?? []) as Array<FormField>,
+        (Array.isArray(sanitized) ? sanitized : []) as Array<FormField>,
+      )
+      if (impact.affectedResponses > 0 && !args.confirmDiscardsAnswers) {
+        throw new Error(
+          `${describeImpact(impact)} Pass confirmDiscardsAnswers: true to go ahead, ` +
+            `or keep the removed keys in the form to preserve them.`,
+        )
+      }
+      patch.formFields = sanitized
     }
 
     // programModules/Sessions/Programs/Opportunities/Spaces track updatedAt;

@@ -15,6 +15,8 @@ import {
 } from './lib/baishCourseOpportunities'
 import { getUserId, requireOrgAdmin } from './lib/auth'
 import { sanitizeFormFieldKeys } from './lib/formFields'
+import type { FormField } from './lib/formFields'
+import { describeImpact, impactOnApplications } from './lib/formFieldChanges'
 import { createDefaultPollForOpportunity } from './availabilityPolls'
 
 /**
@@ -510,6 +512,8 @@ export const create = mutation({
     externalUrl: v.optional(v.string()),
     featured: v.boolean(),
     formFields: v.optional(v.any()),
+    // Required only when the new form drops questions people already answered.
+    confirmDiscardsAnswers: v.optional(v.boolean()),
     slug: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
       isEOI: v.optional(v.boolean()),
@@ -575,6 +579,8 @@ export const update = mutation({
     externalUrl: v.optional(v.string()),
     featured: v.optional(v.boolean()),
     formFields: v.optional(v.any()),
+    // Required only when the new form drops questions people already answered.
+    confirmDiscardsAnswers: v.optional(v.boolean()),
     slug: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
       isEOI: v.optional(v.boolean()),
@@ -588,7 +594,13 @@ export const update = mutation({
   returns: v.null(),
   handler: async (
     ctx,
-    { id, redirectOpportunityId, sourceOpportunityId, ...updates },
+    {
+      id,
+      redirectOpportunityId,
+      sourceOpportunityId,
+      confirmDiscardsAnswers,
+      ...updates
+    },
   ) => {
     const userId = await getUserId(ctx)
     if (!userId) throw new ConvexError('Not authenticated')
@@ -626,8 +638,22 @@ export const update = mutation({
       ...updates,
       updatedAt: Date.now(),
     }
-    if (updates.formFields !== undefined)
-      patch.formFields = sanitizeFormFieldKeys(updates.formFields)
+    if (updates.formFields !== undefined) {
+      const sanitized = sanitizeFormFieldKeys(updates.formFields)
+      // Same rule the MCP applies: growing a form is free, shrinking it strands
+      // answers already submitted. Say how many rather than either refusing
+      // structural edits outright or dropping the data in silence.
+      const impact = await impactOnApplications(
+        ctx,
+        id,
+        (opportunity.formFields ?? []) as Array<FormField>,
+        (Array.isArray(sanitized) ? sanitized : []) as Array<FormField>,
+      )
+      if (impact.affectedResponses > 0 && !confirmDiscardsAnswers) {
+        throw new ConvexError(describeImpact(impact))
+      }
+      patch.formFields = sanitized
+    }
     if (updates.tags !== undefined) patch.tags = normalizeTags(updates.tags)
     if (updates.slug !== undefined) {
       // Blank clears the alias; the id keeps working either way. A collision

@@ -179,11 +179,15 @@ export const TOOL_DEFS = [
     name: 'astn_update',
     description:
       `Update fields of a record. Updatable resources: ${UPDATE_RESOURCES.join(', ')}. ` +
-      'Only allowlisted scalar fields can be changed (see astn_resources). For applications you ' +
+      'Only allowlisted fields can be changed (see astn_resources). For applications you ' +
       'can set `status` (submitted/under_review/accepted/rejected/redirected/waitlisted/participated) and ' +
       '`reviewNotes`; this records the decision inside ASTN and never emails the applicant. ' +
-      'Other outward-facing actions (sending emails, publishing) are not exposed here. ' +
-      'Only the provided keys change.',
+      "For opportunities you can also replace `formFields` — the application form itself. Pass the " +
+      'whole array (astn_get returns the current one); keys are sanitised on write. Adding questions ' +
+      'is always allowed. Removing or renaming a question that people already answered is refused ' +
+      'the first time, with the count of answers it would strand, and goes through on a repeat call ' +
+      'with confirmDiscardsAnswers: true. ' +
+      'Sending emails is never exposed here. Only the provided keys change.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -191,6 +195,13 @@ export const TOOL_DEFS = [
         resource: { type: 'string', enum: UPDATE_RESOURCES },
         id: { type: 'string', description: 'Record _id.' },
         fields: { type: 'object', description: 'Field values to change.' },
+        confirmDiscardsAnswers: {
+          type: 'boolean',
+          description:
+            'Only for opportunities.formFields. Acknowledges that the new form drops questions ' +
+            'people already answered, stranding those answers. The error you get without it tells ' +
+            'you exactly how many.',
+        },
       },
       required: ['org', 'resource', 'id', 'fields'],
     },
@@ -427,6 +438,9 @@ export async function callTool(
         resource: resource as any,
         id: args.id as string,
         fields: args.fields ?? {},
+        confirmDiscardsAnswers: args.confirmDiscardsAnswers as
+          | boolean
+          | undefined,
       })
 
     case 'astn_delete':

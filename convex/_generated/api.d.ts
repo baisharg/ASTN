@@ -107,6 +107,7 @@ import type * as lib_baishCourseOpportunities from "../lib/baishCourseOpportunit
 import type * as lib_bookingValidation from "../lib/bookingValidation.js";
 import type * as lib_crmFields from "../lib/crmFields.js";
 import type * as lib_debouncer from "../lib/debouncer.js";
+import type * as lib_formFieldChanges from "../lib/formFieldChanges.js";
 import type * as lib_formFields from "../lib/formFields.js";
 import type * as lib_limits from "../lib/limits.js";
 import type * as lib_llmUsage from "../lib/llmUsage.js";
@@ -270,6 +271,7 @@ declare const fullApi: ApiFromModules<{
   "lib/bookingValidation": typeof lib_bookingValidation;
   "lib/crmFields": typeof lib_crmFields;
   "lib/debouncer": typeof lib_debouncer;
+  "lib/formFieldChanges": typeof lib_formFieldChanges;
   "lib/formFields": typeof lib_formFields;
   "lib/limits": typeof lib_limits;
   "lib/llmUsage": typeof lib_llmUsage;

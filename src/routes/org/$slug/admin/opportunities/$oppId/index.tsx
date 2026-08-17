@@ -403,6 +403,7 @@ function OpportunityEditPage() {
   const [formFields, setFormFields] = useState<Array<FormField>>([])
 
   const [isSavingFields, setIsSavingFields] = useState(false)
+  const [discardWarning, setDiscardWarning] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
 
   const exportCsv = useAction(api.opportunityApplications.exportApplications)
@@ -513,18 +514,29 @@ function OpportunityEditPage() {
     }
   }
 
-  const handleSaveFields = async () => {
+  // Removing a question people already answered strands their answers, so the
+  // backend refuses the first attempt and says how many. We surface that and
+  // turn the button into an explicit "save anyway" rather than hiding it behind
+  // a dialog nobody reads.
+  const handleSaveFields = async (confirmDiscardsAnswers = false) => {
     setIsSavingFields(true)
     try {
       const validFields = formFields.filter((f) => f.label.trim())
       await updateOpp({
         id: opportunity._id,
         formFields: validFields.length > 0 ? validFields : undefined,
+        ...(confirmDiscardsAnswers ? { confirmDiscardsAnswers: true } : {}),
       })
       toast.success('Form fields saved')
+      setDiscardWarning(null)
     } catch (err) {
       console.error('Failed to save form fields:', err)
-      toast.error('Failed to save form fields')
+      if (err instanceof ConvexError && typeof err.data === 'string') {
+        setDiscardWarning(err.data)
+        toast.error('Some answers would be lost', { description: err.data })
+      } else {
+        toast.error('Failed to save form fields')
+      }
     } finally {
       setIsSavingFields(false)
     }
@@ -666,23 +678,43 @@ function OpportunityEditPage() {
                       onChange={setFormFields}
                     />
 
-                    <Button
-                      type="button"
-                      onClick={handleSaveFields}
-                      disabled={isSavingFields}
-                    >
-                      {isSavingFields ? (
-                        <>
-                          <Loader2 className="size-4 mr-2 animate-spin" />
-                          Saving...
-                        </>
-                      ) : (
-                        <>
-                          <Save className="size-4 mr-2" />
-                          Save Form Fields
-                        </>
+                    {discardWarning && (
+                      <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                        {discardWarning}
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        onClick={() => void handleSaveFields()}
+                        disabled={isSavingFields}
+                      >
+                        {isSavingFields ? (
+                          <>
+                            <Loader2 className="size-4 mr-2 animate-spin" />
+                            Saving...
+                          </>
+                        ) : (
+                          <>
+                            <Save className="size-4 mr-2" />
+                            Save Form Fields
+                          </>
+                        )}
+                      </Button>
+
+                      {discardWarning && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="text-red-600"
+                          onClick={() => void handleSaveFields(true)}
+                          disabled={isSavingFields}
+                        >
+                          Save anyway
+                        </Button>
                       )}
-                    </Button>
+                    </div>
                   </CardContent>
                 </Card>
               </div>
