@@ -1,11 +1,13 @@
-import { Link, createFileRoute } from '@tanstack/react-router'
-import { useQuery } from 'convex/react'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useMutation, useQuery } from 'convex/react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import {
   Building2,
+  Copy,
   FileText,
   Link2,
+  Loader2,
   Pencil,
   Plus,
   Search,
@@ -97,7 +99,11 @@ function AdminOpportunitiesPage() {
     org && membership?.role === 'admin' ? { orgId: org._id } : 'skip',
   )
 
+  const navigate = useNavigate()
+  const duplicateOpp = useMutation(api.orgOpportunities.duplicate)
+
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<SortKey>('recent')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
@@ -412,6 +418,38 @@ function AdminOpportunitiesPage() {
                         }}
                       >
                         <Link2 className="size-4" />
+                      </Button>
+
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        title="Duplicate — copies the setup into a new draft"
+                        disabled={duplicatingId === opp._id}
+                        onClick={async () => {
+                          setDuplicatingId(opp._id)
+                          try {
+                            const newId = await duplicateOpp({ id: opp._id })
+                            toast.success('Duplicated as a draft')
+                            void navigate({
+                              to: '/org/$slug/admin/opportunities/$oppId',
+                              params: { slug, oppId: newId },
+                            })
+                          } catch (err) {
+                            toast.error(
+                              err instanceof Error
+                                ? err.message
+                                : 'Could not duplicate the opportunity',
+                            )
+                          } finally {
+                            setDuplicatingId(null)
+                          }
+                        }}
+                      >
+                        {duplicatingId === opp._id ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <Copy className="size-4" />
+                        )}
                       </Button>
 
                       <Button variant="ghost" size="sm" asChild>

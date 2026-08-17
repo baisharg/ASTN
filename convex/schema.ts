@@ -1605,6 +1605,10 @@ export default defineSchema({
     markdownBody: v.string(),
     includePollLink: v.optional(v.boolean()), // undefined = false
     includeSurveyLink: v.optional(v.boolean()), // undefined = false
+    // Hand-edited in the Emails tab. Editing a template refreshes the pending
+    // drafts that still match it verbatim; these ones are left alone, because
+    // regenerating them would silently throw away someone's wording.
+    editedByAdmin: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

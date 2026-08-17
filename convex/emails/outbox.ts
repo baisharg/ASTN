@@ -162,6 +162,79 @@ export async function syncOutboxOnStatusChange(
   })
 }
 
+/**
+ * Refresh pending drafts after a template is edited.
+ *
+ * A draft is a snapshot taken when the decision was made, so until now editing
+ * a template left every already-queued draft on the old wording, with no way
+ * out except deleting them and re-touching statuses. That is what stranded 17
+ * drafts on placeholder English text in July.
+ *
+ * Drafts the admin has hand-edited are never overwritten — their wording is
+ * the point. Everything else is brought up to date in place. Nothing is sent:
+ * refreshing a draft is still just a draft.
+ */
+export async function refreshPendingDraftsForTemplate(
+  ctx: MutationCtx,
+  opts: {
+    kind: Doc<'emailTemplates'>['kind']
+    /** Limit to one opportunity (an override was edited). */
+    opportunityId?: Doc<'orgOpportunities'>['_id']
+    /** Every opportunity linked to this set (a set template was edited). */
+    setId?: Doc<'emailTemplateSets'>['_id']
+  },
+): Promise<number> {
+  const { kind, opportunityId, setId } = opts
+
+  const opportunities: Array<Doc<'orgOpportunities'>> = []
+  if (opportunityId) {
+    const opp = await ctx.db.get('orgOpportunities', opportunityId)
+    if (opp) opportunities.push(opp)
+  } else if (setId) {
+    const set = await ctx.db.get('emailTemplateSets', setId)
+    if (!set) return 0
+    const linked = await ctx.db
+      .query('orgOpportunities')
+      .withIndex('by_org_and_status', (q) => q.eq('orgId', set.orgId))
+      .collect()
+    opportunities.push(
+      ...linked.filter((o) => o.emailTemplateSetId === setId),
+    )
+  }
+
+  let refreshed = 0
+  for (const opportunity of opportunities) {
+    // resolveTemplate applies the same override-then-set precedence the drafts
+    // were built with, so editing a set template correctly skips opportunities
+    // that have their own override for this kind.
+    const template = await resolveTemplate(ctx, opportunity, kind)
+    if (!template || template.enabled === false) continue
+
+    const drafts = await ctx.db
+      .query('emailOutbox')
+      .withIndex('by_opportunity', (q) =>
+        q.eq('opportunityId', opportunity._id),
+      )
+      .collect()
+
+    for (const draft of drafts) {
+      if (draft.kind !== kind) continue
+      if (draft.editedByAdmin) continue
+
+      await ctx.db.patch('emailOutbox', draft._id, {
+        subject: template.subject,
+        markdownBody: template.markdownBody,
+        includePollLink: template.includePollLink ?? false,
+        includeSurveyLink: template.includeSurveyLink ?? false,
+        updatedAt: Date.now(),
+      })
+      refreshed++
+    }
+  }
+
+  return refreshed
+}
+
 // ── Admin queries/mutations (Emails tab) ────────────────────────────────────
 
 async function requireAdmin(
@@ -190,6 +263,10 @@ export const listForOpportunity = query({
       includeSurveyLink: v.boolean(),
       recipientName: v.string(),
       recipientEmail: v.union(v.string(), v.null()),
+      editedByAdmin: v.boolean(),
+      // True when this draft was hand-edited and the template has since moved
+      // on. The UI offers to regenerate; we never do it behind the admin's back.
+      templateHasChanged: v.boolean(),
       createdAt: v.number(),
       updatedAt: v.number(),
     }),
@@ -204,6 +281,13 @@ export const listForOpportunity = query({
       .query('emailOutbox')
       .withIndex('by_opportunity', (q) => q.eq('opportunityId', opportunityId))
       .collect()
+
+    // Resolve each kind's effective template once, to tell a hand-edited draft
+    // that is merely different from one that is out of date.
+    const templateByKind = new Map<string, Doc<'emailTemplates'> | null>()
+    for (const kind of new Set(drafts.map((d) => d.kind))) {
+      templateByKind.set(kind, await resolveTemplate(ctx, opportunity, kind))
+    }
 
     const out = []
     for (const draft of drafts) {
@@ -228,6 +312,17 @@ export const listForOpportunity = query({
         includeSurveyLink: draft.includeSurveyLink ?? false,
         recipientName: name,
         recipientEmail: email ?? null,
+        editedByAdmin: draft.editedByAdmin === true,
+        templateHasChanged:
+          draft.editedByAdmin === true &&
+          (() => {
+            const t = templateByKind.get(draft.kind)
+            if (!t) return false
+            return (
+              t.subject !== draft.subject ||
+              t.markdownBody !== draft.markdownBody
+            )
+          })(),
         createdAt: draft.createdAt,
         updatedAt: draft.updatedAt,
       })
@@ -253,7 +348,11 @@ export const updateDraft = mutation({
     if (!draft) throw new ConvexError('Draft not found')
     await requireAdmin(ctx, draft.orgId)
 
-    const patch: Record<string, unknown> = { updatedAt: Date.now() }
+    // Once touched by hand, a draft stops tracking its template.
+    const patch: Record<string, unknown> = {
+      updatedAt: Date.now(),
+      editedByAdmin: true,
+    }
     if (subject !== undefined) {
       if (!subject.trim()) throw new ConvexError('Subject cannot be empty')
       assertOnlyKnownVariables(subject)
@@ -267,6 +366,42 @@ export const updateDraft = mutation({
     if (includeSurveyLink !== undefined)
       patch.includeSurveyLink = includeSurveyLink
     await ctx.db.patch('emailOutbox', draftId, patch as any)
+    return null
+  },
+})
+
+/**
+ * Discard a hand-edited draft's wording and rebuild it from the current
+ * template. The escape hatch for "I edited this, then improved the template" —
+ * explicit, because the edit is someone's work and losing it silently would be
+ * worse than the staleness it fixes.
+ */
+export const resetDraftToTemplate = mutation({
+  args: { draftId: v.id('emailOutbox') },
+  returns: v.null(),
+  handler: async (ctx, { draftId }) => {
+    const draft = await ctx.db.get('emailOutbox', draftId)
+    if (!draft) throw new ConvexError('Draft not found')
+    await requireAdmin(ctx, draft.orgId)
+
+    const opportunity = await ctx.db.get(
+      'orgOpportunities',
+      draft.opportunityId,
+    )
+    if (!opportunity) throw new ConvexError('Opportunity not found')
+
+    const template = await resolveTemplate(ctx, opportunity, draft.kind)
+    if (!template)
+      throw new ConvexError('There is no template for this decision any more')
+
+    await ctx.db.patch('emailOutbox', draftId, {
+      subject: template.subject,
+      markdownBody: template.markdownBody,
+      includePollLink: template.includePollLink ?? false,
+      includeSurveyLink: template.includeSurveyLink ?? false,
+      editedByAdmin: false,
+      updatedAt: Date.now(),
+    })
     return null
   },
 })

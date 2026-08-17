@@ -8,7 +8,7 @@ import {
   toBaishCourseOpportunityContract,
   type BaishCourseOpportunityContract,
 } from './lib/baishCourseOpportunities'
-import { getUserId } from './lib/auth'
+import { getUserId, requireOrgAdmin } from './lib/auth'
 import { sanitizeFormFieldKeys } from './lib/formFields'
 import { createDefaultPollForOpportunity } from './availabilityPolls'
 
@@ -293,6 +293,52 @@ export const getInternal = internalQuery({
   returns: v.union(opportunityReturnValidator, v.null()),
   handler: async (ctx, { id }) => {
     return await ctx.db.get('orgOpportunities', id)
+  },
+})
+
+/**
+ * Duplicate an opportunity (org admin only). Asked for by Koren on 15-ago:
+ * opening next term's cohort meant rebuilding the whole application form by
+ * hand, because tags only group opportunities and `sourceOpportunityId` only
+ * pre-fills a returning applicant's answers — neither copies the setup.
+ *
+ * What carries over is the configuration: title (suffixed), description, type,
+ * tags, form fields, the EOI flag and the linked email template set. What does
+ * not is everything tied to the run that just happened — applications, polls,
+ * surveys, the deadline, the featured flag and the redirect target. The copy is
+ * born as a `draft` so nothing can go live by accident, and it records the
+ * original in `sourceOpportunityId`, which is also what pre-fills answers for
+ * applicants who already applied to the previous edition.
+ */
+export const duplicate = mutation({
+  args: { id: v.id('orgOpportunities') },
+  returns: v.id('orgOpportunities'),
+  handler: async (ctx, { id }) => {
+    const source = await ctx.db.get('orgOpportunities', id)
+    if (!source) throw new ConvexError('Opportunity not found')
+
+    await requireOrgAdmin(ctx, source.orgId)
+
+    const now = Date.now()
+    return await ctx.db.insert('orgOpportunities', {
+      orgId: source.orgId,
+      title: `${source.title} (copy)`,
+      description: source.description,
+      type: source.type,
+      status: 'draft',
+      featured: false,
+      formFields: source.formFields,
+      tags: source.tags,
+      isEOI: source.isEOI,
+      emailTemplateSetId: source.emailTemplateSetId,
+      // Inherit the on-apply kill switch so a duplicated EOI does not start
+      // emailing people the original deliberately kept quiet.
+      sendApplicationReceivedEmail: source.sendApplicationReceivedEmail,
+      externalUrl: source.externalUrl,
+      sourceOpportunityId: source._id,
+      createdAt: now,
+      updatedAt: now,
+    })
   },
 })
 

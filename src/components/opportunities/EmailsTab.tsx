@@ -157,6 +157,8 @@ type Draft = {
   includeSurveyLink: boolean
   recipientName: string
   recipientEmail: string | null
+  editedByAdmin?: boolean
+  templateHasChanged?: boolean
 }
 
 function OutboxSection({
@@ -169,6 +171,7 @@ function OutboxSection({
   })
   const sendDrafts = useAction(api.emails.outboxSend.sendDrafts)
   const deleteDraft = useMutation(api.emails.outbox.deleteDraft)
+  const resetDraft = useMutation(api.emails.outbox.resetDraftToTemplate)
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [editing, setEditing] = useState<Draft | null>(null)
@@ -325,6 +328,31 @@ function OutboxSection({
                       <p className="text-xs text-muted-foreground truncate">
                         {draft.subject}
                       </p>
+                      {draft.templateHasChanged && (
+                        <p className="text-xs text-amber-700 mt-0.5 flex items-center gap-1">
+                          <span>
+                            Edited by hand — the template has changed since.
+                          </span>
+                          <button
+                            type="button"
+                            className="underline underline-offset-2 hover:text-amber-900"
+                            onClick={async () => {
+                              try {
+                                await resetDraft({ draftId: draft._id })
+                                toast.success('Rebuilt from the template')
+                              } catch (err) {
+                                toast.error(
+                                  err instanceof Error
+                                    ? err.message
+                                    : 'Could not rebuild the draft',
+                                )
+                              }
+                            }}
+                          >
+                            Use the new one
+                          </button>
+                        </p>
+                      )}
                     </div>
                     <div className="flex items-center gap-1 text-muted-foreground">
                       {draft.includePollLink && (

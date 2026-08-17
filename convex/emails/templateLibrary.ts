@@ -3,7 +3,11 @@ import { mutation, query } from '../_generated/server'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc } from '../_generated/dataModel'
 import { getUserId, requireOrgAdminFor } from '../lib/auth'
-import { assertOnlyKnownVariables, syncOutboxOnStatusChange } from './outbox'
+import {
+  assertOnlyKnownVariables,
+  refreshPendingDraftsForTemplate,
+  syncOutboxOnStatusChange,
+} from './outbox'
 
 // Org-level library of email template sets (issue #20). A set (e.g. "TAIS",
 // "Governance") holds exactly one template per kind — the five rows are
@@ -260,6 +264,17 @@ export const updateTemplate = mutation({
       await ctx.db.patch('emailTemplateSets', template.setId, {
         updatedAt: now,
       })
+      // Bring already-queued drafts up to the new wording. Hand-edited ones are
+      // left alone; nothing is sent.
+      await refreshPendingDraftsForTemplate(ctx, {
+        kind: template.kind,
+        setId: template.setId,
+      })
+    } else if (template.opportunityId) {
+      await refreshPendingDraftsForTemplate(ctx, {
+        kind: template.kind,
+        opportunityId: template.opportunityId,
+      })
     }
     return null
   },
@@ -377,6 +392,10 @@ export const upsertOpportunityTemplate = mutation({
         ...fields,
       })
     }
+    await refreshPendingDraftsForTemplate(ctx, {
+      kind: args.kind,
+      opportunityId: args.opportunityId,
+    })
     return null
   },
 })
@@ -400,6 +419,9 @@ export const clearOpportunityTemplate = mutation({
       )
       .first()
     if (existing) await ctx.db.delete('emailTemplates', existing._id)
+    // Reverting to the set changes the effective wording, so the drafts that
+    // were tracking the override need to follow it back.
+    await refreshPendingDraftsForTemplate(ctx, { kind, opportunityId })
     return null
   },
 })
