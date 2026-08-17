@@ -7,7 +7,7 @@ import { isOutboxActive, syncOutboxOnStatusChange } from '../emails/outbox'
 import { sanitizeFormFieldKeys } from '../lib/formFields'
 import type { FormField } from '../lib/formFields'
 import { describeImpact, impactOnApplications } from '../lib/formFieldChanges'
-import { createOpportunityFor } from '../orgOpportunities'
+import { createOpportunityFor, opportunityAttachments } from '../orgOpportunities'
 import { createSurveyFor } from '../feedbackSurveys'
 import { createPollFor } from '../availabilityPolls'
 
@@ -130,6 +130,9 @@ export const UPDATE_FIELDS: Record<string, Set<string>> = {
     // validation this path applies. The guard is now on the consequence — see
     // the formFields block in the handler — not on the field name.
     'formFields',
+    // Pseudo-field: `archived: true|false` maps to the archivedAt timestamp.
+    // Reads better from the agent side than asking it to invent a timestamp.
+    'archived',
   ]),
   // Opening and closing is reversible in seconds, so it is not the kind of
   // thing worth locking behind the web. Finalizing a poll is excluded: it needs
@@ -619,6 +622,14 @@ export const update = internalMutation({
       patch.reviewedBy = args.userId
     }
 
+    // Opportunities: `archived` is a boolean on the way in, a timestamp on the
+    // way out. Archiving touches nothing that references the opportunity.
+    if (args.resource === 'opportunities' && 'archived' in patch) {
+      const archived = patch.archived === true
+      delete patch.archived
+      patch.archivedAt = archived ? Date.now() : undefined
+    }
+
     // Surveys/polls: publishing and closing are fine, but 'finalized' on a poll
     // means "this is the chosen slot" and needs finalizedSlot set — a status-only
     // patch would leave the poll claiming a decision it does not carry.
@@ -1101,6 +1112,66 @@ export const surveyResults = internalQuery({
         responses: r.responses,
       })),
     }
+  },
+})
+
+/**
+ * Delete an opportunity, refusing whenever anything is attached to it.
+ *
+ * Mirrors orgOpportunities.remove — see the note there for why a cascading
+ * delete would be the wrong thing. Safe by construction: if the guard passes,
+ * there is nothing to lose, which is why this is allowed from the agent at all.
+ */
+export const deleteOpportunity = internalMutation({
+  args: { userId: v.string(), orgSlug: v.string(), id: v.string() },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const org = await resolveOrgForAdmin(ctx, args.userId, args.orgSlug)
+    const id = ctx.db.normalizeId('orgOpportunities', args.id)
+    if (!id) throw new Error('Record not found')
+    const opportunity = await ctx.db.get(id)
+    if (!opportunity || opportunity.orgId !== org._id)
+      throw new Error('Record not found')
+
+    const attached = await opportunityAttachments(ctx, id)
+    const blocking = Object.entries(attached).filter(([, n]) => n > 0)
+    if (blocking.length > 0) {
+      throw new Error(
+        `Cannot delete: this opportunity has ${blocking
+          .map(([k, n]) => `${n} ${k}`)
+          .join(', ')}. Archive it instead (astn_update fields={archived:true}) — ` +
+          `nothing is lost and it leaves the list.`,
+      )
+    }
+
+    const polls = await ctx.db
+      .query('availabilityPolls')
+      .withIndex('by_opportunity', (q) => q.eq('opportunityId', id))
+      .collect()
+    for (const poll of polls) {
+      const respondents = await ctx.db
+        .query('pollRespondents')
+        .withIndex('by_poll', (q) => q.eq('pollId', poll._id))
+        .collect()
+      for (const r of respondents) await ctx.db.delete('pollRespondents', r._id)
+      await ctx.db.delete('availabilityPolls', poll._id)
+    }
+
+    const siblings = await ctx.db
+      .query('orgOpportunities')
+      .withIndex('by_org_and_status', (q) => q.eq('orgId', org._id))
+      .collect()
+    for (const sib of siblings) {
+      const patch: Record<string, unknown> = {}
+      if (sib.redirectOpportunityId === id)
+        patch.redirectOpportunityId = undefined
+      if (sib.sourceOpportunityId === id) patch.sourceOpportunityId = undefined
+      if (Object.keys(patch).length > 0)
+        await ctx.db.patch('orgOpportunities', sib._id, patch)
+    }
+
+    await ctx.db.delete('orgOpportunities', id)
+    return { id, deleted: true }
   },
 })
 

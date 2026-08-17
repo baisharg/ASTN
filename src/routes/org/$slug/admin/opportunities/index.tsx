@@ -3,6 +3,8 @@ import { useMutation, useQuery } from 'convex/react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import {
+  Archive,
+  ArchiveRestore,
   Building2,
   Copy,
   FileText,
@@ -50,13 +52,14 @@ const TYPE_LABELS: Record<string, string> = {
 }
 
 type SortKey = 'recent' | 'deadline' | 'title' | 'status'
-type StatusFilter = 'all' | 'active' | 'draft' | 'closed'
+type StatusFilter = 'all' | 'active' | 'draft' | 'closed' | 'archived'
 
 const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   all: 'All statuses',
   active: 'Active',
   draft: 'Draft',
   closed: 'Closed',
+  archived: 'Archived',
 }
 
 const SORT_LABELS: Record<SortKey, string> = {
@@ -96,11 +99,14 @@ function AdminOpportunitiesPage() {
   )
   const opportunities = useQuery(
     api.orgOpportunities.listAllByOrg,
-    org && membership?.role === 'admin' ? { orgId: org._id } : 'skip',
+    org && membership?.role === 'admin'
+      ? { orgId: org._id, includeArchived: true }
+      : 'skip',
   )
 
   const navigate = useNavigate()
   const duplicateOpp = useMutation(api.orgOpportunities.duplicate)
+  const setArchived = useMutation(api.orgOpportunities.setArchived)
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null)
@@ -123,7 +129,15 @@ function AdminOpportunitiesPage() {
   const q = search.trim().toLowerCase()
   const visibleOpportunities = (opportunities ?? [])
     .filter((opp) => {
-      if (statusFilter !== 'all' && opp.status !== statusFilter) return false
+      // Archived is a separate axis from status: hidden everywhere except when
+      // explicitly asked for.
+      const isArchived = opp.archivedAt !== undefined
+      if (statusFilter === 'archived') {
+        if (!isArchived) return false
+      } else {
+        if (isArchived) return false
+        if (statusFilter !== 'all' && opp.status !== statusFilter) return false
+      }
       if (q) {
         const haystack = [opp.title, opp.description, ...(opp.tags ?? [])]
           .join(' ')
@@ -423,6 +437,35 @@ function AdminOpportunitiesPage() {
                       <Button
                         variant="ghost"
                         size="sm"
+                        title={
+                          opp.archivedAt
+                            ? 'Unarchive — put it back in the list'
+                            : 'Archive — take it out of the list, nothing is lost'
+                        }
+                        onClick={async () => {
+                          try {
+                            await setArchived({
+                              id: opp._id,
+                              archived: opp.archivedAt === undefined,
+                            })
+                            toast.success(
+                              opp.archivedAt ? 'Unarchived' : 'Archived',
+                            )
+                          } catch {
+                            toast.error("Couldn't archive the opportunity")
+                          }
+                        }}
+                      >
+                        {opp.archivedAt ? (
+                          <ArchiveRestore className="size-4" />
+                        ) : (
+                          <Archive className="size-4" />
+                        )}
+                      </Button>
+
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         title="Duplicate — copies the setup into a new draft"
                         disabled={duplicatingId === opp._id}
                         onClick={async () => {
@@ -455,7 +498,7 @@ function AdminOpportunitiesPage() {
                       <Button variant="ghost" size="sm" asChild>
                         <Link
                           to="/org/$slug/admin/opportunities/$oppId"
-                          params={{ slug, oppId: opp._id }}
+                          params={{ slug, oppId: opp.slug ?? opp._id }}
                         >
                           <Pencil className="size-4" />
                         </Link>

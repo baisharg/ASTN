@@ -143,6 +143,7 @@ const opportunityReturnValidator = v.object({
   sendApplicationReceivedEmail: v.optional(v.boolean()),
   redirectOpportunityId: v.optional(v.id('orgOpportunities')),
   sourceOpportunityId: v.optional(v.id('orgOpportunities')),
+  archivedAt: v.optional(v.number()),
   createdAt: v.number(),
   updatedAt: v.number(),
 })
@@ -186,6 +187,46 @@ export const get = query({
       .filter((q) => q.eq(q.field('orgId'), opp.orgId))
       .first()
 
+    if (!membership || membership.role !== 'admin') return null
+    return opp
+  },
+})
+
+/**
+ * Same access rules as `get`, but keyed by the readable slug or the raw id, so
+ * the admin URL can carry a name instead of a hash. Ids keep working: bookmarks
+ * and links pasted in Slack must not break.
+ */
+export const getByKey = query({
+  args: { orgSlug: v.string(), key: v.string() },
+  returns: v.union(opportunityReturnValidator, v.null()),
+  handler: async (ctx, { orgSlug, key }) => {
+    const org = await ctx.db
+      .query('organizations')
+      .withIndex('by_slug', (q) => q.eq('slug', orgSlug))
+      .unique()
+    if (!org) return null
+
+    const asId = ctx.db.normalizeId('orgOpportunities', key)
+    const opp = asId
+      ? await ctx.db.get('orgOpportunities', asId)
+      : await ctx.db
+          .query('orgOpportunities')
+          .withIndex('by_org_and_slug', (q) =>
+            q.eq('orgId', org._id).eq('slug', key),
+          )
+          .first()
+
+    if (!opp || opp.orgId !== org._id) return null
+    if (opp.status === 'active') return opp
+
+    const userId = await getUserId(ctx)
+    if (!userId) return null
+    const membership = await ctx.db
+      .query('orgMemberships')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .filter((q) => q.eq(q.field('orgId'), opp.orgId))
+      .first()
     if (!membership || membership.role !== 'admin') return null
     return opp
   },
@@ -372,9 +413,12 @@ export const getFeatured = query({
 
 // Admin: list all opportunities for an org (all statuses)
 export const listAllByOrg = query({
-  args: { orgId: v.id('organizations') },
+  args: {
+    orgId: v.id('organizations'),
+    includeArchived: v.optional(v.boolean()),
+  },
   returns: v.array(opportunityReturnValidator),
-  handler: async (ctx, { orgId }) => {
+  handler: async (ctx, { orgId, includeArchived }) => {
     const userId = await getUserId(ctx)
     if (!userId) throw new ConvexError('Not authenticated')
 
@@ -408,7 +452,8 @@ export const listAllByOrg = query({
       )
       .collect()
 
-    return [...active, ...closed, ...draft]
+    const all = [...active, ...closed, ...draft]
+    return includeArchived ? all : all.filter((o) => o.archivedAt === undefined)
   },
 })
 
@@ -418,6 +463,134 @@ export const getInternal = internalQuery({
   returns: v.union(opportunityReturnValidator, v.null()),
   handler: async (ctx, { id }) => {
     return await ctx.db.get('orgOpportunities', id)
+  },
+})
+
+/**
+ * What is attached to an opportunity, so a caller can be told what deleting it
+ * would take with it. Shared by the web and the MCP so both refuse for the
+ * same reasons.
+ */
+export async function opportunityAttachments(
+  ctx: QueryCtx,
+  id: Id<'orgOpportunities'>,
+): Promise<{ applications: number; polls: number; surveys: number; emailsSent: number }> {
+  const [applications, polls, surveys, emailsSent] = await Promise.all([
+    ctx.db
+      .query('opportunityApplications')
+      .withIndex('by_opportunity_and_status', (q) => q.eq('opportunityId', id))
+      .collect(),
+    ctx.db
+      .query('availabilityPolls')
+      .withIndex('by_opportunity', (q) => q.eq('opportunityId', id))
+      .collect(),
+    ctx.db
+      .query('feedbackSurveys')
+      .withIndex('by_opportunity', (q) => q.eq('opportunityId', id))
+      .collect(),
+    ctx.db
+      .query('emailLog')
+      .withIndex('by_opportunity', (q) => q.eq('opportunityId', id))
+      .collect(),
+  ])
+  return {
+    applications: applications.length,
+    // The default poll every opportunity ships with does not count as content:
+    // it is ours, empty, and created automatically.
+    polls: polls.filter((p) => p.status !== 'open' || p.title !== 'Availability')
+      .length,
+    surveys: surveys.length,
+    emailsSent: emailsSent.length,
+  }
+}
+
+/**
+ * Archive or unarchive. Takes the opportunity out of the admin list without
+ * touching anything that references it — the honest answer to "this is over,
+ * stop showing it to me", which is what people reach for the delete button for.
+ */
+export const setArchived = mutation({
+  args: { id: v.id('orgOpportunities'), archived: v.boolean() },
+  returns: v.null(),
+  handler: async (ctx, { id, archived }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', id)
+    if (!opportunity) throw new ConvexError('Opportunity not found')
+    await requireOrgAdmin(ctx, opportunity.orgId)
+
+    await ctx.db.patch('orgOpportunities', id, {
+      archivedAt: archived ? Date.now() : undefined,
+      updatedAt: Date.now(),
+    })
+    return null
+  },
+})
+
+/**
+ * Delete an opportunity — only when there is nothing to lose.
+ *
+ * There was never a delete for these: the table was created in Feb 2026 to let
+ * people apply to the TAIS course, and polls, surveys, the email system and EOI
+ * redirects were hung off it afterwards, until nine columns across five tables
+ * pointed at it and nobody wanted to own the cascade.
+ *
+ * Writing that cascade would be the wrong fix anyway: it would destroy other
+ * people's applications and survey answers, and orphan or erase emailLog rows —
+ * the record of mail actually sent to real people. So this refuses whenever
+ * anything is attached, names what is attached, and points at archiving. What it
+ * does allow is deleting the duplicates and typos that should never have
+ * existed, which is the other half of what people actually want.
+ */
+export const remove = mutation({
+  args: { id: v.id('orgOpportunities') },
+  returns: v.null(),
+  handler: async (ctx, { id }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', id)
+    if (!opportunity) throw new ConvexError('Opportunity not found')
+    await requireOrgAdmin(ctx, opportunity.orgId)
+
+    const attached = await opportunityAttachments(ctx, id)
+    const blocking = Object.entries(attached).filter(([, n]) => n > 0)
+    if (blocking.length > 0) {
+      throw new ConvexError(
+        `Cannot delete: this opportunity has ${blocking
+          .map(([k, n]) => `${n} ${k}`)
+          .join(', ')}. Archive it instead — nothing is lost and it leaves the list.`,
+      )
+    }
+
+    // Nothing references it, so the only rows to clean are the auto-created
+    // default poll and its (empty) respondent list.
+    const polls = await ctx.db
+      .query('availabilityPolls')
+      .withIndex('by_opportunity', (q) => q.eq('opportunityId', id))
+      .collect()
+    for (const poll of polls) {
+      const respondents = await ctx.db
+        .query('pollRespondents')
+        .withIndex('by_poll', (q) => q.eq('pollId', poll._id))
+        .collect()
+      for (const r of respondents) {
+        await ctx.db.delete('pollRespondents', r._id)
+      }
+      await ctx.db.delete('availabilityPolls', poll._id)
+    }
+
+    // Another opportunity may point here as its redirect target or pre-fill
+    // source; clear those so nothing is left pointing at a hole.
+    const siblings = await ctx.db
+      .query('orgOpportunities')
+      .withIndex('by_org_and_status', (q) => q.eq('orgId', opportunity.orgId))
+      .collect()
+    for (const s of siblings) {
+      const patch: Record<string, unknown> = {}
+      if (s.redirectOpportunityId === id) patch.redirectOpportunityId = undefined
+      if (s.sourceOpportunityId === id) patch.sourceOpportunityId = undefined
+      if (Object.keys(patch).length > 0)
+        await ctx.db.patch('orgOpportunities', s._id, patch)
+    }
+
+    await ctx.db.delete('orgOpportunities', id)
+    return null
   },
 })
 

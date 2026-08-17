@@ -362,8 +362,11 @@ function OpportunityEditPage() {
     api.orgs.membership.getMembership,
     org ? { orgId: org._id } : 'skip',
   )
-  const opportunity = useQuery(api.orgOpportunities.get, {
-    id: oppId as Id<'orgOpportunities'>,
+  // The URL segment is the readable slug or the raw id; both resolve, so old
+  // bookmarks and links pasted in Slack keep working.
+  const opportunity = useQuery(api.orgOpportunities.getByKey, {
+    orgSlug: slug,
+    key: oppId,
   })
 
   // Pending outbox drafts — shown as a count badge on the Emails tab.
@@ -382,7 +385,7 @@ function OpportunityEditPage() {
     org ? { orgId: org._id } : 'skip',
   )
   const redirectTargets = (activeOpportunities ?? []).filter(
-    (o) => o._id !== oppId,
+    (o) => o._id !== opportunity?._id,
   )
 
   // Source (pre-fill) options: all opportunities in this org (any status),
@@ -392,7 +395,9 @@ function OpportunityEditPage() {
     api.orgOpportunities.listAllByOrg,
     org && membership?.role === 'admin' ? { orgId: org._id } : 'skip',
   )
-  const sourceOptions = (allOpportunities ?? []).filter((o) => o._id !== oppId)
+  const sourceOptions = (allOpportunities ?? []).filter(
+    (o) => o._id !== opportunity?._id,
+  )
 
   // Tags already used anywhere in this org, offered as suggestions in the form.
   const existingTags = Array.from(

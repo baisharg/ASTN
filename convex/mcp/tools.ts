@@ -65,7 +65,8 @@ const PLATFORM_UPDATE = Object.keys(UPDATE_FIELDS) // programs, modules, session
 const READ_RESOURCES = [...Object.keys(CRM_RESOURCES), ...PLATFORM_READ]
 const CREATE_RESOURCES = [...Object.keys(CRM_RESOURCES), ...PLATFORM_CREATE]
 const UPDATE_RESOURCES = [...Object.keys(CRM_RESOURCES), ...PLATFORM_UPDATE]
-const DELETE_RESOURCES = Object.keys(CRM_RESOURCES) // CRM only in v1
+// CRM, plus opportunities — but only ones with nothing attached (see platform).
+const DELETE_RESOURCES = [...Object.keys(CRM_RESOURCES), 'opportunities']
 
 const isCrm = (resource: string): resource is keyof typeof CRM_RESOURCES =>
   resource in CRM_RESOURCES
@@ -317,6 +318,15 @@ const PLATFORM_FIELD_HINTS: Record<string, string> = {
 }
 
 const PLATFORM_UPDATE_HINTS: Record<string, string> = {
+  opportunities:
+    'archived: true|false takes it out of / back into the admin list without touching anything ' +
+    'that references it — use it for finished cohorts and for mistakes. formFields replaces the ' +
+    'application form (pass the whole array). astn_delete only works on an opportunity with ' +
+    'nothing attached: no applications, surveys, extra polls or sent emails.',
+  surveys:
+    'status ∈ draft|open|closed. Opening publishes it; questions can no longer change after that.',
+  polls:
+    'status ∈ open|closed. Finalizing (picking the chosen slot) is done in the web app.',
   applications:
     'status ∈ submitted|under_review|accepted|rejected|redirected|waitlisted|participated (redirected = "Fit for another course"); reviewNotes is free text. Setting these records the decision in ASTN and stamps reviewedAt/reviewedBy — it does NOT email the applicant (decision emails are drafted into the outbox when the opportunity has a template set).',
 }
@@ -500,6 +510,13 @@ export async function callTool(
           userId,
           orgSlug: org,
           collection: CRM_RESOURCES[resource] as any,
+          id: args.id as string,
+        })
+      }
+      if (resource === 'opportunities') {
+        return await ctx.runMutation(internal.mcp.platform.deleteOpportunity, {
+          userId,
+          orgSlug: org,
           id: args.id as string,
         })
       }

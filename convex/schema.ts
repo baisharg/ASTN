@@ -1398,6 +1398,11 @@ export default defineSchema({
     sendApplicationReceivedEmail: v.optional(v.boolean()),
     redirectOpportunityId: v.optional(v.id('orgOpportunities')),
     sourceOpportunityId: v.optional(v.id('orgOpportunities')),
+    // Out of the admin's way without losing anything. Distinct from `closed`,
+    // which means "applications are over": archived means "stop showing me
+    // this", and covers both a finished cohort and a mistake worth hiding.
+    // Nothing referencing the opportunity is touched.
+    archivedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

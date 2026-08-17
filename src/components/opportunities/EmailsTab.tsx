@@ -97,6 +97,7 @@ export function EmailsTab({
   opportunity: {
     _id: Id<'orgOpportunities'>
     orgId: Id<'organizations'>
+    slug?: string
     emailTemplateSetId?: Id<'emailTemplateSets'>
     isEOI?: boolean
     sendApplicationReceivedEmail?: boolean
@@ -124,7 +125,7 @@ export function EmailsTab({
         <Button variant="outline" size="sm" asChild>
           <Link
             to="/org/$slug/admin/opportunities/$oppId/email"
-            params={{ slug, oppId: opportunity._id }}
+            params={{ slug, oppId: opportunity.slug ?? opportunity._id }}
           >
             <Pencil className="size-4 mr-2" />
             Compose broadcast
@@ -619,6 +620,7 @@ function TemplatesSection({
   opportunity: {
     _id: Id<'orgOpportunities'>
     orgId: Id<'organizations'>
+    slug?: string
     emailTemplateSetId?: Id<'emailTemplateSets'>
     isEOI?: boolean
     sendApplicationReceivedEmail?: boolean
