@@ -1,7 +1,12 @@
 import { ConvexError, v } from 'convex/values'
-import type { Id } from './_generated/dataModel'
-import { internalQuery, mutation, query } from './_generated/server'
-import type { QueryCtx } from './_generated/server'
+import type { Doc, Id } from './_generated/dataModel'
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from './_generated/server'
+import type { MutationCtx, QueryCtx } from './_generated/server'
 import {
   BAISH_ORG_SLUG,
   selectBaishCourseOpportunities,
@@ -11,6 +16,56 @@ import {
 import { getUserId, requireOrgAdmin } from './lib/auth'
 import { sanitizeFormFieldKeys } from './lib/formFields'
 import { createDefaultPollForOpportunity } from './availabilityPolls'
+
+/**
+ * Turn a title into a URL-safe slug: lowercase, accents stripped, spaces and
+ * punctuation collapsed to single hyphens.
+ * "Gobernanza de IA de Frontera" -> "gobernanza-de-ia-de-frontera"
+ */
+const MAX_SLUG_LEN = 60
+export function slugifyTitle(title: string): string {
+  return title
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, MAX_SLUG_LEN)
+    .replace(/-+$/g, '')
+}
+
+/**
+ * A slug free to use in this org, suffixing `-2`, `-3`… on collision. Returns
+ * undefined when the title yields nothing sluggable (e.g. all punctuation);
+ * the opportunity then simply has no alias and its id keeps working.
+ */
+async function uniqueSlug(
+  ctx: MutationCtx,
+  orgId: Id<'organizations'>,
+  desired: string,
+  selfId?: Id<'orgOpportunities'>,
+): Promise<string | undefined> {
+  const base = slugifyTitle(desired)
+  if (!base) return undefined
+
+  const taken = new Set(
+    (
+      await ctx.db
+        .query('orgOpportunities')
+        .withIndex('by_org_and_status', (q) => q.eq('orgId', orgId))
+        .collect()
+    )
+      .filter((o) => o._id !== selfId && typeof o.slug === 'string')
+      .map((o) => o.slug as string),
+  )
+
+  if (!taken.has(base)) return base
+  for (let i = 2; i < 1000; i++) {
+    const candidate = `${base}-${i}`
+    if (!taken.has(candidate)) return candidate
+  }
+  return undefined
+}
 
 // Normalize freeform tags: trim, drop empties, dedupe (case-insensitive,
 // keeping the first-seen casing), cap length. Returns undefined for an empty
@@ -76,6 +131,10 @@ const opportunityReturnValidator = v.object({
   externalUrl: v.optional(v.string()),
   featured: v.boolean(),
   formFields: v.optional(v.any()),
+  // Every field added to the orgOpportunities schema must also be listed here:
+  // this validator is strict, so a missing one makes `get` throw at runtime.
+  // That is what took /admin/opportunities down on 3-jul.
+  slug: v.optional(v.string()),
   tags: v.optional(v.array(v.string())),
   isEOI: v.optional(v.boolean()),
   emailTemplateSetId: v.optional(v.id('emailTemplateSets')),
@@ -130,6 +189,53 @@ export const get = query({
   },
 })
 
+const withRedirectReturnValidator = v.union(
+  v.object({
+    kind: v.literal('direct'),
+    opportunity: opportunityReturnValidator,
+  }),
+  v.object({
+    kind: v.literal('redirect'),
+    originalTitle: v.string(),
+    originalDescription: v.string(),
+    opportunity: opportunityReturnValidator,
+  }),
+  v.null(),
+)
+
+/**
+ * The apply page's resolver, keyed by either the readable slug or the raw id.
+ *
+ * Both work, permanently. Links already handed out point at the id, and a
+ * closed EOI can be reopened at any time, so an old link must never 404 — but
+ * everything ASTN generates from now on uses the slug.
+ */
+export const getWithRedirectByKey = query({
+  args: { orgSlug: v.string(), key: v.string() },
+  returns: withRedirectReturnValidator,
+  handler: async (ctx, { orgSlug, key }) => {
+    const org = await ctx.db
+      .query('organizations')
+      .withIndex('by_slug', (q) => q.eq('slug', orgSlug))
+      .unique()
+    if (!org) return null
+
+    // An id is unambiguous, so try it first; anything else is a slug.
+    const asId = ctx.db.normalizeId('orgOpportunities', key)
+    const opp = asId
+      ? await ctx.db.get('orgOpportunities', asId)
+      : await ctx.db
+          .query('orgOpportunities')
+          .withIndex('by_org_and_slug', (q) =>
+            q.eq('orgId', org._id).eq('slug', key),
+          )
+          .first()
+
+    if (!opp || opp.orgId !== org._id) return null
+    return await resolveRedirect(ctx, opp)
+  },
+})
+
 // Get opportunity with redirect resolution (used by the public apply page)
 export const getWithRedirect = query({
   args: { id: v.id('orgOpportunities') },
@@ -149,42 +255,59 @@ export const getWithRedirect = query({
   handler: async (ctx, { id }) => {
     const opp = await ctx.db.get('orgOpportunities', id)
     if (!opp) return null
-
-    // Active opportunities are served directly
-    if (opp.status === 'active') {
-      return { kind: 'direct' as const, opportunity: opp }
-    }
-
-    // Closed/draft with redirect — resolve one level
-    if (opp.redirectOpportunityId) {
-      const target = await ctx.db.get(
-        'orgOpportunities',
-        opp.redirectOpportunityId,
-      )
-      if (target && target.status === 'active' && target.orgId === opp.orgId) {
-        return {
-          kind: 'redirect' as const,
-          originalTitle: opp.title,
-          originalDescription: opp.description,
-          opportunity: target,
-        }
-      }
-    }
-
-    // Fall through: admin-only access
-    const userId = await getUserId(ctx)
-    if (!userId) return null
-
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .filter((q) => q.eq(q.field('orgId'), opp.orgId))
-      .first()
-
-    if (!membership || membership.role !== 'admin') return null
-    return { kind: 'direct' as const, opportunity: opp }
+    return await resolveRedirect(ctx, opp)
   },
 })
+
+/**
+ * Shared body of the apply-page resolvers: serve an active opportunity, follow
+ * one level of EOI redirect from a closed one, and otherwise fall through to
+ * admin-only access so an admin can preview a draft.
+ */
+async function resolveRedirect(
+  ctx: QueryCtx,
+  opp: Doc<'orgOpportunities'>,
+): Promise<
+  | { kind: 'direct'; opportunity: Doc<'orgOpportunities'> }
+  | {
+      kind: 'redirect'
+      originalTitle: string
+      originalDescription: string
+      opportunity: Doc<'orgOpportunities'>
+    }
+  | null
+> {
+  if (opp.status === 'active') {
+    return { kind: 'direct' as const, opportunity: opp }
+  }
+
+  if (opp.redirectOpportunityId) {
+    const target = await ctx.db.get(
+      'orgOpportunities',
+      opp.redirectOpportunityId,
+    )
+    if (target && target.status === 'active' && target.orgId === opp.orgId) {
+      return {
+        kind: 'redirect' as const,
+        originalTitle: opp.title,
+        originalDescription: opp.description,
+        opportunity: target,
+      }
+    }
+  }
+
+  const userId = await getUserId(ctx)
+  if (!userId) return null
+
+  const membership = await ctx.db
+    .query('orgMemberships')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .filter((q) => q.eq(q.field('orgId'), opp.orgId))
+    .first()
+
+  if (!membership || membership.role !== 'admin') return null
+  return { kind: 'direct' as const, opportunity: opp }
+}
 
 // List active opportunities for an org
 export const listByOrg = query({
@@ -320,9 +443,11 @@ export const duplicate = mutation({
     await requireOrgAdmin(ctx, source.orgId)
 
     const now = Date.now()
+    const title = `${source.title} (copy)`
     return await ctx.db.insert('orgOpportunities', {
       orgId: source.orgId,
-      title: `${source.title} (copy)`,
+      title,
+      slug: await uniqueSlug(ctx, source.orgId, title),
       description: source.description,
       type: source.type,
       status: 'draft',
@@ -339,6 +464,28 @@ export const duplicate = mutation({
       createdAt: now,
       updatedAt: now,
     })
+  },
+})
+
+/**
+ * One-off: give every existing opportunity a slug derived from its title.
+ * Idempotent — opportunities that already have one are skipped, so the same
+ * slug is never reassigned and no live link changes meaning.
+ */
+export const backfillSlugs = internalMutation({
+  args: {},
+  returns: v.array(v.object({ title: v.string(), slug: v.string() })),
+  handler: async (ctx) => {
+    const all = await ctx.db.query('orgOpportunities').collect()
+    const assigned: Array<{ title: string; slug: string }> = []
+    for (const opp of all) {
+      if (typeof opp.slug === 'string' && opp.slug) continue
+      const slug = await uniqueSlug(ctx, opp.orgId, opp.title, opp._id)
+      if (!slug) continue
+      await ctx.db.patch('orgOpportunities', opp._id, { slug })
+      assigned.push({ title: opp.title, slug })
+    }
+    return assigned
   },
 })
 
@@ -363,6 +510,7 @@ export const create = mutation({
     externalUrl: v.optional(v.string()),
     featured: v.boolean(),
     formFields: v.optional(v.any()),
+    slug: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
       isEOI: v.optional(v.boolean()),
   },
@@ -389,6 +537,7 @@ export const create = mutation({
         formFields: sanitizeFormFieldKeys(args.formFields),
       }),
       ...(args.tags !== undefined && { tags: normalizeTags(args.tags) }),
+      slug: await uniqueSlug(ctx, args.orgId, args.title),
       createdAt: now,
       updatedAt: now,
     })
@@ -426,6 +575,7 @@ export const update = mutation({
     externalUrl: v.optional(v.string()),
     featured: v.optional(v.boolean()),
     formFields: v.optional(v.any()),
+    slug: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
       isEOI: v.optional(v.boolean()),
     redirectOpportunityId: v.optional(
@@ -479,6 +629,14 @@ export const update = mutation({
     if (updates.formFields !== undefined)
       patch.formFields = sanitizeFormFieldKeys(updates.formFields)
     if (updates.tags !== undefined) patch.tags = normalizeTags(updates.tags)
+    if (updates.slug !== undefined) {
+      // Blank clears the alias; the id keeps working either way. A collision
+      // gets suffixed rather than rejected — the admin is renaming a link, not
+      // filling in a form field they can be scolded about.
+      patch.slug = updates.slug.trim()
+        ? await uniqueSlug(ctx, opportunity.orgId, updates.slug, id)
+        : undefined
+    }
     if (redirect.set) patch.redirectOpportunityId = redirect.value
     if (source.set) patch.sourceOpportunityId = source.value
 

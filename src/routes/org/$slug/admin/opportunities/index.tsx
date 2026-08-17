@@ -408,7 +408,7 @@ function AdminOpportunitiesPage() {
                         size="sm"
                         title="Copy application link"
                         onClick={async () => {
-                          const url = `${window.location.origin}/org/${slug}/apply/${opp._id}`
+                          const url = `${window.location.origin}/org/${slug}/apply/${opp.slug ?? opp._id}`
                           try {
                             await navigator.clipboard.writeText(url)
                             toast.success('Application link copied')

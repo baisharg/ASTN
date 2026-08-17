@@ -291,7 +291,7 @@ function FeaturedOpportunity({
                 <Button size="sm" variant="outline" asChild>
                   <Link
                     to="/org/$slug/apply/$opportunityId"
-                    params={{ slug: orgSlug, opportunityId: featured._id }}
+                    params={{ slug: orgSlug, opportunityId: featured.slug ?? featured._id }}
                   >
                     Edit application
                   </Link>
@@ -301,7 +301,7 @@ function FeaturedOpportunity({
                 <Button size="sm" asChild>
                   <Link
                     to="/org/$slug/apply/$opportunityId"
-                    params={{ slug: orgSlug, opportunityId: featured._id }}
+                    params={{ slug: orgSlug, opportunityId: featured.slug ?? featured._id }}
                   >
                     Apply Now
                   </Link>

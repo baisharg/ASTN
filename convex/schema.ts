@@ -1380,6 +1380,11 @@ export default defineSchema({
     externalUrl: v.optional(v.string()),
     featured: v.boolean(),
     formFields: v.optional(v.any()), // Array<FormField> — see convex/lib/formFields.ts
+    // Readable alias for the apply URL, unique within the org. The raw _id
+    // never stops working: links already sent out by mail or WhatsApp — EOIs
+    // especially, since a closed one can be reopened — must not break. Every
+    // link ASTN *generates* uses the slug.
+    slug: v.optional(v.string()),
     tags: v.optional(v.array(v.string())), // freeform labels for grouping/filtering (e.g. "TAIS Course")
     // Explicit expression-of-interest marker (replaces title/tag inference).
     // EOIs default the on-apply confirmation email to OFF.
@@ -1398,7 +1403,8 @@ export default defineSchema({
   })
     .index('by_org_and_status', ['orgId', 'status'])
     .index('by_org_and_featured', ['orgId', 'featured'])
-    .index('by_org_and_featured_and_status', ['orgId', 'featured', 'status']),
+    .index('by_org_and_featured_and_status', ['orgId', 'featured', 'status'])
+    .index('by_org_and_slug', ['orgId', 'slug']),
 
   // Opportunity applications (submitted by org members or guests)
   opportunityApplications: defineTable({

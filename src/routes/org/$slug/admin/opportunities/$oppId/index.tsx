@@ -104,6 +104,7 @@ function OpportunityDetailsForm({
       ? new Date(opportunity.deadline).toISOString().split('T')[0]
       : '',
   )
+  const [slugValue, setSlugValue] = useState(opportunity.slug ?? '')
   const [externalUrl, setExternalUrl] = useState(opportunity.externalUrl ?? '')
   const [featured, setFeatured] = useState(opportunity.featured)
   const [redirectOpportunityId, setRedirectOpportunityId] = useState<
@@ -129,6 +130,7 @@ function OpportunityDetailsForm({
         type,
         status,
         tags,
+        slug: slugValue,
         deadline,
         externalUrl: externalUrl.trim() || undefined,
         featured,
@@ -237,6 +239,26 @@ function OpportunityDetailsForm({
             placeholder="https://..."
           />
         </div>
+      </div>
+
+      <div className="space-y-1">
+        <Label htmlFor="opp-slug">Application link</Label>
+        <div className="flex items-center gap-1 text-sm">
+          <span className="text-muted-foreground shrink-0 font-mono text-xs">
+            \u2026/apply/
+          </span>
+          <Input
+            id="opp-slug"
+            value={slugValue}
+            onChange={(e) => setSlugValue(e.target.value)}
+            placeholder={opportunity._id}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          A readable name for the link you share. Leave it blank to fall back to
+          the id. The old id link never stops working, so anything already sent
+          out stays valid.
+        </p>
       </div>
 
       <div className="space-y-1">
@@ -542,7 +564,7 @@ function OpportunityEditPage() {
                 <Button
                   variant="outline"
                   onClick={async () => {
-                    const url = `${window.location.origin}/org/${slug}/apply/${oppId}`
+                    const url = `${window.location.origin}/org/${slug}/apply/${opportunity.slug ?? oppId}`
                     try {
                       await navigator.clipboard.writeText(url)
                       toast.success('Application link copied')

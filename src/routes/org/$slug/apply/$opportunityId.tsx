@@ -20,7 +20,6 @@ import {
   sanitizeResponsesForForm,
   validateResponses,
 } from '../../../../../convex/lib/formFields'
-import type { Id } from '../../../../../convex/_generated/dataModel'
 import type { FormField } from '../../../../../convex/lib/formFields'
 import { AuthHeader } from '~/components/layout/auth-header'
 import { GradientBg } from '~/components/layout/GradientBg'
@@ -39,8 +38,11 @@ export const Route = createFileRoute('/org/$slug/apply/$opportunityId')({
         convexQuery(api.orgs.directory.getOrgBySlug, { slug: params.slug }),
       ),
       context.queryClient.ensureQueryData(
-        convexQuery(api.orgOpportunities.getWithRedirect, {
-          id: params.opportunityId as Id<'orgOpportunities'>,
+        // The URL segment is either the readable slug or the raw id; both
+        // resolve, so links sent out before slugs existed keep working.
+        convexQuery(api.orgOpportunities.getWithRedirectByKey, {
+          orgSlug: params.slug,
+          key: params.opportunityId,
         }),
       ),
     ])
@@ -91,8 +93,9 @@ function ApplyPage() {
     convexQuery(api.orgs.directory.getOrgBySlug, { slug }),
   )
   const { data: result } = useSuspenseQuery(
-    convexQuery(api.orgOpportunities.getWithRedirect, {
-      id: opportunityId as Id<'orgOpportunities'>,
+    convexQuery(api.orgOpportunities.getWithRedirectByKey, {
+      orgSlug: slug,
+      key: opportunityId,
     }),
   )
   const isRedirect = result?.kind === 'redirect'

@@ -21,6 +21,8 @@ export type BaishCourseOpportunitySource<OpportunityId = string> = {
   deadline?: number
   externalUrl?: string
   featured: boolean
+  /** Readable apply-URL alias, when the opportunity has one. */
+  slug?: string
 }
 
 export type BaishCourseOpportunityContract<OpportunityId = string> = {
@@ -139,7 +141,8 @@ export function toBaishCourseOpportunityContract<OpportunityId extends string>(
     title: opportunity.title,
     description: opportunity.description,
     state: inferBaishCourseState(opportunity.title, opportunity.description),
-    applyUrlPath: `${BAISH_APPLY_BASE_PATH}/${opportunity._id}`,
+    // Readable when the opportunity has a slug; the id still resolves either way.
+    applyUrlPath: `${BAISH_APPLY_BASE_PATH}/${opportunity.slug ?? opportunity._id}`,
     featured: opportunity.featured,
   }
 
