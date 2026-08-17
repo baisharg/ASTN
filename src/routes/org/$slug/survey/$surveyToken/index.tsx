@@ -160,9 +160,8 @@ function SurveyGenericLinkPage() {
             <div className="flex items-start gap-2 rounded-lg border border-input bg-muted/40 p-3 mt-4 text-sm">
               <EyeOff className="size-4 mt-0.5 shrink-0 text-muted-foreground" />
               <span className="text-muted-foreground">
-                This survey is anonymous. Your name and account are not
-                recorded, and there is nothing stored alongside your answers
-                that could identify you.
+                This survey is anonymous. Your name and account are not saved
+                with your answers.
               </span>
             </div>
           </div>

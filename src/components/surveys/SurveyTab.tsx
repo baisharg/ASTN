@@ -216,9 +216,10 @@ function CreateSurveyForm({
               <span className="text-sm font-medium">Anonymous survey</span>
             </label>
             <p className="text-xs text-muted-foreground">
-              {anonymous
-                ? 'Answers are stored with no name, no account and no link back to a person — not even in the database. One shared link for the whole group, no individual links. You will see how many answers came in, but never who has not answered yet, and you cannot chase the people still missing. This cannot be changed later.'
-                : 'Everyone gets their own link and you can see who has and has not answered. Turn this on for feedback about facilitators, where a name attached to the answer stops people from being honest.'}
+              One shared link instead of a personal link per applicant.
+              Responses are saved with no record of who sent them, so results
+              show how many arrived, not who answered. Cannot be changed after
+              the survey is created.
             </p>
           </div>
 
@@ -240,7 +241,9 @@ function CreateSurveyForm({
                 ))}
               </div>
               <p className="text-xs text-muted-foreground">
-                Only applicants with these statuses will receive survey links.
+                These applicants get a personal survey link. Nothing is sent
+                now — the link goes out when you email them with the survey
+                link enabled.
               </p>
             </div>
           )}
@@ -597,10 +600,9 @@ function SurveyManagement({
 
           {isAnonymous && (
             <p className="text-xs text-muted-foreground mb-4">
-              Answers to this survey are stored with nothing attached to them,
-              so the count above is answers received, not people — the shared
-              link does not stop someone submitting twice. There is no way to
-              see who is still missing.
+              Responses are saved with no record of who sent them. The count is
+              responses received, not people — the shared link can be used more
+              than once.
             </p>
           )}
 
