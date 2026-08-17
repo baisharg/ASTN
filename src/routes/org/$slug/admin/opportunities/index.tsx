@@ -126,6 +126,10 @@ function AdminOpportunitiesPage() {
     title: string
   } | null>(null)
   const [deleteBlocked, setDeleteBlocked] = useState<string | null>(null)
+  const [confirmDuplicate, setConfirmDuplicate] = useState<{
+    id: Id<'orgOpportunities'>
+    title: string
+  } | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
 
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -488,25 +492,12 @@ function AdminOpportunitiesPage() {
                         size="sm"
                         title="Duplicate — copies the setup into a new draft"
                         disabled={duplicatingId === opp._id}
-                        onClick={async () => {
-                          setDuplicatingId(opp._id)
-                          try {
-                            const newId = await duplicateOpp({ id: opp._id })
-                            toast.success('Duplicated as a draft')
-                            void navigate({
-                              to: '/org/$slug/admin/opportunities/$oppId',
-                              params: { slug, oppId: newId },
-                            })
-                          } catch (err) {
-                            toast.error(
-                              err instanceof Error
-                                ? err.message
-                                : 'Could not duplicate the opportunity',
-                            )
-                          } finally {
-                            setDuplicatingId(null)
-                          }
-                        }}
+                        onClick={() =>
+                          setConfirmDuplicate({
+                            id: opp._id,
+                            title: opp.title,
+                          })
+                        }
                       >
                         {duplicatingId === opp._id ? (
                           <Loader2 className="size-4 animate-spin" />
@@ -542,6 +533,74 @@ function AdminOpportunitiesPage() {
               })}
             </div>
           )}
+
+          {/* Duplicate confirmation. One misplaced click used to create a real
+              copy silently, so this says what carries over and what does not —
+              the two facts that decide whether you actually want it. */}
+          <AlertDialog
+            open={confirmDuplicate !== null}
+            onOpenChange={(open) => !open && setConfirmDuplicate(null)}
+          >
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  Duplicate &quot;{confirmDuplicate?.title}&quot;?
+                </AlertDialogTitle>
+                <AlertDialogDescription asChild>
+                  <div className="space-y-2">
+                    <p>
+                      The copy starts as a draft, so nothing goes live until you
+                      publish it.
+                    </p>
+                    <p>
+                      <strong className="text-foreground">Copied:</strong> the
+                      description, type, tags, the application form, the EOI
+                      flag and the linked email template set.
+                    </p>
+                    <p>
+                      <strong className="text-foreground">Not copied:</strong>{' '}
+                      applications, availability polls, feedback surveys, the
+                      deadline and the redirect target.
+                    </p>
+                  </div>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <Button
+                  disabled={duplicatingId !== null}
+                  onClick={async () => {
+                    if (!confirmDuplicate) return
+                    setDuplicatingId(confirmDuplicate.id)
+                    try {
+                      const newId = await duplicateOpp({
+                        id: confirmDuplicate.id,
+                      })
+                      toast.success('Duplicated as a draft')
+                      setConfirmDuplicate(null)
+                      void navigate({
+                        to: '/org/$slug/admin/opportunities/$oppId',
+                        params: { slug, oppId: newId },
+                      })
+                    } catch (err) {
+                      toast.error(
+                        err instanceof Error
+                          ? err.message
+                          : 'Could not duplicate the opportunity',
+                      )
+                    } finally {
+                      setDuplicatingId(null)
+                    }
+                  }}
+                >
+                  {duplicatingId !== null && (
+                    <Loader2 className="size-4 mr-2 animate-spin" />
+                  )}
+                  Duplicate
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
 
           {/* Delete confirmation. The backend refuses whenever anything is
               attached, so the dialog shows that reason instead of guessing. */}
