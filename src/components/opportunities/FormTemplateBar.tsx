@@ -31,12 +31,19 @@ export function FormTemplateBar({
   fields,
   onLoad,
   disabled,
+  saveOnly,
 }: {
   orgId: Id<'organizations'>
   kind: 'application' | 'feedback'
   fields: Array<FormField>
   onLoad: (fields: Array<FormField>) => void
   disabled?: boolean
+  /**
+   * Save half only. For forms whose questions can no longer be edited — a
+   * published survey — where capturing them into the library is still useful
+   * but loading one into them is meaningless.
+   */
+  saveOnly?: boolean
 }) {
   const templates = useQuery(api.formTemplates.listForOrg, { orgId, kind })
   const createTemplate = useMutation(api.formTemplates.create)
@@ -94,6 +101,7 @@ export function FormTemplateBar({
   return (
     <div className="rounded-md border border-input p-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
+        {!saveOnly && (
         <Select
           value={selectedId}
           onValueChange={handleLoad}
@@ -116,6 +124,7 @@ export function FormTemplateBar({
             ))}
           </SelectContent>
         </Select>
+        )}
 
         {!isNaming ? (
           <Button
@@ -160,7 +169,7 @@ export function FormTemplateBar({
           </div>
         )}
 
-        {selected && !isNaming && (
+        {selected && !isNaming && !saveOnly && (
           <Button
             type="button"
             variant="ghost"
@@ -175,9 +184,9 @@ export function FormTemplateBar({
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Templates are shared across the whole organisation. Loading one copies
-        its questions into the editor below — edit them freely, the template is
-        not changed.
+        {saveOnly
+          ? 'Saves these questions to the organisation-wide library so a future course can start from them. The survey itself is not changed.'
+          : 'Templates are shared across the whole organisation. Loading one copies its questions into the editor below — edit them freely, the template is not changed.'}
       </p>
     </div>
   )

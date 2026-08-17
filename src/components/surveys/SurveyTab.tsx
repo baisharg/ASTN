@@ -690,6 +690,50 @@ function SurveyManagement({
         </CardContent>
       </Card>
 
+      {/* Published or closed: questions are frozen (people have answered), but
+          reading them to save a template changes nothing about this survey —
+          and it is the only way to carry a past cohort's form into the next. */}
+      {!isDraft && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Survey Questions</CardTitle>
+              <SurveyPreview
+                title={survey.title}
+                description={survey.description}
+                orgName={orgName}
+                opportunityTitle={opportunityTitle}
+                formFields={survey.formFields as Array<FormField>}
+              />
+            </div>
+            <CardDescription>
+              Questions cannot be changed once the survey is published.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <FormTemplateBar
+              orgId={orgId}
+              kind="feedback"
+              fields={survey.formFields as Array<FormField>}
+              onLoad={() => undefined}
+              saveOnly
+            />
+            <div className="space-y-1">
+              {(survey.formFields as Array<FormField>).map((f, i) => (
+                <div key={f.key || i} className="text-sm flex gap-2">
+                  <span className="text-muted-foreground">{i + 1}.</span>
+                  <span>{f.label}</span>
+                  <span className="text-muted-foreground">({f.kind})</span>
+                  {f.required && (
+                    <span className="text-red-500 text-xs">required</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Editable questions (draft only) */}
       {isDraft && (
         <Card>
