@@ -406,6 +406,38 @@ export const resetDraftToTemplate = mutation({
   },
 })
 
+/**
+ * Give an applicant an address by hand.
+ *
+ * Some applicants have no email anywhere the resolver looks — not in
+ * guestEmail, not on a profile, not typed into the form — and the old
+ * behaviour was to skip them in silence. Gonzalo hit this on 15-jun with
+ * Alejandra Fauquié and Tomás Gimenez Molina, who simply never received their
+ * mail. Now the "Needs email" group in the Outbox is where you fix it: the
+ * address is stored on the application, so it also applies to every future
+ * email to that person, not just this draft.
+ */
+export const setRecipientEmail = mutation({
+  args: { draftId: v.id('emailOutbox'), email: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { draftId, email }) => {
+    const draft = await ctx.db.get('emailOutbox', draftId)
+    if (!draft) throw new ConvexError('Draft not found')
+    await requireAdmin(ctx, draft.orgId)
+
+    const trimmed = email.trim()
+    // Deliberately loose: catching a real typo is impossible, and a stricter
+    // rule mostly just rejects addresses that work.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed))
+      throw new ConvexError('That does not look like an email address')
+
+    await ctx.db.patch('opportunityApplications', draft.applicationId, {
+      contactEmailOverride: trimmed,
+    })
+    return null
+  },
+})
+
 export const deleteDraft = mutation({
   args: { draftId: v.id('emailOutbox') },
   returns: v.null(),

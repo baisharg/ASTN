@@ -10,9 +10,13 @@ import type { FormField } from './formFields'
  * so the recipient table and the actual broadcast send never disagree about
  * who gets an email.
  *
- * Email resolution order: guestEmail → profile.email → legacy users table →
- * email typed into the application form (`responses`). Returns `email: ''` when
- * no address can be resolved.
+ * Email resolution order: admin override → guestEmail → profile.email → legacy
+ * users table → email typed into the application form (`responses`). Returns
+ * `email: ''` when no address can be resolved.
+ *
+ * The override comes first on purpose. It only ever gets set when every
+ * automatic source failed and the applicant was silently skipped — which is
+ * how Alejandra Fauquié and Tomás Gimenez Molina never got their mail in June.
  */
 export async function resolveApplicantContact(
   ctx: QueryCtx,
@@ -20,11 +24,11 @@ export async function resolveApplicantContact(
   formFields: Array<FormField> | undefined,
   nameFallback: string,
 ): Promise<{ name: string; email: string }> {
-  let email = ''
+  let email = app.contactEmailOverride?.trim() ?? ''
   let name: string
 
   if (app.guestEmail) {
-    email = app.guestEmail
+    if (!email) email = app.guestEmail
     name = resolveApplicantDisplayName({
       responses: app.responses,
       fallback: nameFallback,
@@ -41,7 +45,8 @@ export async function resolveApplicantContact(
       fallback: nameFallback,
     })
 
-    email = profile?.email ?? (await getLegacyUserEmail(ctx, app.userId)) ?? ''
+    if (!email)
+      email = profile?.email ?? (await getLegacyUserEmail(ctx, app.userId)) ?? ''
   } else {
     name = resolveApplicantDisplayName({
       responses: app.responses,

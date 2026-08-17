@@ -1428,6 +1428,10 @@ export default defineSchema({
     reviewedAt: v.optional(v.number()),
     reviewedBy: v.optional(v.string()),
     reviewNotes: v.optional(v.string()),
+    // Address typed in by an admin when nothing else resolves. Takes priority
+    // over every automatic source: it exists precisely because the automatic
+    // ones came up empty and the applicant silently got no email.
+    contactEmailOverride: v.optional(v.string()),
   })
     .index('by_opportunity_and_status', ['opportunityId', 'status'])
     .index('by_user_and_opportunity', ['userId', 'opportunityId'])

@@ -394,19 +394,15 @@ function OutboxSection({
               Needs email address ({needsEmail.length})
             </CardTitle>
             <CardDescription>
-              These applicants have no resolvable email, so their drafts cannot
-              be selected or sent. Add an email to their application to unlock
-              them.
+              We could not find an email for these applicants anywhere — not on
+              their profile, not in the form they filled in — so their drafts
+              cannot be sent. Type an address below to unlock them. It is saved
+              on the application, so it applies to future emails too.
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-2">
             {needsEmail.map((d) => (
-              <p key={d._id} className="text-sm text-amber-900 py-0.5">
-                {d.recipientName} —{' '}
-                <span className="text-amber-700">
-                  {KIND_LABELS[d.kind] ?? d.kind}
-                </span>
-              </p>
+              <NeedsEmailRow key={d._id} draft={d as Draft} />
             ))}
           </CardContent>
         </Card>
@@ -947,6 +943,59 @@ function TemplateCard({
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+/** One applicant in the "Needs email address" group, with an inline fix. */
+function NeedsEmailRow({ draft }: { draft: Draft }) {
+  const setRecipientEmail = useMutation(api.emails.outbox.setRecipientEmail)
+  const [email, setEmail] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+
+  const handleSave = async () => {
+    if (isSaving || !email.trim()) return
+    setIsSaving(true)
+    try {
+      await setRecipientEmail({ draftId: draft._id, email })
+      toast.success(`Address saved for ${draft.recipientName}`)
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : 'Could not save the address',
+      )
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-sm text-amber-900 min-w-40 flex-1">
+        {draft.recipientName}{' '}
+        <span className="text-amber-700">
+          — {KIND_LABELS[draft.kind] ?? draft.kind}
+        </span>
+      </span>
+      <Input
+        type="email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        placeholder="name@example.com"
+        className="w-56 bg-white"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') void handleSave()
+        }}
+      />
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={handleSave}
+        disabled={isSaving || !email.trim()}
+      >
+        {isSaving && <Loader2 className="size-4 mr-1 animate-spin" />}
+        Save
+      </Button>
+    </div>
   )
 }
 
