@@ -2,7 +2,6 @@ import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { ConvexError } from 'convex/values'
 import {
   Archive,
   ArchiveRestore,
@@ -16,7 +15,6 @@ import {
   Search,
   Shield,
   Star,
-  Trash2,
   X,
 } from 'lucide-react'
 import { api } from '../../../../../../convex/_generated/api'
@@ -119,18 +117,10 @@ function AdminOpportunitiesPage() {
   const navigate = useNavigate()
   const duplicateOpp = useMutation(api.orgOpportunities.duplicate)
   const setArchived = useMutation(api.orgOpportunities.setArchived)
-  const removeOpp = useMutation(api.orgOpportunities.remove)
-  // Which row's delete dialog is open, and why the backend refused (if it did).
-  const [confirmDelete, setConfirmDelete] = useState<{
-    id: Id<'orgOpportunities'>
-    title: string
-  } | null>(null)
-  const [deleteBlocked, setDeleteBlocked] = useState<string | null>(null)
   const [confirmDuplicate, setConfirmDuplicate] = useState<{
     id: Id<'orgOpportunities'>
     title: string
   } | null>(null)
-  const [isDeleting, setIsDeleting] = useState(false)
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null)
@@ -514,19 +504,6 @@ function AdminOpportunitiesPage() {
                           <Pencil className="size-4" />
                         </Link>
                       </Button>
-
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-red-600"
-                        title="Delete — only possible while nothing is attached"
-                        onClick={() => {
-                          setDeleteBlocked(null)
-                          setConfirmDelete({ id: opp._id, title: opp.title })
-                        }}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
                     </div>
                   </Card>
                 )
@@ -598,67 +575,6 @@ function AdminOpportunitiesPage() {
                   )}
                   Duplicate
                 </Button>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-
-          {/* Delete confirmation. The backend refuses whenever anything is
-              attached, so the dialog shows that reason instead of guessing. */}
-          <AlertDialog
-            open={confirmDelete !== null}
-            onOpenChange={(open) => {
-              if (!open) {
-                setConfirmDelete(null)
-                setDeleteBlocked(null)
-              }
-            }}
-          >
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>
-                  {deleteBlocked
-                    ? 'This one cannot be deleted'
-                    : `Delete "${confirmDelete?.title}"?`}
-                </AlertDialogTitle>
-                <AlertDialogDescription>
-                  {deleteBlocked ??
-                    'Deleting only works while nothing is attached — no applications, surveys, extra polls or sent emails. If something is, you will be told and can archive it instead.'}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>
-                  {deleteBlocked ? 'Close' : 'Cancel'}
-                </AlertDialogCancel>
-                {!deleteBlocked && (
-                  <Button
-                    variant="destructive"
-                    disabled={isDeleting}
-                    onClick={async () => {
-                      if (!confirmDelete) return
-                      setIsDeleting(true)
-                      try {
-                        await removeOpp({ id: confirmDelete.id })
-                        toast.success('Opportunity deleted')
-                        setConfirmDelete(null)
-                      } catch (err) {
-                        // Keep the dialog open and show why.
-                        setDeleteBlocked(
-                          err instanceof ConvexError &&
-                            typeof err.data === 'string'
-                            ? err.data
-                            : 'Something went wrong deleting it.',
-                        )
-                      } finally {
-                        setIsDeleting(false)
-                      }
-                    }}
-                  >
-                    {isDeleting ? (
-                      <Loader2 className="size-4 mr-2 animate-spin" />
-                    ) : null}
-                    Delete
-                  </Button>
-                )}
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>

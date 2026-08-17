@@ -1,4 +1,4 @@
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { ConvexError } from 'convex/values'
 import {
@@ -722,6 +722,31 @@ function OpportunityEditPage() {
                     </div>
                   </CardContent>
                 </Card>
+
+                {/* Card 3: destructive actions, deliberately last. Deleting is
+                    rare and irreversible, so it does not belong next to the
+                    everyday controls in the list. */}
+                <Card className="border-red-200">
+                  <CardHeader>
+                    <CardTitle className="text-base text-red-700">
+                      Delete this opportunity
+                    </CardTitle>
+                    <CardDescription>
+                      Only possible while nothing is attached — no applications,
+                      feedback surveys, extra availability polls or sent emails.
+                      For a cohort that is simply over, archive it instead from
+                      the opportunities list: it leaves the list and nothing is
+                      lost.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <OpportunityDeleteButton
+                      opportunityId={opportunity._id}
+                      title={opportunity.title}
+                      slug={slug}
+                    />
+                  </CardContent>
+                </Card>
               </div>
             </TabsContent>
 
@@ -1190,5 +1215,88 @@ function AvailabilityTab({
         />
       )}
     </div>
+  )
+}
+
+/**
+ * Delete an opportunity, with the confirmation that has to happen before
+ * something irreversible.
+ *
+ * The backend refuses whenever anything is attached and says what, so on
+ * refusal the dialog stays open and shows that sentence rather than guessing or
+ * flashing a toast: the reason arrives where the decision is being made.
+ */
+function OpportunityDeleteButton({
+  opportunityId,
+  title,
+  slug,
+}: {
+  opportunityId: Id<'orgOpportunities'>
+  title: string
+  slug: string
+}) {
+  const navigate = useNavigate()
+  const removeOpp = useMutation(api.orgOpportunities.remove)
+
+  const [open, setOpen] = useState(false)
+  const [blocked, setBlocked] = useState<string | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  const handleDelete = async () => {
+    setIsDeleting(true)
+    try {
+      await removeOpp({ id: opportunityId })
+      toast.success('Opportunity deleted')
+      void navigate({ to: '/org/$slug/admin/opportunities', params: { slug } })
+    } catch (err) {
+      setBlocked(
+        err instanceof ConvexError && typeof err.data === 'string'
+          ? err.data
+          : 'Something went wrong deleting it.',
+      )
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
+  return (
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        if (!next) setBlocked(null)
+      }}
+    >
+      <AlertDialogTrigger asChild>
+        <Button variant="outline" className="text-red-600 border-red-300">
+          <Trash2 className="size-4 mr-2" />
+          Delete opportunity
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {blocked ? 'This one cannot be deleted' : `Delete "${title}"?`}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {blocked ??
+              'This cannot be undone. It only goes through if nothing is attached — otherwise you will be told what is, and can archive it instead.'}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{blocked ? 'Close' : 'Cancel'}</AlertDialogCancel>
+          {!blocked && (
+            <Button
+              variant="destructive"
+              disabled={isDeleting}
+              onClick={handleDelete}
+            >
+              {isDeleting && <Loader2 className="size-4 mr-2 animate-spin" />}
+              Delete
+            </Button>
+          )}
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
