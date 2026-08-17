@@ -473,23 +473,28 @@ function DraftEditDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-lg">
+      {/* Bounded height with a scrolling middle row: however long the email is,
+          the footer stays on screen. Without this the dialog just grew past the
+          viewport (it is centred with translate-y, so it overflows both ends). */}
+      <DialogContent className="max-w-lg max-h-[90dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
         <DialogHeader>
           <DialogTitle>Edit email for {draft.recipientName}</DialogTitle>
           <DialogDescription>
             Only this draft changes — the template stays as is.
           </DialogDescription>
         </DialogHeader>
-        <TemplateFields
-          subject={subject}
-          body={body}
-          pollLink={pollLink}
-          surveyLink={surveyLink}
-          onSubject={setSubject}
-          onBody={setBody}
-          onPollLink={setPollLink}
-          onSurveyLink={setSurveyLink}
-        />
+        <div className="min-h-0 overflow-y-auto px-1 -mx-1">
+          <TemplateFields
+            subject={subject}
+            body={body}
+            pollLink={pollLink}
+            surveyLink={surveyLink}
+            onSubject={setSubject}
+            onBody={setBody}
+            onPollLink={setPollLink}
+            onSurveyLink={setSurveyLink}
+          />
+        </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={isSaving}>
             Cancel
@@ -947,10 +952,15 @@ function TemplateFields({
         <Label className="text-xs">
           Body (markdown — use {'{{applicant_name}}'} for the name)
         </Label>
+        {/* The base Textarea sets `field-sizing-content`, which overrides `rows`
+            and lets the box grow with the body. Inside the draft dialog that
+            pushed Cancel/Save past the bottom of the screen with no way to
+            reach them. Cap the height and let the textarea scroll on its own. */}
         <Textarea
           value={body}
           onChange={(e) => onBody(e.target.value)}
           rows={5}
+          className="max-h-[45vh] overflow-y-auto"
         />
       </div>
       <div className="flex items-center gap-6">
