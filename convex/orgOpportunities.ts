@@ -14,7 +14,10 @@ import {
   type BaishCourseOpportunityContract,
 } from './lib/baishCourseOpportunities'
 import { getUserId, requireOrgAdmin } from './lib/auth'
-import { sanitizeFormFieldKeys } from './lib/formFields'
+import {
+  assertFormFieldsShape,
+  sanitizeFormFieldKeys,
+} from './lib/formFields'
 import type { FormField } from './lib/formFields'
 import { describeImpact, impactOnApplications } from './lib/formFieldChanges'
 import { createDefaultPollForOpportunity } from './availabilityPolls'
@@ -700,7 +703,7 @@ export async function createOpportunityFor(
     externalUrl: args.externalUrl,
     featured: args.featured,
     ...(args.formFields !== undefined && {
-      formFields: sanitizeFormFieldKeys(args.formFields),
+      formFields: sanitizeFormFieldKeys(assertFormFieldsShape(args.formFields)),
     }),
     ...(args.tags !== undefined && { tags: normalizeTags(args.tags) }),
     isEOI: args.isEOI,
@@ -831,7 +834,9 @@ export const update = mutation({
       updatedAt: Date.now(),
     }
     if (updates.formFields !== undefined) {
-      const sanitized = sanitizeFormFieldKeys(updates.formFields)
+      const sanitized = sanitizeFormFieldKeys(
+        assertFormFieldsShape(updates.formFields),
+      )
       // Same rule the MCP applies: growing a form is free, shrinking it strands
       // answers already submitted. Say how many rather than either refusing
       // structural edits outright or dropping the data in silence.

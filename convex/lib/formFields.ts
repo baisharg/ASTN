@@ -87,6 +87,48 @@ export function sanitizeFieldKey(key: string): string {
 }
 
 /**
+ * Accept form fields from outside and refuse anything that is not an array of
+ * field objects.
+ *
+ * Two opportunities in prod have `formFields` stored as a *string* — the JSON
+ * text of the array, pasted straight into the Convex dashboard on 16-aug. The
+ * apply page cannot render that, and nothing caught it, because `v.any()` takes
+ * a string happily and `sanitizeFormFieldKeys` passes non-arrays through
+ * untouched.
+ *
+ * So every write path calls this first. The message names the likely mistake,
+ * because "invalid formFields" tells an agent nothing it can act on.
+ */
+export function assertFormFieldsShape(fields: unknown): Array<FormField> {
+  if (typeof fields === 'string') {
+    throw new Error(
+      'formFields must be an array of field objects, not a JSON string. ' +
+        'Parse it first and pass the array.',
+    )
+  }
+  if (!Array.isArray(fields)) {
+    throw new Error(
+      `formFields must be an array of field objects (got ${typeof fields}).`,
+    )
+  }
+  const bad = fields.findIndex(
+    (f) =>
+      !f ||
+      typeof f !== 'object' ||
+      Array.isArray(f) ||
+      typeof (f as FormField).kind !== 'string' ||
+      typeof (f as FormField).label !== 'string',
+  )
+  if (bad !== -1) {
+    throw new Error(
+      `formFields[${bad}] is not a field object — each one needs at least ` +
+        `\`kind\` and \`label\`.`,
+    )
+  }
+  return fields as Array<FormField>
+}
+
+/**
  * Return `fields` with every `key` coerced to a valid Convex field name,
  * deduping any collisions introduced by sanitization. Already-valid keys are
  * left untouched (so this is safe to run on existing data). Non-array input is

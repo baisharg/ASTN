@@ -9,6 +9,7 @@ import type { MutationCtx } from './_generated/server'
 import { getUserId, requireOrgAdmin } from './lib/auth'
 import { resolveApplicantDisplayNameFromApplication } from './lib/applicantName'
 import {
+  assertFormFieldsShape,
   sanitizeFormFieldKeys,
   sanitizeResponseKeys,
   validateResponses,
@@ -90,7 +91,7 @@ export async function createSurveyFor(
     createdBy: args.createdBy,
     title: args.title,
     description: args.description,
-    formFields: sanitizeFormFieldKeys(args.formFields),
+    formFields: sanitizeFormFieldKeys(assertFormFieldsShape(args.formFields)),
     accessToken: crypto.randomUUID(),
     status: 'draft',
     applicantStatuses: statusFilter.length > 0 ? statusFilter : undefined,
@@ -185,7 +186,9 @@ export const updateSurvey = mutation({
     if (updates.description !== undefined)
       patch.description = updates.description
     if (updates.formFields !== undefined)
-      patch.formFields = sanitizeFormFieldKeys(updates.formFields)
+      patch.formFields = sanitizeFormFieldKeys(
+        assertFormFieldsShape(updates.formFields),
+      )
     if (updates.status !== undefined) patch.status = updates.status
 
     await ctx.db.patch('feedbackSurveys', surveyId, patch)

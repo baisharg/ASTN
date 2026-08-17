@@ -4,7 +4,10 @@ import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc, Id } from '../_generated/dataModel'
 import { requireOrgAdminFor } from '../lib/auth'
 import { isOutboxActive, syncOutboxOnStatusChange } from '../emails/outbox'
-import { sanitizeFormFieldKeys } from '../lib/formFields'
+import {
+  assertFormFieldsShape,
+  sanitizeFormFieldKeys,
+} from '../lib/formFields'
 import type { FormField } from '../lib/formFields'
 import { describeImpact, impactOnApplications } from '../lib/formFieldChanges'
 import { createOpportunityFor, opportunityAttachments } from '../orgOpportunities'
@@ -649,7 +652,9 @@ export const update = internalMutation({
     // strands answers people already submitted. Refuse once, with the count and
     // the question names, and let the caller repeat the call meaning it.
     if (args.resource === 'opportunities' && 'formFields' in patch) {
-      const sanitized = sanitizeFormFieldKeys(patch.formFields)
+      const sanitized = sanitizeFormFieldKeys(
+        assertFormFieldsShape(patch.formFields),
+      )
       const impact = await impactOnApplications(
         ctx,
         id as Id<'orgOpportunities'>,

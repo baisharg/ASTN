@@ -1,7 +1,10 @@
 import { ConvexError, v } from 'convex/values'
 import { mutation, query } from './_generated/server'
 import { requireOrgAdmin } from './lib/auth'
-import { sanitizeFormFieldKeys } from './lib/formFields'
+import {
+  assertFormFieldsShape,
+  sanitizeFormFieldKeys,
+} from './lib/formFields'
 
 /**
  * Org-level library of reusable question sets, for both application forms and
@@ -81,7 +84,7 @@ export const create = mutation({
       orgId,
       name: trimmed,
       kind,
-      formFields: sanitizeFormFieldKeys(formFields),
+      formFields: sanitizeFormFieldKeys(assertFormFieldsShape(formFields)),
       createdBy: userId,
       createdAt: now,
       updatedAt: now,
@@ -112,7 +115,7 @@ export const update = mutation({
     if (formFields !== undefined) {
       if (!Array.isArray(formFields) || formFields.length === 0)
         throw new ConvexError('There are no questions to save')
-      patch.formFields = sanitizeFormFieldKeys(formFields)
+      patch.formFields = sanitizeFormFieldKeys(assertFormFieldsShape(formFields))
     }
 
     await ctx.db.patch('formTemplates', templateId, patch)
