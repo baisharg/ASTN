@@ -28,6 +28,7 @@ import { AvailabilityHeatmap } from '~/components/availability/AvailabilityHeatm
 import { PollCreationForm } from '~/components/availability/PollCreationForm'
 import { ScheduleAnalysis } from '~/components/availability/ScheduleAnalysis'
 import { FormFieldsEditor } from '~/components/opportunities/FormFieldsEditor'
+import { FormTemplateBar } from '~/components/opportunities/FormTemplateBar'
 import { TagsInput } from '~/components/opportunities/TagsInput'
 import { ApplicationsTable } from '~/components/opportunities/ApplicationsTable'
 import { SurveyTab } from '~/components/surveys/SurveyTab'
@@ -631,6 +632,13 @@ function OpportunityEditPage() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    <FormTemplateBar
+                      orgId={opportunity.orgId}
+                      kind="application"
+                      fields={formFields}
+                      onLoad={setFormFields}
+                    />
+
                     <FormFieldsEditor
                       fields={formFields}
                       onChange={setFormFields}
@@ -677,6 +685,7 @@ function OpportunityEditPage() {
             <TabsContent value="feedback" className="mt-6">
               <SurveyTab
                 opportunityId={opportunity._id}
+                orgId={opportunity.orgId}
                 slug={slug}
                 orgName={org?.name}
                 opportunityTitle={opportunity.title}

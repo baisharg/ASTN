@@ -1833,6 +1833,21 @@ export default defineSchema({
     .index('by_survey_and_respondent', ['surveyId', 'respondentId'])
     .index('by_userId', ['userId']),
 
+  // Reusable question sets, saved at org level. Modelled on emailTemplateSets:
+  // a library you load from and save to, rather than copying an old course's
+  // form. Loading a template copies its questions — the two are not linked
+  // afterwards, so editing one never rewrites the other.
+  formTemplates: defineTable({
+    orgId: v.id('organizations'),
+    name: v.string(),
+    // Which editor offers it: application forms or feedback surveys.
+    kind: v.union(v.literal('application'), v.literal('feedback')),
+    formFields: v.any(), // Array<FormField> — see convex/lib/formFields.ts
+    createdBy: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_org_and_kind', ['orgId', 'kind']),
+
   // Answers to an anonymous survey. Deliberately has no respondentId, name or
   // userId column: the anonymity is a property of the schema, not of what the
   // admin UI chooses to display, so there is nothing to correlate even with

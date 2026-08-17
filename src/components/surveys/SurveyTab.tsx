@@ -20,6 +20,7 @@ import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
 import type { FormField } from '../../../convex/lib/formFields'
 import { FormFieldsEditor } from '~/components/opportunities/FormFieldsEditor'
+import { FormTemplateBar } from '~/components/opportunities/FormTemplateBar'
 import { SurveyPreview } from '~/components/surveys/SurveyPreview'
 import { SurveyResultsTable } from '~/components/surveys/SurveyResultsTable'
 import { AnonymousSurveyResults } from '~/components/surveys/AnonymousSurveyResults'
@@ -59,6 +60,7 @@ const ALL_STATUSES = [
 
 interface SurveyTabProps {
   opportunityId: Id<'orgOpportunities'>
+  orgId: Id<'organizations'>
   slug: string
   /** Passed to the respondent-faithful preview header. */
   orgName?: string
@@ -67,6 +69,7 @@ interface SurveyTabProps {
 
 export function SurveyTab({
   opportunityId,
+  orgId,
   slug,
   orgName,
   opportunityTitle,
@@ -87,6 +90,7 @@ export function SurveyTab({
     return (
       <CreateSurveyForm
         opportunityId={opportunityId}
+        orgId={orgId}
         orgName={orgName}
         opportunityTitle={opportunityTitle}
       />
@@ -96,6 +100,7 @@ export function SurveyTab({
   return (
     <SurveyManagement
       surveyId={survey._id}
+      orgId={orgId}
       slug={slug}
       accessToken={survey.accessToken}
       orgName={orgName}
@@ -106,10 +111,12 @@ export function SurveyTab({
 
 function CreateSurveyForm({
   opportunityId,
+  orgId,
   orgName,
   opportunityTitle,
 }: {
   opportunityId: Id<'orgOpportunities'>
+  orgId: Id<'organizations'>
   orgName?: string
   opportunityTitle?: string
 }) {
@@ -248,7 +255,13 @@ function CreateSurveyForm({
             and more.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          <FormTemplateBar
+            orgId={orgId}
+            kind="feedback"
+            fields={formFields}
+            onLoad={setFormFields}
+          />
           <FormFieldsEditor fields={formFields} onChange={setFormFields} />
         </CardContent>
       </Card>
@@ -286,12 +299,14 @@ function CreateSurveyForm({
 
 function SurveyManagement({
   surveyId,
+  orgId,
   slug,
   accessToken,
   orgName,
   opportunityTitle,
 }: {
   surveyId: Id<'feedbackSurveys'>
+  orgId: Id<'organizations'>
   slug: string
   accessToken: string
   orgName?: string
@@ -710,6 +725,12 @@ function SurveyManagement({
           <CardContent>
             {isEditingFields ? (
               <div className="space-y-4">
+                <FormTemplateBar
+                  orgId={orgId}
+                  kind="feedback"
+                  fields={editFormFields}
+                  onLoad={setEditFormFields}
+                />
                 <FormFieldsEditor
                   fields={editFormFields}
                   onChange={setEditFormFields}
