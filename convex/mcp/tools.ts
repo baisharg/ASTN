@@ -52,7 +52,14 @@ const PLATFORM_READ = [
   'outbox',
   'email_log',
 ]
-const PLATFORM_CREATE = ['programs', 'program_modules', 'program_sessions']
+const PLATFORM_CREATE = [
+  'programs',
+  'program_modules',
+  'program_sessions',
+  'opportunities',
+  'surveys',
+  'polls',
+]
 const PLATFORM_UPDATE = Object.keys(UPDATE_FIELDS) // programs, modules, sessions, opportunities, surveys, polls, spaces
 
 const READ_RESOURCES = [...Object.keys(CRM_RESOURCES), ...PLATFORM_READ]
@@ -155,6 +162,9 @@ export const TOOL_DEFS = [
     name: 'astn_create',
     description:
       `Create a record. Creatable resources: ${CREATE_RESOURCES.join(', ')}. ` +
+      'Opportunities, feedback surveys and availability polls are created through the same code ' +
+      'the web app uses, so tokens, respondent lists and the default poll all come out right. ' +
+      'Call astn_resources with a resource for its required fields. ' +
       '`fields` holds canonical keys (call astn_resources to see them; unknown keys are rejected). ' +
       'For program_modules and program_sessions, also pass `programId`.',
     inputSchema: {
@@ -289,6 +299,21 @@ const PLATFORM_FIELD_HINTS: Record<string, string> = {
     'create requires: programId, title, weekNumber. optional: description, status (locked|available|completed).',
   program_sessions:
     'create requires: programId, dayNumber, title, date. optional: morningStartTime, afternoonStartTime, lumaUrl.',
+  opportunities:
+    'create requires: title, description, type (course|fellowship|job|other). optional: status ' +
+    '(defaults to draft), deadline (ms), externalUrl, featured, tags, isEOI, formFields (the ' +
+    'application form). A readable slug and the default availability poll are created for you.',
+  surveys:
+    'create requires: opportunityId, title, formFields (the questions). optional: description, ' +
+    'applicantStatuses (which applicants get a personal link, e.g. ["accepted"]), anonymous. ' +
+    'Always created as a draft — publish it by setting status to open. Returns the accessToken, ' +
+    'which is the shareable link and, for an anonymous survey, the only way in. One active ' +
+    'survey per opportunity.',
+  polls:
+    'create requires: opportunityId. everything else defaults to how BAISH runs them: Mon–Sat ' +
+    '09:00–21:00 in 30-minute slots, Buenos Aires. optional: title, timezone, days (0=Mon…6=Sun), ' +
+    'startMinutes, endMinutes, slotDurationMinutes (15|30|60). Opens immediately and seeds a ' +
+    'respondent per applicant. One active poll per opportunity.',
 }
 
 const PLATFORM_UPDATE_HINTS: Record<string, string> = {
@@ -324,7 +349,7 @@ function describeAllResources() {
   ]
   return {
     resources: all.map(cap),
-    note: 'Pass a `resource` to astn_resources for its field detail. Reads cover the whole org; writes are limited to safe changes. Setting an application status records the decision inside ASTN without emailing the applicant. Sending emails/broadcasts, membership changes, and publishing/finalizing are intentionally not exposed yet.',
+    note: 'Pass a `resource` to astn_resources for its field detail. Reads cover the whole org. Writes are allowed where a mistake can be undone: you can build a cohort end to end — create the opportunity with its application form, create and open its feedback survey and availability poll, record admission decisions — because all of that is reversible. What stays out is what is not: sending emails or broadcasts (a status change queues a draft for a human to send, and never sends), membership changes, finalizing a poll, and deleting anything holding other people\'s answers.',
   }
 }
 
@@ -415,6 +440,27 @@ export async function callTool(
           orgSlug: org,
           programId: args.programId as string,
           fields: args.fields ?? {},
+        })
+      }
+      if (resource === 'opportunities') {
+        return await ctx.runMutation(internal.mcp.platform.createOpportunity, {
+          userId,
+          orgSlug: org,
+          ...(args.fields as any),
+        })
+      }
+      if (resource === 'surveys') {
+        return await ctx.runMutation(internal.mcp.platform.createSurvey, {
+          userId,
+          orgSlug: org,
+          ...(args.fields as any),
+        })
+      }
+      if (resource === 'polls') {
+        return await ctx.runMutation(internal.mcp.platform.createPoll, {
+          userId,
+          orgSlug: org,
+          ...(args.fields as any),
         })
       }
       if (resource === 'program_sessions') {

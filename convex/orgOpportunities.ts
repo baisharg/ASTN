@@ -491,6 +491,62 @@ export const backfillSlugs = internalMutation({
   },
 })
 
+/**
+ * Create an opportunity with the invariants the web form enforces: sanitised
+ * question keys, normalised tags, a unique readable slug, and the default
+ * availability poll every opportunity ships with.
+ *
+ * Extracted so the MCP creates opportunities through exactly this code — a
+ * generic insert would leave one with no slug and no poll.
+ */
+export async function createOpportunityFor(
+  ctx: MutationCtx,
+  args: {
+    orgId: Id<'organizations'>
+    createdBy: string
+    title: string
+    description: string
+    type: 'course' | 'fellowship' | 'job' | 'other'
+    status: 'active' | 'closed' | 'draft'
+    deadline?: number
+    externalUrl?: string
+    featured: boolean
+    formFields?: unknown
+    tags?: Array<string>
+    isEOI?: boolean
+  },
+): Promise<Id<'orgOpportunities'>> {
+  const now = Date.now()
+  const opportunityId = await ctx.db.insert('orgOpportunities', {
+    orgId: args.orgId,
+    title: args.title,
+    description: args.description,
+    type: args.type,
+    status: args.status,
+    deadline: args.deadline,
+    externalUrl: args.externalUrl,
+    featured: args.featured,
+    ...(args.formFields !== undefined && {
+      formFields: sanitizeFormFieldKeys(args.formFields),
+    }),
+    ...(args.tags !== undefined && { tags: normalizeTags(args.tags) }),
+    isEOI: args.isEOI,
+    slug: await uniqueSlug(ctx, args.orgId, args.title),
+    createdAt: now,
+    updatedAt: now,
+  })
+
+  // Auto-provision a default availability poll so every opportunity ships
+  // with one (admins can reconfigure by deleting + recreating).
+  await createDefaultPollForOpportunity(ctx, {
+    opportunityId,
+    orgId: args.orgId,
+    createdBy: args.createdBy,
+  })
+
+  return opportunityId
+}
+
 // Create an opportunity (org admin only)
 export const create = mutation({
   args: {
@@ -512,49 +568,12 @@ export const create = mutation({
     externalUrl: v.optional(v.string()),
     featured: v.boolean(),
     formFields: v.optional(v.any()),
-    // Required only when the new form drops questions people already answered.
-    confirmDiscardsAnswers: v.optional(v.boolean()),
-    slug: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
-      isEOI: v.optional(v.boolean()),
   },
   returns: v.id('orgOpportunities'),
   handler: async (ctx, args) => {
-    const userId = await getUserId(ctx)
-    if (!userId) throw new ConvexError('Not authenticated')
-
-    // Verify admin role
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .filter((q) => q.eq(q.field('orgId'), args.orgId))
-      .first()
-
-    if (!membership || membership.role !== 'admin') {
-      throw new ConvexError('Admin access required')
-    }
-
-    const now = Date.now()
-    const opportunityId = await ctx.db.insert('orgOpportunities', {
-      ...args,
-      ...(args.formFields !== undefined && {
-        formFields: sanitizeFormFieldKeys(args.formFields),
-      }),
-      ...(args.tags !== undefined && { tags: normalizeTags(args.tags) }),
-      slug: await uniqueSlug(ctx, args.orgId, args.title),
-      createdAt: now,
-      updatedAt: now,
-    })
-
-    // Auto-provision a default availability poll so every opportunity ships
-    // with one (admins can reconfigure by deleting + recreating).
-    await createDefaultPollForOpportunity(ctx, {
-      opportunityId,
-      orgId: args.orgId,
-      createdBy: userId,
-    })
-
-    return opportunityId
+    const userId = await requireOrgAdmin(ctx, args.orgId)
+    return await createOpportunityFor(ctx, { ...args, createdBy: userId })
   },
 })
 

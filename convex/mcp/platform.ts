@@ -7,6 +7,9 @@ import { isOutboxActive, syncOutboxOnStatusChange } from '../emails/outbox'
 import { sanitizeFormFieldKeys } from '../lib/formFields'
 import type { FormField } from '../lib/formFields'
 import { describeImpact, impactOnApplications } from '../lib/formFieldChanges'
+import { createOpportunityFor } from '../orgOpportunities'
+import { createSurveyFor } from '../feedbackSurveys'
+import { createPollFor } from '../availabilityPolls'
 
 // Platform data layer for the MCP endpoint (convex/mcp/server.ts). Like
 // convex/mcp/data.ts (the CRM layer), these are internal functions: the HTTP
@@ -128,8 +131,11 @@ export const UPDATE_FIELDS: Record<string, Set<string>> = {
     // the formFields block in the handler — not on the field name.
     'formFields',
   ]),
-  surveys: new Set(['title', 'description']),
-  polls: new Set(['title']),
+  // Opening and closing is reversible in seconds, so it is not the kind of
+  // thing worth locking behind the web. Finalizing a poll is excluded: it needs
+  // a chosen slot to mean anything (see the handler).
+  surveys: new Set(['title', 'description', 'status']),
+  polls: new Set(['title', 'status']),
   // Application decision + review notes. Non-notifying (see `update` handler).
   applications: new Set(['status', 'reviewNotes']),
   spaces: new Set([
@@ -613,6 +619,21 @@ export const update = internalMutation({
       patch.reviewedBy = args.userId
     }
 
+    // Surveys/polls: publishing and closing are fine, but 'finalized' on a poll
+    // means "this is the chosen slot" and needs finalizedSlot set — a status-only
+    // patch would leave the poll claiming a decision it does not carry.
+    if (args.resource === 'surveys' && 'status' in patch) {
+      if (!['draft', 'open', 'closed'].includes(patch.status as string))
+        throw new Error('Survey status must be draft, open or closed')
+    }
+    if (args.resource === 'polls' && 'status' in patch) {
+      if (!['open', 'closed'].includes(patch.status as string))
+        throw new Error(
+          'Poll status must be open or closed. Finalizing a poll picks the ' +
+            'chosen slot and is done in the web app.',
+        )
+    }
+
     // Opportunities: an application form is free to grow, but shrinking it
     // strands answers people already submitted. Refuse once, with the count and
     // the question names, and let the caller repeat the call meaning it.
@@ -882,6 +903,143 @@ export const orgStats = internalQuery({
       },
       crm,
     }
+  },
+})
+
+// ── Creates for the three things a cohort is made of ───────────────────────
+//
+// Each one delegates to the same helper the web form uses, so the invariants
+// (tokens, respondent rows, default poll, slug, sanitised keys) hold no matter
+// which surface asked. Everything is created where a mistake is cheap: an
+// opportunity in whatever status you ask for, a survey as a draft.
+
+export const createOpportunity = internalMutation({
+  args: {
+    userId: v.string(),
+    orgSlug: v.string(),
+    title: v.string(),
+    description: v.string(),
+    type: v.union(
+      v.literal('course'),
+      v.literal('fellowship'),
+      v.literal('job'),
+      v.literal('other'),
+    ),
+    status: v.optional(
+      v.union(v.literal('active'), v.literal('closed'), v.literal('draft')),
+    ),
+    deadline: v.optional(v.number()),
+    externalUrl: v.optional(v.string()),
+    featured: v.optional(v.boolean()),
+    formFields: v.optional(v.any()),
+    tags: v.optional(v.array(v.string())),
+    isEOI: v.optional(v.boolean()),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const org = await resolveOrgForAdmin(ctx, args.userId, args.orgSlug)
+    const id = await createOpportunityFor(ctx, {
+      orgId: org._id,
+      createdBy: args.userId,
+      title: args.title,
+      description: args.description,
+      type: args.type,
+      // Default to draft: nobody has seen it, so a mistake costs nothing.
+      status: args.status ?? 'draft',
+      deadline: args.deadline,
+      externalUrl: args.externalUrl,
+      featured: args.featured ?? false,
+      formFields: args.formFields,
+      tags: args.tags,
+      isEOI: args.isEOI,
+    })
+    const created = await ctx.db.get(id)
+    return { id, slug: created?.slug ?? null, status: created?.status }
+  },
+})
+
+export const createSurvey = internalMutation({
+  args: {
+    userId: v.string(),
+    orgSlug: v.string(),
+    opportunityId: v.string(),
+    title: v.string(),
+    description: v.optional(v.string()),
+    formFields: v.any(),
+    applicantStatuses: v.optional(v.array(v.string())),
+    anonymous: v.optional(v.boolean()),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const org = await resolveOrgForAdmin(ctx, args.userId, args.orgSlug)
+    const opportunityId = ctx.db.normalizeId(
+      'orgOpportunities',
+      args.opportunityId,
+    )
+    if (!opportunityId) throw new Error('opportunityId not found')
+    const opportunity = await ctx.db.get(opportunityId)
+    if (!opportunity || opportunity.orgId !== org._id)
+      throw new Error('opportunityId not found')
+
+    const id = await createSurveyFor(ctx, {
+      opportunityId,
+      orgId: org._id,
+      createdBy: args.userId,
+      title: args.title,
+      description: args.description,
+      formFields: args.formFields,
+      applicantStatuses: args.applicantStatuses,
+      anonymous: args.anonymous,
+    })
+    const created = await ctx.db.get(id)
+    return {
+      id,
+      status: created?.status,
+      anonymous: created?.anonymous === true,
+      // The shareable link. For an anonymous survey this is the only way in.
+      accessToken: created?.accessToken ?? null,
+    }
+  },
+})
+
+export const createPoll = internalMutation({
+  args: {
+    userId: v.string(),
+    orgSlug: v.string(),
+    opportunityId: v.string(),
+    title: v.optional(v.string()),
+    timezone: v.optional(v.string()),
+    days: v.optional(v.array(v.number())),
+    startMinutes: v.optional(v.number()),
+    endMinutes: v.optional(v.number()),
+    slotDurationMinutes: v.optional(v.number()),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const org = await resolveOrgForAdmin(ctx, args.userId, args.orgSlug)
+    const opportunityId = ctx.db.normalizeId(
+      'orgOpportunities',
+      args.opportunityId,
+    )
+    if (!opportunityId) throw new Error('opportunityId not found')
+    const opportunity = await ctx.db.get(opportunityId)
+    if (!opportunity || opportunity.orgId !== org._id)
+      throw new Error('opportunityId not found')
+
+    const id = await createPollFor(ctx, {
+      opportunityId,
+      orgId: org._id,
+      createdBy: args.userId,
+      title: args.title ?? 'Availability',
+      timezone: args.timezone ?? 'America/Argentina/Buenos_Aires',
+      // Mon–Sat, 09:00–21:00 in half hours: the shape BAISH polls actually use.
+      days: args.days ?? [0, 1, 2, 3, 4, 5],
+      startMinutes: args.startMinutes ?? 540,
+      endMinutes: args.endMinutes ?? 1260,
+      slotDurationMinutes: args.slotDurationMinutes ?? 30,
+    })
+    const created = await ctx.db.get(id)
+    return { id, status: created?.status, accessToken: created?.accessToken }
   },
 })
 

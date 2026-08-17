@@ -126,6 +126,85 @@ export async function createDefaultPollForOpportunity(
 
 // ─── Admin mutations ───
 
+/**
+ * Create an availability poll, enforcing the invariants the web form does:
+ * a valid day set and time range, a supported slot size, one active poll per
+ * opportunity, a fresh access token, and a respondent row per applicant.
+ *
+ * Extracted so the MCP creates polls through exactly this code rather than a
+ * generic insert — a poll missing its token or its respondents is not a poll.
+ */
+export async function createPollFor(
+  ctx: MutationCtx,
+  args: {
+    opportunityId: Id<'orgOpportunities'>
+    orgId: Id<'organizations'>
+    createdBy: string
+    title: string
+    timezone: string
+    days: Array<number>
+    startMinutes: number
+    endMinutes: number
+    slotDurationMinutes: number
+  },
+): Promise<Id<'availabilityPolls'>> {
+  const days = normalizeDays(args.days)
+  if (days.length === 0)
+    throw new ConvexError('Select at least one day of the week')
+  if (args.endMinutes <= args.startMinutes)
+    throw new ConvexError('End time must be after start time')
+  if (![15, 30, 60].includes(args.slotDurationMinutes))
+    throw new ConvexError('Slot duration must be 15, 30, or 60 minutes')
+
+  const existing = await ctx.db
+    .query('availabilityPolls')
+    .withIndex('by_opportunity', (q) =>
+      q.eq('opportunityId', args.opportunityId),
+    )
+    .collect()
+  if (existing.some((p) => p.status === 'open' || p.status === 'closed'))
+    throw new ConvexError('An active poll already exists for this opportunity')
+
+  const now = Date.now()
+  const pollId = await ctx.db.insert('availabilityPolls', {
+    opportunityId: args.opportunityId,
+    orgId: args.orgId,
+    createdBy: args.createdBy,
+    title: args.title,
+    timezone: args.timezone,
+    days,
+    startMinutes: args.startMinutes,
+    endMinutes: args.endMinutes,
+    slotDurationMinutes: args.slotDurationMinutes,
+    accessToken: crypto.randomUUID(),
+    status: 'open',
+    createdAt: now,
+    updatedAt: now,
+  })
+
+  const applications = await ctx.db
+    .query('opportunityApplications')
+    .withIndex('by_opportunity_and_status', (q) =>
+      q.eq('opportunityId', args.opportunityId),
+    )
+    .collect()
+  for (const app of applications) {
+    const name = await resolveApplicantDisplayNameFromApplication(
+      ctx.db,
+      app,
+      'Applicant',
+    )
+    await ctx.db.insert('pollRespondents', {
+      pollId,
+      applicationId: app._id,
+      respondentToken: crypto.randomUUID(),
+      respondentName: name,
+    })
+  }
+
+  return pollId
+}
+
 export const createPoll = mutation({
   args: {
     opportunityId: v.id('orgOpportunities'),
@@ -144,76 +223,20 @@ export const createPoll = mutation({
     const opportunity = await ctx.db.get('orgOpportunities', args.opportunityId)
     if (!opportunity) throw new ConvexError('Opportunity not found')
 
-    // Verify admin role
     const membership = await ctx.db
       .query('orgMemberships')
       .withIndex('by_org_role', (q) =>
         q.eq('orgId', opportunity.orgId).eq('role', 'admin'),
       )
       .collect()
-    const isAdmin = membership.some((m) => m.userId === userId)
-    if (!isAdmin) throw new ConvexError('Admin access required')
+    if (!membership.some((m) => m.userId === userId))
+      throw new ConvexError('Admin access required')
 
-    // Validate config
-    const days = normalizeDays(args.days)
-    if (days.length === 0)
-      throw new ConvexError('Select at least one day of the week')
-    if (args.endMinutes <= args.startMinutes)
-      throw new ConvexError('End time must be after start time')
-    if (![15, 30, 60].includes(args.slotDurationMinutes))
-      throw new ConvexError('Slot duration must be 15, 30, or 60 minutes')
-
-    // One active poll per opportunity
-    const existing = await ctx.db
-      .query('availabilityPolls')
-      .withIndex('by_opportunity', (q) =>
-        q.eq('opportunityId', args.opportunityId),
-      )
-      .collect()
-    const hasActive = existing.some(
-      (p) => p.status === 'open' || p.status === 'closed',
-    )
-    if (hasActive)
-      throw new ConvexError(
-        'An active poll already exists for this opportunity',
-      )
-
-    const now = Date.now()
-    const pollId = await ctx.db.insert('availabilityPolls', {
+    return await createPollFor(ctx, {
       ...args,
-      days,
       orgId: opportunity.orgId,
       createdBy: userId,
-      accessToken: crypto.randomUUID(),
-      status: 'open',
-      createdAt: now,
-      updatedAt: now,
     })
-
-    // Generate respondent rows for all applicants
-    const applications = await ctx.db
-      .query('opportunityApplications')
-      .withIndex('by_opportunity_and_status', (q) =>
-        q.eq('opportunityId', args.opportunityId),
-      )
-      .collect()
-
-    for (const app of applications) {
-      const name = await resolveApplicantDisplayNameFromApplication(
-        ctx.db,
-        app,
-        'Applicant',
-      )
-
-      await ctx.db.insert('pollRespondents', {
-        pollId,
-        applicationId: app._id,
-        respondentToken: crypto.randomUUID(),
-        respondentName: name,
-      })
-    }
-
-    return pollId
   },
 })
 

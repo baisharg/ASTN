@@ -5,6 +5,7 @@ import {
   mutation,
   query,
 } from './_generated/server'
+import type { MutationCtx } from './_generated/server'
 import { getUserId, requireOrgAdmin } from './lib/auth'
 import { resolveApplicantDisplayNameFromApplication } from './lib/applicantName'
 import {
@@ -45,6 +46,95 @@ const surveyReturnValidator = v.object({
 
 // ─── Admin mutations ───
 
+/**
+ * Create a feedback survey with the invariants the web form enforces: one
+ * active survey per opportunity, sanitised question keys, a fresh access token,
+ * and — unless anonymous — one respondent row per applicant matching the status
+ * filter, each with its own token.
+ *
+ * Extracted so the MCP creates surveys through exactly this code. A generic
+ * insert would produce a survey with no token and nobody able to answer it.
+ */
+export async function createSurveyFor(
+  ctx: MutationCtx,
+  args: {
+    opportunityId: Id<'orgOpportunities'>
+    orgId: Id<'organizations'>
+    createdBy: string
+    title: string
+    description?: string
+    formFields: unknown
+    programId?: Id<'programs'>
+    applicantStatuses?: Array<string>
+    anonymous?: boolean
+  },
+): Promise<Id<'feedbackSurveys'>> {
+  const existing = await ctx.db
+    .query('feedbackSurveys')
+    .withIndex('by_opportunity', (q) =>
+      q.eq('opportunityId', args.opportunityId),
+    )
+    .collect()
+  if (existing.some((s) => s.status === 'open' || s.status === 'draft'))
+    throw new ConvexError(
+      'An active survey already exists for this opportunity',
+    )
+
+  const now = Date.now()
+  const statusFilter = args.applicantStatuses ?? []
+
+  const surveyId = await ctx.db.insert('feedbackSurveys', {
+    opportunityId: args.opportunityId,
+    orgId: args.orgId,
+    programId: args.programId,
+    createdBy: args.createdBy,
+    title: args.title,
+    description: args.description,
+    formFields: sanitizeFormFieldKeys(args.formFields),
+    accessToken: crypto.randomUUID(),
+    status: 'draft',
+    applicantStatuses: statusFilter.length > 0 ? statusFilter : undefined,
+    anonymous: args.anonymous === true ? true : undefined,
+    createdAt: now,
+    updatedAt: now,
+  })
+
+  // An anonymous survey gets no respondent rows at all. That is the whole
+  // mechanism: with nobody on the list there are no personal tokens to hand
+  // out and nothing to join an answer back to. It also means we cannot tell
+  // who has not replied yet — an accepted trade, decided with Gaspar.
+  if (args.anonymous === true) return surveyId
+
+  const applications = await ctx.db
+    .query('opportunityApplications')
+    .withIndex('by_opportunity_and_status', (q) =>
+      q.eq('opportunityId', args.opportunityId),
+    )
+    .collect()
+
+  const filtered =
+    statusFilter.length > 0
+      ? applications.filter((a) => statusFilter.includes(a.status))
+      : applications
+
+  for (const app of filtered) {
+    const name = await resolveApplicantDisplayNameFromApplication(
+      ctx.db,
+      app,
+      'Applicant',
+    )
+    await ctx.db.insert('surveyRespondents', {
+      surveyId,
+      applicationId: app._id,
+      respondentToken: crypto.randomUUID(),
+      respondentName: name,
+      userId: app.userId,
+    })
+  }
+
+  return surveyId
+}
+
 export const createSurvey = mutation({
   args: {
     opportunityId: v.id('orgOpportunities'),
@@ -62,76 +152,11 @@ export const createSurvey = mutation({
 
     const userId = await requireOrgAdmin(ctx, opportunity.orgId)
 
-    // One active (draft or open) survey per opportunity
-    const existing = await ctx.db
-      .query('feedbackSurveys')
-      .withIndex('by_opportunity', (q) =>
-        q.eq('opportunityId', args.opportunityId),
-      )
-      .collect()
-    const hasActive = existing.some(
-      (s) => s.status === 'open' || s.status === 'draft',
-    )
-    if (hasActive)
-      throw new ConvexError(
-        'An active survey already exists for this opportunity',
-      )
-
-    const now = Date.now()
-    const statusFilter = args.applicantStatuses ?? []
-
-    const surveyId = await ctx.db.insert('feedbackSurveys', {
-      opportunityId: args.opportunityId,
+    return await createSurveyFor(ctx, {
+      ...args,
       orgId: opportunity.orgId,
-      programId: args.programId,
       createdBy: userId,
-      title: args.title,
-      description: args.description,
-      formFields: sanitizeFormFieldKeys(args.formFields),
-      accessToken: crypto.randomUUID(),
-      status: 'draft',
-      applicantStatuses: statusFilter.length > 0 ? statusFilter : undefined,
-      anonymous: args.anonymous === true ? true : undefined,
-      createdAt: now,
-      updatedAt: now,
     })
-
-    // An anonymous survey gets no respondent rows at all. That is the whole
-    // mechanism: with nobody on the list there are no personal tokens to hand
-    // out and nothing to join an answer back to. It also means we cannot tell
-    // who has not replied yet — an accepted trade, decided with Gaspar.
-    if (args.anonymous === true) return surveyId
-
-    // Generate respondent rows for matching applicants
-    const applications = await ctx.db
-      .query('opportunityApplications')
-      .withIndex('by_opportunity_and_status', (q) =>
-        q.eq('opportunityId', args.opportunityId),
-      )
-      .collect()
-
-    const filtered =
-      statusFilter.length > 0
-        ? applications.filter((a) => statusFilter.includes(a.status))
-        : applications
-
-    for (const app of filtered) {
-      const name = await resolveApplicantDisplayNameFromApplication(
-        ctx.db,
-        app,
-        'Applicant',
-      )
-
-      await ctx.db.insert('surveyRespondents', {
-        surveyId,
-        applicationId: app._id,
-        respondentToken: crypto.randomUUID(),
-        respondentName: name,
-        userId: app.userId,
-      })
-    }
-
-    return surveyId
   },
 })
 
