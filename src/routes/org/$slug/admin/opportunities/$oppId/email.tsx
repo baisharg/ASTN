@@ -681,10 +681,6 @@ function EmailComposePage() {
                         className="h-10 mx-auto"
                       />
                     </div>
-                    {/* Greeting */}
-                    <p className="text-lg font-semibold text-gray-900 mb-2">
-                      Hi Jane,
-                    </p>
                     {previewHtml ? (
                       <div
                         className="max-w-none text-gray-700 [&_p]:my-3 break-words"

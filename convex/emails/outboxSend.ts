@@ -28,7 +28,7 @@ async function renderBody(
     breaks: true,
     gfm: true,
   })
-  return await renderAdminBroadcast({ userName: recipientName, bodyHtml })
+  return await renderAdminBroadcast({ bodyHtml })
 }
 
 /**
@@ -239,7 +239,6 @@ export const sendDrafts = action({
           gfm: true,
         })
         const html: string = await renderAdminBroadcast({
-          userName: draft.recipientName,
           bodyHtml,
         })
 

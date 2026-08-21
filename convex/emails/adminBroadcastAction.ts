@@ -136,7 +136,6 @@ export const sendBroadcastToApplicants = action({
         })
 
         const html: string = await renderAdminBroadcast({
-          userName: recipient.name,
           bodyHtml: recipientHtml,
         })
 
@@ -233,7 +232,6 @@ export const sendTestEmail = action({
       gfm: true,
     })
     const html: string = await renderAdminBroadcast({
-      userName: 'Jane Doe',
       bodyHtml,
     })
 

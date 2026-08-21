@@ -737,12 +737,20 @@ export async function renderDeadlineReminder(
 
 const BODY_PLACEHOLDER = '__BODY_PLACEHOLDER__'
 
+/**
+ * The wrapper around an applicant-facing email: logo, body, footer.
+ *
+ * Deliberately no greeting. There used to be a system one ("Hi {name},") above
+ * the body, but every template BAISH actually writes starts with its own
+ * ("Hola {{applicant_name}},"), so every email went out greeting the person
+ * twice — once in English, once in Spanish. The greeting belongs to whoever
+ * writes the message, in whatever language they are writing it.
+ */
 interface AdminBroadcastProps {
-  userName: string
   bodyHtml: string
 }
 
-function AdminBroadcastEmail({ userName }: { userName: string }) {
+function AdminBroadcastEmail() {
   return (
     <Html>
       <Head />
@@ -760,11 +768,6 @@ function AdminBroadcastEmail({ userName }: { userName: string }) {
                 className="mx-auto mb-4"
               />
             </Section>
-
-            {/* Greeting */}
-            <Text className="text-xl font-semibold text-gray-900 mb-2">
-              Hi {userName},
-            </Text>
 
             {/* Body placeholder — replaced after render */}
             <Section>{BODY_PLACEHOLDER}</Section>
@@ -791,7 +794,7 @@ function AdminBroadcastEmail({ userName }: { userName: string }) {
 export async function renderAdminBroadcast(
   props: AdminBroadcastProps,
 ): Promise<string> {
-  const html = await render(<AdminBroadcastEmail {...props} />)
+  const html = await render(<AdminBroadcastEmail />)
   // Add inline styles to <p> tags so paragraph spacing and word-break
   // work across all email clients (Gmail resets <p> margins by default).
   const styledBody = props.bodyHtml.replace(
