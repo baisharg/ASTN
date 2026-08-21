@@ -5,6 +5,7 @@ import type { Doc } from '../_generated/dataModel'
 import { getUserId, requireOrgAdminFor } from '../lib/auth'
 import {
   assertOnlyKnownVariables,
+  enqueueMissingDraftsForKind,
   refreshPendingDraftsForTemplate,
   syncOutboxOnStatusChange,
 } from './outbox'
@@ -251,6 +252,10 @@ export const updateTemplate = mutation({
     assertOnlyKnownVariables(subject)
     assertOnlyKnownVariables(markdownBody)
 
+    // A template that was off and is now on has a backlog: every decision of
+    // this kind made while it was off queued nothing. Enabling it looks back.
+    const turnedOn = template.enabled === false && enabled === true
+
     const now = Date.now()
     await ctx.db.patch('emailTemplates', templateId, {
       subject,
@@ -270,11 +275,21 @@ export const updateTemplate = mutation({
         kind: template.kind,
         setId: template.setId,
       })
+      if (turnedOn)
+        await enqueueMissingDraftsForKind(ctx, {
+          kind: template.kind,
+          setId: template.setId,
+        })
     } else if (template.opportunityId) {
       await refreshPendingDraftsForTemplate(ctx, {
         kind: template.kind,
         opportunityId: template.opportunityId,
       })
+      if (turnedOn)
+        await enqueueMissingDraftsForKind(ctx, {
+          kind: template.kind,
+          opportunityId: template.opportunityId,
+        })
     }
     return null
   },
@@ -396,6 +411,14 @@ export const upsertOpportunityTemplate = mutation({
       kind: args.kind,
       opportunityId: args.opportunityId,
     })
+    // Same look-back when an override goes from off to on. `existing` being
+    // absent counts as off only if the set template it inherited was off too,
+    // which resolveTemplate inside the helper takes care of.
+    if (args.enabled && existing?.enabled === false)
+      await enqueueMissingDraftsForKind(ctx, {
+        kind: args.kind,
+        opportunityId: args.opportunityId,
+      })
     return null
   },
 })

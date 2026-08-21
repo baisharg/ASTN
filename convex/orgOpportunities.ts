@@ -723,6 +723,55 @@ export async function createOpportunityFor(
   return opportunityId
 }
 
+/**
+ * One-off: convert form fields imported from BlueDot to ASTN's own shape.
+ *
+ * Two "Facilitator Feedback" opportunities came in with `id`/`type` instead of
+ * `key`/`kind` — the shape BlueDot used. Nothing reads them today because both
+ * are drafts, but `DynamicFormRenderer` switches on `kind`, so publishing one
+ * would render a form with no inputs. Idempotent: fields already in the modern
+ * shape are untouched.
+ */
+export const migrateLegacyFormFieldShape = internalMutation({
+  args: {},
+  returns: v.array(
+    v.object({ title: v.string(), converted: v.number() }),
+  ),
+  handler: async (ctx) => {
+    const all = await ctx.db.query('orgOpportunities').collect()
+    const out: Array<{ title: string; converted: number }> = []
+
+    for (const opp of all) {
+      const fields = opp.formFields
+      if (!Array.isArray(fields)) continue
+
+      let converted = 0
+      const next = fields.map((f: Record<string, unknown>) => {
+        if (!f || typeof f !== 'object' || Array.isArray(f)) return f
+        const legacyKey = f.key === undefined && typeof f.id === 'string'
+        const legacyKind = f.kind === undefined && typeof f.type === 'string'
+        if (!legacyKey && !legacyKind) return f
+        converted++
+        const { id, type, ...rest } = f
+        return {
+          ...rest,
+          key: legacyKey ? (id as string) : (f.key as string),
+          kind: legacyKind ? (type as string) : (f.kind as string),
+        }
+      })
+
+      if (converted > 0) {
+        await ctx.db.patch('orgOpportunities', opp._id, {
+          formFields: sanitizeFormFieldKeys(next),
+          updatedAt: Date.now(),
+        })
+        out.push({ title: opp.title, converted })
+      }
+    }
+    return out
+  },
+})
+
 // Create an opportunity (org admin only)
 export const create = mutation({
   args: {

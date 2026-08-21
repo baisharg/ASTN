@@ -121,6 +121,12 @@ function AdminOpportunitiesPage() {
     id: Id<'orgOpportunities'>
     title: string
   } | null>(null)
+  const [confirmCopy, setConfirmCopy] = useState<{
+    id: Id<'orgOpportunities'>
+    title: string
+    status: string
+    key: string
+  } | null>(null)
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null)
@@ -158,9 +164,12 @@ function AdminOpportunitiesPage() {
           .toLowerCase()
         if (!haystack.includes(q)) return false
       }
+      // Every selected tag must be present, not just one (Gonzalo, 17-ago):
+      // picking EOI + Governance should narrow to the intersection, which is
+      // what you want when tags describe different axes of the same thing.
       if (selectedTags.length > 0) {
         const tags = opp.tags ?? []
-        if (!selectedTags.some((t) => tags.includes(t))) return false
+        if (!selectedTags.every((t) => tags.includes(t))) return false
       }
       return true
     })
@@ -436,6 +445,18 @@ function AdminOpportunitiesPage() {
                         size="sm"
                         title="Copy application link"
                         onClick={async () => {
+                          // An outreach round once went out pointing at a
+                          // closed opportunity, so copying the link of
+                          // anything not `active` asks first.
+                          if (opp.status !== 'active') {
+                            setConfirmCopy({
+                              id: opp._id,
+                              title: opp.title,
+                              status: opp.status,
+                              key: opp.slug ?? opp._id,
+                            })
+                            return
+                          }
                           const url = `${window.location.origin}/org/${slug}/apply/${opp.slug ?? opp._id}`
                           try {
                             await navigator.clipboard.writeText(url)
@@ -510,6 +531,59 @@ function AdminOpportunitiesPage() {
               })}
             </div>
           )}
+
+          {/* Copying the link of an opportunity that is not open. Nobody can
+              apply through it, so say so before the link ends up in an
+              outreach message — with the shortcut to fix the cause. */}
+          <AlertDialog
+            open={confirmCopy !== null}
+            onOpenChange={(open) => !open && setConfirmCopy(null)}
+          >
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  {confirmCopy?.status === 'draft'
+                    ? 'This opportunity is not open yet'
+                    : 'This opportunity is closed'}
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  {confirmCopy?.status === 'draft'
+                    ? 'It is still a draft, so anyone opening the link will not be able to apply.'
+                    : 'Applications are closed, so anyone opening the link will not be able to apply — unless it redirects to an expression of interest.'}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (!confirmCopy) return
+                    void navigate({
+                      to: '/org/$slug/admin/opportunities/$oppId',
+                      params: { slug, oppId: confirmCopy.key },
+                    })
+                  }}
+                >
+                  Change status
+                </Button>
+                <Button
+                  onClick={async () => {
+                    if (!confirmCopy) return
+                    const url = `${window.location.origin}/org/${slug}/apply/${confirmCopy.key}`
+                    try {
+                      await navigator.clipboard.writeText(url)
+                      toast.success('Application link copied')
+                    } catch {
+                      toast.error('Failed to copy link')
+                    }
+                    setConfirmCopy(null)
+                  }}
+                >
+                  Copy anyway
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
 
           {/* Duplicate confirmation. One misplaced click used to create a real
               copy silently, so this says what carries over and what does not —

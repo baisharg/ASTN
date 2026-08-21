@@ -235,6 +235,124 @@ export async function refreshPendingDraftsForTemplate(
   return refreshed
 }
 
+/**
+ * Enqueue the drafts a decision kind never got.
+ *
+ * A draft is only created if the template for that kind is enabled *at the
+ * moment* the status changes. Augusto hit the consequence on 17-ago: BAISH had
+ * `waitlisted` switched off (they did not use it), so the 32 waitlist decisions
+ * on the Governance course queued nothing; turning the template on afterwards
+ * left the Outbox still showing only accepted and rejected, because enabling a
+ * template did not look back.
+ *
+ * This is the sibling of refreshPendingDraftsForTemplate: that one handles "the
+ * template changed", this one handles "the template started existing". Same
+ * guarantees — already-sent decisions are skipped (hard idempotency), an
+ * application that already has a pending draft is left alone, and nothing is
+ * ever sent.
+ */
+export async function enqueueMissingDraftsForKind(
+  ctx: MutationCtx,
+  opts: {
+    kind: Doc<'emailTemplates'>['kind']
+    opportunityId?: Doc<'orgOpportunities'>['_id']
+    setId?: Doc<'emailTemplateSets'>['_id']
+  },
+): Promise<number> {
+  const { kind, opportunityId, setId } = opts
+
+  // The on-apply confirmation fires at submission time and never retroactively,
+  // by design — backfilling it would mail people who applied months ago.
+  if (!(DECISION_KINDS as ReadonlyArray<string>).includes(kind)) return 0
+  const decisionKind = kind as DecisionKind
+
+  const statuses = Object.entries(KIND_BY_STATUS)
+    .filter(([, k]) => k === decisionKind)
+    .map(([status]) => status)
+  if (statuses.length === 0) return 0
+
+  const opportunities: Array<Doc<'orgOpportunities'>> = []
+  if (opportunityId) {
+    const opp = await ctx.db.get('orgOpportunities', opportunityId)
+    if (opp) opportunities.push(opp)
+  } else if (setId) {
+    const set = await ctx.db.get('emailTemplateSets', setId)
+    if (!set) return 0
+    const linked = await ctx.db
+      .query('orgOpportunities')
+      .withIndex('by_org_and_status', (q) => q.eq('orgId', set.orgId))
+      .collect()
+    opportunities.push(...linked.filter((o) => o.emailTemplateSetId === setId))
+  }
+
+  let queued = 0
+  for (const opportunity of opportunities) {
+    if (!isOutboxActive(opportunity)) continue
+    const template = await resolveTemplate(ctx, opportunity, decisionKind)
+    if (!template || template.enabled === false) continue
+
+    const applications = await ctx.db
+      .query('opportunityApplications')
+      .withIndex('by_opportunity_and_status', (q) =>
+        q.eq('opportunityId', opportunity._id),
+      )
+      .collect()
+
+    for (const application of applications) {
+      if (!statuses.includes(application.status)) continue
+      if (await hasSentKind(ctx, application._id, decisionKind)) continue
+
+      // At most one pending draft per application is the standing invariant;
+      // if one is already queued, this decision is already represented.
+      const pending = await ctx.db
+        .query('emailOutbox')
+        .withIndex('by_application', (q) =>
+          q.eq('applicationId', application._id),
+        )
+        .collect()
+      if (pending.length > 0) continue
+
+      const now = Date.now()
+      await ctx.db.insert('emailOutbox', {
+        orgId: opportunity.orgId,
+        opportunityId: opportunity._id,
+        applicationId: application._id,
+        kind: decisionKind,
+        subject: template.subject,
+        markdownBody: template.markdownBody,
+        includePollLink: template.includePollLink ?? false,
+        includeSurveyLink: template.includeSurveyLink ?? false,
+        createdAt: now,
+        updatedAt: now,
+      })
+      queued++
+    }
+  }
+
+  return queued
+}
+
+/**
+ * Run the look-back by hand, for a kind that was already switched on before the
+ * automatic backfill existed. Idempotent — it only ever adds what is missing.
+ */
+export const backfillDraftsForKind = internalMutation({
+  args: {
+    kind: decisionKindValidator,
+    setId: v.optional(v.id('emailTemplateSets')),
+    opportunityId: v.optional(v.id('orgOpportunities')),
+  },
+  returns: v.object({ queued: v.number() }),
+  handler: async (ctx, { kind, setId, opportunityId }) => {
+    const queued = await enqueueMissingDraftsForKind(ctx, {
+      kind,
+      setId,
+      opportunityId,
+    })
+    return { queued }
+  },
+})
+
 // ── Admin queries/mutations (Emails tab) ────────────────────────────────────
 
 async function requireAdmin(
