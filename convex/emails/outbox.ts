@@ -333,6 +333,74 @@ export async function enqueueMissingDraftsForKind(
 }
 
 /**
+ * Drop the drafts a kind should no longer have, because its template went off.
+ *
+ * The mirror image of enqueueMissingDraftsForKind, and the reason it exists:
+ * without it, switching a template on and back off leaves everything the
+ * look-back queued sitting in the Outbox, one click from being sent. Turning a
+ * decision's template off means "this decision does not mail anybody", so the
+ * drafts it produced have to go with it.
+ *
+ * Only untouched drafts are deleted. Those are verbatim copies of the template,
+ * so this is exactly invertible — re-enabling recreates them. A hand-edited
+ * draft is somebody's writing, and deleting it would destroy work no click
+ * asked to destroy: those stay, and the count comes back so the caller can say
+ * so. Nothing sent is ever touched.
+ */
+export async function discardPendingDraftsForKind(
+  ctx: MutationCtx,
+  opts: {
+    kind: Doc<'emailTemplates'>['kind']
+    opportunityId?: Doc<'orgOpportunities'>['_id']
+    setId?: Doc<'emailTemplateSets'>['_id']
+  },
+): Promise<{ discarded: number; keptEdited: number }> {
+  const { kind, opportunityId, setId } = opts
+
+  const opportunities: Array<Doc<'orgOpportunities'>> = []
+  if (opportunityId) {
+    const opp = await ctx.db.get('orgOpportunities', opportunityId)
+    if (opp) opportunities.push(opp)
+  } else if (setId) {
+    const set = await ctx.db.get('emailTemplateSets', setId)
+    if (!set) return { discarded: 0, keptEdited: 0 }
+    const linked = await ctx.db
+      .query('orgOpportunities')
+      .withIndex('by_org_and_status', (q) => q.eq('orgId', set.orgId))
+      .collect()
+    opportunities.push(...linked.filter((o) => o.emailTemplateSetId === setId))
+  }
+
+  let discarded = 0
+  let keptEdited = 0
+  for (const opportunity of opportunities) {
+    // Precedence matters in both directions: switching a set template off must
+    // leave alone the opportunities that override this kind with an enabled one.
+    const template = await resolveTemplate(ctx, opportunity, kind)
+    if (template && template.enabled !== false) continue
+
+    const drafts = await ctx.db
+      .query('emailOutbox')
+      .withIndex('by_opportunity', (q) =>
+        q.eq('opportunityId', opportunity._id),
+      )
+      .collect()
+
+    for (const draft of drafts) {
+      if (draft.kind !== kind) continue
+      if (draft.editedByAdmin) {
+        keptEdited++
+        continue
+      }
+      await ctx.db.delete('emailOutbox', draft._id)
+      discarded++
+    }
+  }
+
+  return { discarded, keptEdited }
+}
+
+/**
  * Run the look-back by hand, for a kind that was already switched on before the
  * automatic backfill existed. Idempotent — it only ever adds what is missing.
  */

@@ -5,6 +5,7 @@ import type { Doc } from '../_generated/dataModel'
 import { getUserId, requireOrgAdminFor } from '../lib/auth'
 import {
   assertOnlyKnownVariables,
+  discardPendingDraftsForKind,
   enqueueMissingDraftsForKind,
   refreshPendingDraftsForTemplate,
   syncOutboxOnStatusChange,
@@ -231,7 +232,13 @@ export const updateTemplate = mutation({
     includePollLink: v.optional(v.boolean()),
     includeSurveyLink: v.optional(v.boolean()),
   },
-  returns: v.null(),
+  // What the toggle did to the pending queue, so the UI can say it out loud
+  // instead of silently adding or removing a dozen drafts.
+  returns: v.object({
+    queued: v.number(),
+    discarded: v.number(),
+    keptEdited: v.number(),
+  }),
   handler: async (
     ctx,
     {
@@ -255,6 +262,9 @@ export const updateTemplate = mutation({
     // A template that was off and is now on has a backlog: every decision of
     // this kind made while it was off queued nothing. Enabling it looks back.
     const turnedOn = template.enabled === false && enabled === true
+    let queued = 0
+    let discarded = 0
+    let keptEdited = 0
 
     const now = Date.now()
     await ctx.db.patch('emailTemplates', templateId, {
@@ -276,22 +286,31 @@ export const updateTemplate = mutation({
         setId: template.setId,
       })
       if (turnedOn)
-        await enqueueMissingDraftsForKind(ctx, {
+        queued = await enqueueMissingDraftsForKind(ctx, {
           kind: template.kind,
           setId: template.setId,
         })
+      // And the reverse: a kind that is off must not leave queued drafts behind.
+      ;({ discarded, keptEdited } = await discardPendingDraftsForKind(ctx, {
+        kind: template.kind,
+        setId: template.setId,
+      }))
     } else if (template.opportunityId) {
       await refreshPendingDraftsForTemplate(ctx, {
         kind: template.kind,
         opportunityId: template.opportunityId,
       })
       if (turnedOn)
-        await enqueueMissingDraftsForKind(ctx, {
+        queued = await enqueueMissingDraftsForKind(ctx, {
           kind: template.kind,
           opportunityId: template.opportunityId,
         })
+      ;({ discarded, keptEdited } = await discardPendingDraftsForKind(ctx, {
+        kind: template.kind,
+        opportunityId: template.opportunityId,
+      }))
     }
-    return null
+    return { queued, discarded, keptEdited }
   },
 })
 
@@ -372,7 +391,13 @@ export const upsertOpportunityTemplate = mutation({
     includePollLink: v.boolean(),
     includeSurveyLink: v.boolean(),
   },
-  returns: v.null(),
+  // What the toggle did to the pending queue, so the UI can say it out loud
+  // instead of silently adding or removing a dozen drafts.
+  returns: v.object({
+    queued: v.number(),
+    discarded: v.number(),
+    keptEdited: v.number(),
+  }),
   handler: async (ctx, args) => {
     const opportunity = await ctx.db.get('orgOpportunities', args.opportunityId)
     if (!opportunity) throw new ConvexError('Opportunity not found')
@@ -414,12 +439,17 @@ export const upsertOpportunityTemplate = mutation({
     // Same look-back when an override goes from off to on. `existing` being
     // absent counts as off only if the set template it inherited was off too,
     // which resolveTemplate inside the helper takes care of.
+    let queued = 0
     if (args.enabled && existing?.enabled === false)
-      await enqueueMissingDraftsForKind(ctx, {
+      queued = await enqueueMissingDraftsForKind(ctx, {
         kind: args.kind,
         opportunityId: args.opportunityId,
       })
-    return null
+    const { discarded, keptEdited } = await discardPendingDraftsForKind(ctx, {
+      kind: args.kind,
+      opportunityId: args.opportunityId,
+    })
+    return { queued, discarded, keptEdited }
   },
 })
 
@@ -445,6 +475,9 @@ export const clearOpportunityTemplate = mutation({
     // Reverting to the set changes the effective wording, so the drafts that
     // were tracking the override need to follow it back.
     await refreshPendingDraftsForTemplate(ctx, { kind, opportunityId })
+    // Dropping an enabled override for a disabled set template flips the
+    // effective answer to off, which the drafts have to follow.
+    await discardPendingDraftsForKind(ctx, { kind, opportunityId })
     return null
   },
 })

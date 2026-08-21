@@ -791,6 +791,27 @@ function TemplatesSection({
   )
 }
 
+// A toggle can add or remove a dozen drafts at once. Say which, so the Outbox
+// never changes size behind the admin's back.
+function queueEffect(r: {
+  queued: number
+  discarded: number
+  keptEdited: number
+}): string | undefined {
+  if (r.queued > 0)
+    return `${r.queued} draft${r.queued === 1 ? '' : 's'} queued for decisions already made`
+  if (r.discarded > 0) {
+    const kept =
+      r.keptEdited > 0
+        ? ` ${r.keptEdited} you had edited stayed.`
+        : ''
+    return `${r.discarded} unsent draft${r.discarded === 1 ? '' : 's'} removed.${kept}`
+  }
+  if (r.keptEdited > 0)
+    return `${r.keptEdited} draft${r.keptEdited === 1 ? '' : 's'} you had edited stayed in the Outbox`
+  return undefined
+}
+
 function TemplateCard({
   opportunityId,
   setName,
@@ -842,7 +863,7 @@ function TemplateCard({
   const saveOverride = async () => {
     setIsSaving(true)
     try {
-      await upsertOverride({
+      const result = await upsertOverride({
         opportunityId,
         kind: template.kind,
         subject,
@@ -851,7 +872,9 @@ function TemplateCard({
         includePollLink: pollLink,
         includeSurveyLink: surveyLink,
       })
-      toast.success('Saved for this opportunity')
+      toast.success('Saved for this opportunity', {
+        description: queueEffect(result),
+      })
     } catch (err) {
       toast.error(varError(err instanceof Error ? err.message : ''))
     } finally {
@@ -863,7 +886,7 @@ function TemplateCard({
     if (!setTemplateId) return
     setIsSaving(true)
     try {
-      await updateSetTemplate({
+      const result = await updateSetTemplate({
         templateId: setTemplateId,
         subject,
         markdownBody: body,
@@ -871,7 +894,9 @@ function TemplateCard({
         includePollLink: pollLink,
         includeSurveyLink: surveyLink,
       })
-      toast.success(`Saved to the ${setName} set`)
+      toast.success(`Saved to the ${setName} set`, {
+        description: queueEffect(result),
+      })
     } catch (err) {
       toast.error(varError(err instanceof Error ? err.message : ''))
     } finally {
