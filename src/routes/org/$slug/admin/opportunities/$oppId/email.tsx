@@ -171,8 +171,12 @@ function EmailComposePage() {
     api.orgs.membership.getMembership,
     org ? { orgId: org._id } : 'skip',
   )
-  const opportunity = useQuery(api.orgOpportunities.get, {
-    id: oppId as Id<'orgOpportunities'>,
+  // `oppId` is the readable slug or the raw id — whatever the link that got
+  // here carried. `get` takes only an id, so resolving by key is required now
+  // that the admin links use slugs.
+  const opportunity = useQuery(api.orgOpportunities.getByKey, {
+    orgSlug: slug,
+    key: oppId,
   })
   // Applicants with their resolved name + email (same 3-tier resolution as the
   // real send), for client-side status filtering.
