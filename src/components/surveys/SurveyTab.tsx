@@ -47,6 +47,12 @@ import {
 import { Checkbox } from '~/components/ui/checkbox'
 import { Input } from '~/components/ui/input'
 import { Label } from '~/components/ui/label'
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '~/components/ui/tabs'
 import { Textarea } from '~/components/ui/textarea'
 
 const ALL_STATUSES = [
@@ -67,6 +73,15 @@ interface SurveyTabProps {
   opportunityTitle?: string
 }
 
+/**
+ * A course runs two feedback surveys at once, and they are different objects:
+ * the end-of-course one, where knowing who answered is the point, and the
+ * anonymous one for feedback about facilitators, where it is the obstacle.
+ *
+ * They get a side each. That also removes the old "Anonymous survey" checkbox:
+ * which kind you are making is now the tab you are on, so there is no toggle
+ * whose meaning has to be explained.
+ */
 export function SurveyTab({
   opportunityId,
   orgId,
@@ -74,49 +89,72 @@ export function SurveyTab({
   orgName,
   opportunityTitle,
 }: SurveyTabProps) {
-  const survey = useQuery(api.feedbackSurveys.getSurveyByOpportunity, {
+  const surveys = useQuery(api.feedbackSurveys.getSurveysByOpportunity, {
     opportunityId,
   })
 
-  if (survey === undefined) {
+  if (surveys === undefined) {
     return (
       <div className="py-8 text-center text-muted-foreground">
-        Loading survey...
+        Loading surveys...
       </div>
     )
   }
 
-  if (!survey) {
-    return (
+  const side = (survey: typeof surveys.identified, anonymous: boolean) =>
+    survey ? (
+      <SurveyManagement
+        surveyId={survey._id}
+        orgId={orgId}
+        slug={slug}
+        accessToken={survey.accessToken}
+        orgName={orgName}
+        opportunityTitle={opportunityTitle}
+      />
+    ) : (
       <CreateSurveyForm
         opportunityId={opportunityId}
         orgId={orgId}
+        anonymous={anonymous}
         orgName={orgName}
         opportunityTitle={opportunityTitle}
       />
     )
-  }
 
   return (
-    <SurveyManagement
-      surveyId={survey._id}
-      orgId={orgId}
-      slug={slug}
-      accessToken={survey.accessToken}
-      orgName={orgName}
-      opportunityTitle={opportunityTitle}
-    />
+    <Tabs defaultValue="identified">
+      <TabsList>
+        <TabsTrigger value="identified">Course feedback</TabsTrigger>
+        <TabsTrigger value="anonymous" className="gap-2">
+          Anonymous feedback
+          {surveys.anonymous && (
+            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+              {surveys.anonymous.status}
+            </Badge>
+          )}
+        </TabsTrigger>
+      </TabsList>
+      <TabsContent value="identified" className="mt-6">
+        {side(surveys.identified, false)}
+      </TabsContent>
+      <TabsContent value="anonymous" className="mt-6">
+        {side(surveys.anonymous, true)}
+      </TabsContent>
+    </Tabs>
   )
 }
 
 function CreateSurveyForm({
   opportunityId,
   orgId,
+  anonymous,
   orgName,
   opportunityTitle,
 }: {
   opportunityId: Id<'orgOpportunities'>
   orgId: Id<'organizations'>
+  /** Decided by which tab this is rendered under, not by a control. */
+  anonymous: boolean
   orgName?: string
   opportunityTitle?: string
 }) {
@@ -126,7 +164,6 @@ function CreateSurveyForm({
   const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(
     new Set(['accepted']),
   )
-  const [anonymous, setAnonymous] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
 
   const createSurvey = useMutation(api.feedbackSurveys.createSurvey)
@@ -178,7 +215,11 @@ function CreateSurveyForm({
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Create Feedback Survey</CardTitle>
+          <CardTitle>
+            {anonymous
+              ? 'Create anonymous feedback survey'
+              : 'Create feedback survey'}
+          </CardTitle>
           <CardDescription>
             The survey will be created as a draft. You can review and edit
             everything before publishing.
@@ -206,22 +247,13 @@ function CreateSurveyForm({
               placeholder="Intro text shown to respondents before the form"
             />
           </div>
-          <div className="space-y-2 rounded-md border border-input p-3">
-            <label className="flex items-start gap-2 cursor-pointer">
-              <Checkbox
-                checked={anonymous}
-                onCheckedChange={(c) => setAnonymous(c === true)}
-                className="mt-0.5"
-              />
-              <span className="text-sm font-medium">Anonymous survey</span>
-            </label>
-            <p className="text-xs text-muted-foreground">
+          {anonymous && (
+            <p className="text-xs text-muted-foreground rounded-md border border-input p-3">
               One shared link instead of a personal link per applicant.
               Responses are saved with no record of who sent them, so results
-              show how many arrived, not who answered. Cannot be changed after
-              the survey is created.
+              show how many arrived, not who answered.
             </p>
-          </div>
+          )}
 
           {!anonymous && (
             <div className="space-y-2">

@@ -70,15 +70,29 @@ export async function createSurveyFor(
     anonymous?: boolean
   },
 ): Promise<Id<'feedbackSurveys'>> {
+  // One active survey *per kind*, not per opportunity. A course needs both at
+  // once: the identified end-of-course survey, and the anonymous one for
+  // feedback about facilitators. Enforcing one per opportunity made the
+  // anonymous survey impossible to use alongside the very thing it was built
+  // to be separate from.
+  const wantAnonymous = args.anonymous === true
   const existing = await ctx.db
     .query('feedbackSurveys')
     .withIndex('by_opportunity', (q) =>
       q.eq('opportunityId', args.opportunityId),
     )
     .collect()
-  if (existing.some((s) => s.status === 'open' || s.status === 'draft'))
+  if (
+    existing.some(
+      (s) =>
+        (s.status === 'open' || s.status === 'draft') &&
+        (s.anonymous === true) === wantAnonymous,
+    )
+  )
     throw new ConvexError(
-      'An active survey already exists for this opportunity',
+      wantAnonymous
+        ? 'An active anonymous survey already exists for this opportunity'
+        : 'An active survey already exists for this opportunity',
     )
 
   const now = Date.now()
@@ -329,6 +343,38 @@ export const removeRespondent = mutation({
 
 // ─── Admin queries ───
 
+/**
+ * The identified and the anonymous survey of an opportunity, independently.
+ *
+ * Each side prefers its active (draft or open) survey and otherwise falls back
+ * to the most recent closed one, so a finished cohort still shows its results.
+ */
+export const getSurveysByOpportunity = query({
+  args: { opportunityId: v.id('orgOpportunities') },
+  returns: v.object({
+    identified: v.union(surveyReturnValidator, v.null()),
+    anonymous: v.union(surveyReturnValidator, v.null()),
+  }),
+  handler: async (ctx, { opportunityId }) => {
+    const surveys = await ctx.db
+      .query('feedbackSurveys')
+      .withIndex('by_opportunity', (q) => q.eq('opportunityId', opportunityId))
+      .collect()
+
+    const pick = (anonymous: boolean) => {
+      const side = surveys.filter((s) => (s.anonymous === true) === anonymous)
+      const active = side.find(
+        (s) => s.status === 'draft' || s.status === 'open',
+      )
+      if (active) return active
+      return side.length > 0 ? side[side.length - 1] : null
+    }
+
+    return { identified: pick(false), anonymous: pick(true) }
+  },
+})
+
+// Kept for callers that only care about the identified survey.
 export const getSurveyByOpportunity = query({
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.union(surveyReturnValidator, v.null()),
@@ -337,14 +383,12 @@ export const getSurveyByOpportunity = query({
       .query('feedbackSurveys')
       .withIndex('by_opportunity', (q) => q.eq('opportunityId', opportunityId))
       .collect()
-
-    // Return draft/open survey first, then latest closed
-    const active = surveys.find(
+    const identified = surveys.filter((s) => s.anonymous !== true)
+    const active = identified.find(
       (s) => s.status === 'draft' || s.status === 'open',
     )
     if (active) return active
-    if (surveys.length === 0) return null
-    return surveys[surveys.length - 1]
+    return identified.length > 0 ? identified[identified.length - 1] : null
   },
 })
 
