@@ -373,6 +373,7 @@ function SurveyManagement({
   const [isSavingMeta, setIsSavingMeta] = useState(false)
 
   const [isEditingFields, setIsEditingFields] = useState(false)
+  const [discardWarning, setDiscardWarning] = useState<string | null>(null)
   const [editFormFields, setEditFormFields] = useState<Array<FormField>>([])
   const [isSavingFields, setIsSavingFields] = useState(false)
 
@@ -440,7 +441,7 @@ function SurveyManagement({
     }
   }
 
-  const handleSaveFields = async () => {
+  const handleSaveFields = async (confirmDiscardsAnswers = false) => {
     const validFields = editFormFields.filter((f) => f.label.trim())
     if (validFields.length === 0) {
       toast.error('Add at least one form field')
@@ -448,11 +449,22 @@ function SurveyManagement({
     }
     setIsSavingFields(true)
     try {
-      await updateSurvey({ surveyId, formFields: validFields })
+      await updateSurvey({
+        surveyId,
+        formFields: validFields,
+        ...(confirmDiscardsAnswers ? { confirmDiscardsAnswers } : {}),
+      })
       toast.success('Questions updated')
+      setDiscardWarning(null)
       setIsEditingFields(false)
-    } catch {
-      toast.error('Failed to save questions')
+    } catch (err) {
+      // The backend refuses an edit that would strand submitted answers, and
+      // the message names the questions and the count. Show it and keep the
+      // editor open with a button that repeats the call meaning it.
+      const message = err instanceof Error ? err.message : ''
+      const stranded = message.match(/Removing \d+ questions?[^]*?display them\./)
+      if (stranded) setDiscardWarning(stranded[0])
+      else toast.error('Failed to save questions')
     } finally {
       setIsSavingFields(false)
     }
@@ -722,34 +734,97 @@ function SurveyManagement({
         </CardContent>
       </Card>
 
-      {/* Published or closed: questions are frozen (people have answered), but
-          reading them to save a template changes nothing about this survey —
-          and it is the only way to carry a past cohort's form into the next. */}
-      {!isDraft && (
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base">Survey Questions</CardTitle>
+      {/* Editable at any status. Publishing used to freeze the questions, which
+          refused harmless edits (a typo, in a survey nobody had answered yet)
+          and taught people to change forms somewhere else. What is guarded now
+          is removing a question somebody already answered — see
+          handleSaveFields. */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base">Survey Questions</CardTitle>
+            <div className="flex gap-2">
               <SurveyPreview
                 title={survey.title}
                 description={survey.description}
                 orgName={orgName}
                 opportunityTitle={opportunityTitle}
-                formFields={survey.formFields as Array<FormField>}
+                formFields={
+                  isEditingFields
+                    ? editFormFields
+                    : (survey.formFields as Array<FormField>)
+                }
               />
+              {!isEditingFields && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setEditFormFields(survey.formFields as Array<FormField>)
+                    setDiscardWarning(null)
+                    setIsEditingFields(true)
+                  }}
+                >
+                  <Edit3 className="size-4 mr-1" />
+                  Edit Questions
+                </Button>
+              )}
             </div>
-            <CardDescription>
-              Questions cannot be changed once the survey is published.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <FormTemplateBar
-              orgId={orgId}
-              kind="feedback"
-              fields={survey.formFields as Array<FormField>}
-              onLoad={() => undefined}
-              saveOnly
-            />
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isEditingFields ? (
+            <div className="space-y-4">
+              <FormTemplateBar
+                orgId={orgId}
+                kind="feedback"
+                fields={editFormFields}
+                onLoad={setEditFormFields}
+              />
+              <FormFieldsEditor
+                fields={editFormFields}
+                onChange={setEditFormFields}
+              />
+              {discardWarning && (
+                <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm space-y-2">
+                  <p>{discardWarning}</p>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => handleSaveFields(true)}
+                    disabled={isSavingFields}
+                  >
+                    Save anyway
+                  </Button>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => handleSaveFields()}
+                  disabled={isSavingFields}
+                >
+                  {isSavingFields ? (
+                    <Loader2 className="size-4 mr-1 animate-spin" />
+                  ) : (
+                    <Save className="size-4 mr-1" />
+                  )}
+                  Save Questions
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setIsEditingFields(false)
+                    setDiscardWarning(null)
+                    setEditFormFields(survey.formFields as Array<FormField>)
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
             <div className="space-y-1">
               {(survey.formFields as Array<FormField>).map((f, i) => (
                 <div key={f.key || i} className="text-sm flex gap-2">
@@ -762,99 +837,9 @@ function SurveyManagement({
                 </div>
               ))}
             </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Editable questions (draft only) */}
-      {isDraft && (
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base">Survey Questions</CardTitle>
-              <div className="flex gap-2">
-                <SurveyPreview
-                  title={survey.title}
-                  description={survey.description}
-                  orgName={orgName}
-                  opportunityTitle={opportunityTitle}
-                  formFields={
-                    isEditingFields
-                      ? editFormFields
-                      : (survey.formFields as Array<FormField>)
-                  }
-                />
-                {!isEditingFields && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setEditFormFields(survey.formFields as Array<FormField>)
-                      setIsEditingFields(true)
-                    }}
-                  >
-                    <Edit3 className="size-4 mr-1" />
-                    Edit Questions
-                  </Button>
-                )}
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {isEditingFields ? (
-              <div className="space-y-4">
-                <FormTemplateBar
-                  orgId={orgId}
-                  kind="feedback"
-                  fields={editFormFields}
-                  onLoad={setEditFormFields}
-                />
-                <FormFieldsEditor
-                  fields={editFormFields}
-                  onChange={setEditFormFields}
-                />
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    onClick={handleSaveFields}
-                    disabled={isSavingFields}
-                  >
-                    {isSavingFields ? (
-                      <Loader2 className="size-4 mr-1 animate-spin" />
-                    ) : (
-                      <Save className="size-4 mr-1" />
-                    )}
-                    Save Questions
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      setIsEditingFields(false)
-                      setEditFormFields(survey.formFields as Array<FormField>)
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                {(survey.formFields as Array<FormField>).map((f, i) => (
-                  <div key={f.key || i} className="text-sm flex gap-2">
-                    <span className="text-muted-foreground">{i + 1}.</span>
-                    <span>{f.label}</span>
-                    <span className="text-muted-foreground">({f.kind})</span>
-                    {f.required && (
-                      <span className="text-red-500 text-xs">required</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
 
       {isAnonymous ? (
         <AnonymousSurveyResults

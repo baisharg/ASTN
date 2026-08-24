@@ -9,7 +9,11 @@ import {
   sanitizeFormFieldKeys,
 } from '../lib/formFields'
 import type { FormField } from '../lib/formFields'
-import { describeImpact, impactOnApplications } from '../lib/formFieldChanges'
+import {
+  describeImpact,
+  impactOnApplications,
+  impactOnSurveyResponses,
+} from '../lib/formFieldChanges'
 import { createOpportunityFor, opportunityAttachments } from '../orgOpportunities'
 import { createSurveyFor } from '../feedbackSurveys'
 import { createPollFor } from '../availabilityPolls'
@@ -140,7 +144,10 @@ export const UPDATE_FIELDS: Record<string, Set<string>> = {
   // Opening and closing is reversible in seconds, so it is not the kind of
   // thing worth locking behind the web. Finalizing a poll is excluded: it needs
   // a chosen slot to mean anything (see the handler).
-  surveys: new Set(['title', 'description', 'status']),
+  // formFields writable since 2026-08-24, for the same reason opportunities got
+  // it: a feedback form is expensive to build by hand, the team lives in Claude
+  // Code, and refusing here only pushes the edit somewhere with no validation.
+  surveys: new Set(['title', 'description', 'status', 'formFields']),
   polls: new Set(['title', 'status']),
   // Application decision + review notes. Non-notifying (see `update` handler).
   applications: new Set(['status', 'reviewNotes']),
@@ -646,6 +653,27 @@ export const update = internalMutation({
           'Poll status must be open or closed. Finalizing a poll picks the ' +
             'chosen slot and is done in the web app.',
         )
+    }
+
+    // Surveys: same rule as opportunities below, over the survey's own answers
+    // (both response tables — the anonymous one counts too).
+    if (args.resource === 'surveys' && 'formFields' in patch) {
+      const sanitized = sanitizeFormFieldKeys(
+        assertFormFieldsShape(patch.formFields),
+      )
+      const impact = await impactOnSurveyResponses(
+        ctx,
+        id as Id<'feedbackSurveys'>,
+        ((doc as any).formFields ?? []) as Array<FormField>,
+        sanitized,
+      )
+      if (impact.affectedResponses > 0 && !args.confirmDiscardsAnswers) {
+        throw new Error(
+          `${describeImpact(impact)} Pass confirmDiscardsAnswers: true to go ahead, ` +
+            `or keep the removed keys in the form to preserve them.`,
+        )
+      }
+      patch.formFields = sanitized
     }
 
     // Opportunities: an application form is free to grow, but shrinking it

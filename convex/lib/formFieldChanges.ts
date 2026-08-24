@@ -92,6 +92,41 @@ export async function impactOnApplications(
 }
 
 /**
+ * Impact of replacing a feedback survey's questions with `after`.
+ *
+ * Reads both response tables. The anonymous one has no identity column by
+ * design, but its answers are keyed the same way, so a removed question strands
+ * them exactly like an identified one — the count has to include them or the
+ * warning understates what is being discarded.
+ */
+export async function impactOnSurveyResponses(
+  ctx: QueryCtx,
+  surveyId: Id<'feedbackSurveys'>,
+  before: Array<FormField>,
+  after: Array<FormField>,
+): Promise<FormFieldChangeImpact> {
+  const keys = strandedKeys(before, after)
+  if (keys.length === 0) return { strandedKeys: [], affectedResponses: 0 }
+
+  const identified = await ctx.db
+    .query('surveyResponses')
+    .withIndex('by_survey', (q) => q.eq('surveyId', surveyId))
+    .collect()
+  const anonymous = await ctx.db
+    .query('anonymousSurveyResponses')
+    .withIndex('by_survey', (q) => q.eq('surveyId', surveyId))
+    .collect()
+
+  return {
+    strandedKeys: keys,
+    affectedResponses: countAffected(keys, [
+      ...identified.map((r) => r.responses),
+      ...anonymous.map((r) => r.responses),
+    ]),
+  }
+}
+
+/**
  * A sentence an admin or an agent can act on. Names the questions and the
  * number of answers, because "this is not allowed" teaches nobody anything.
  */

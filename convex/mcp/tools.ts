@@ -308,8 +308,8 @@ const PLATFORM_FIELD_HINTS: Record<string, string> = {
     'create requires: opportunityId, title, formFields (the questions). optional: description, ' +
     'applicantStatuses (which applicants get a personal link, e.g. ["accepted"]), anonymous. ' +
     'Always created as a draft — publish it by setting status to open. Returns the accessToken, ' +
-    'which is the shareable link and, for an anonymous survey, the only way in. One active ' +
-    'survey per opportunity.',
+    'which is the shareable link and, for an anonymous survey, the only way in. An opportunity ' +
+    'can have one active identified survey and one active anonymous one at the same time.',
   polls:
     'create requires: opportunityId. everything else defaults to how BAISH runs them: Mon–Sat ' +
     '09:00–21:00 in 30-minute slots, Buenos Aires. optional: title, timezone, days (0=Mon…6=Sun), ' +
@@ -324,7 +324,10 @@ const PLATFORM_UPDATE_HINTS: Record<string, string> = {
     'application form (pass the whole array). astn_delete only works on an opportunity with ' +
     'nothing attached: no applications, surveys, extra polls or sent emails.',
   surveys:
-    'status ∈ draft|open|closed. Opening publishes it; questions can no longer change after that.',
+    'status ∈ draft|open|closed. Opening publishes it. formFields replaces the questions (pass ' +
+    'the whole array) and works at any status — adding is always free; removing a question is ' +
+    'refused while somebody has answered it, and the refusal names the questions and the count. ' +
+    'Repeat with confirmDiscardsAnswers: true to strand those answers on purpose.',
   polls:
     'status ∈ open|closed. Finalizing (picking the chosen slot) is done in the web app.',
   applications:

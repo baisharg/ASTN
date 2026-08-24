@@ -14,6 +14,10 @@ import {
   sanitizeResponseKeys,
   validateResponses,
 } from './lib/formFields'
+import {
+  describeImpact,
+  impactOnSurveyResponses,
+} from './lib/formFieldChanges'
 import type { Id } from './_generated/dataModel'
 import type { FormField } from './lib/formFields'
 
@@ -180,8 +184,10 @@ export const updateSurvey = mutation({
     surveyId: v.id('feedbackSurveys'),
     title: v.optional(v.string()),
     description: v.optional(v.string()),
-    formFields: v.optional(v.any()), // Only allowed while draft
+    formFields: v.optional(v.any()),
     status: v.optional(surveyStatusValidator),
+    // Acknowledges the answers the edit would strand — see the guard below.
+    confirmDiscardsAnswers: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, { surveyId, ...updates }) => {
@@ -190,19 +196,32 @@ export const updateSurvey = mutation({
 
     await requireOrgAdmin(ctx, survey.orgId)
 
-    // Only allow editing formFields while in draft
-    if (updates.formFields !== undefined && survey.status !== 'draft') {
-      throw new ConvexError('Cannot edit questions after survey is published')
-    }
-
     const patch: Record<string, unknown> = { updatedAt: Date.now() }
     if (updates.title !== undefined) patch.title = updates.title
     if (updates.description !== undefined)
       patch.description = updates.description
-    if (updates.formFields !== undefined)
-      patch.formFields = sanitizeFormFieldKeys(
+    if (updates.formFields !== undefined) {
+      // Publishing used to freeze the questions outright. That refused plenty
+      // of harmless edits — fixing a typo in a survey nobody has answered yet —
+      // and taught the team that the way to change a form is somewhere other
+      // than here. The barrier now sits on the consequence, like it does for
+      // application forms: adding questions is always free, and removing one is
+      // refused only while somebody's answer would be left with nothing to
+      // display it, which the caller can override by saying so.
+      const sanitized = sanitizeFormFieldKeys(
         assertFormFieldsShape(updates.formFields),
       )
+      const impact = await impactOnSurveyResponses(
+        ctx,
+        surveyId,
+        (survey.formFields ?? []) as Array<FormField>,
+        sanitized,
+      )
+      if (impact.affectedResponses > 0 && !updates.confirmDiscardsAnswers) {
+        throw new ConvexError(describeImpact(impact))
+      }
+      patch.formFields = sanitized
+    }
     if (updates.status !== undefined) patch.status = updates.status
 
     await ctx.db.patch('feedbackSurveys', surveyId, patch)
