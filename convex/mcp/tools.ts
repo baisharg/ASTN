@@ -193,9 +193,10 @@ export const TOOL_DEFS = [
       'Only allowlisted fields can be changed (see astn_resources). For applications you ' +
       'can set `status` (submitted/under_review/accepted/rejected/redirected/waitlisted/participated) and ' +
       '`reviewNotes`; this records the decision inside ASTN and never emails the applicant. ' +
-      "For opportunities you can also replace `formFields` — the application form itself. Pass the " +
-      'whole array (astn_get returns the current one); keys are sanitised on write. Adding questions ' +
-      'is always allowed. Removing or renaming a question that people already answered is refused ' +
+      'For opportunities and surveys you can also replace `formFields` — the application form and ' +
+      'the survey questions respectively. Pass the whole array (astn_get returns the current one); ' +
+      'keys are sanitised on write. Adding questions is always allowed, at any status: a published ' +
+      'survey is not frozen. Removing or renaming a question that people already answered is refused ' +
       'the first time, with the count of answers it would strand, and goes through on a repeat call ' +
       'with confirmDiscardsAnswers: true. ' +
       'Sending emails is never exposed here. Only the provided keys change.',
@@ -209,9 +210,9 @@ export const TOOL_DEFS = [
         confirmDiscardsAnswers: {
           type: 'boolean',
           description:
-            'Only for opportunities.formFields. Acknowledges that the new form drops questions ' +
-            'people already answered, stranding those answers. The error you get without it tells ' +
-            'you exactly how many.',
+            'For formFields on opportunities and surveys. Acknowledges that the new form drops ' +
+            'questions people already answered, stranding those answers. The error you get ' +
+            'without it tells you exactly how many.',
         },
       },
       required: ['org', 'resource', 'id', 'fields'],
@@ -308,8 +309,12 @@ const PLATFORM_FIELD_HINTS: Record<string, string> = {
     'create requires: opportunityId, title, formFields (the questions). optional: description, ' +
     'applicantStatuses (which applicants get a personal link, e.g. ["accepted"]), anonymous. ' +
     'Always created as a draft — publish it by setting status to open. Returns the accessToken, ' +
-    'which is the shareable link and, for an anonymous survey, the only way in. An opportunity ' +
-    'can have one active identified survey and one active anonymous one at the same time.',
+    'which is the shareable link and, for an anonymous survey, the only way in. ' +
+    'LIMIT: one active survey PER KIND per opportunity, where the kind is identified vs anonymous. ' +
+    'So an identified survey and an anonymous one can be active at the same time on the same ' +
+    'opportunity — that is the intended setup, e.g. named end-of-course feedback alongside ' +
+    'anonymous feedback about the facilitators. What is refused is a second survey of the same ' +
+    'kind while one is draft or open; close the first one, or edit it instead of creating another.',
   polls:
     'create requires: opportunityId. everything else defaults to how BAISH runs them: Mon–Sat ' +
     '09:00–21:00 in 30-minute slots, Buenos Aires. optional: title, timezone, days (0=Mon…6=Sun), ' +
@@ -324,7 +329,10 @@ const PLATFORM_UPDATE_HINTS: Record<string, string> = {
     'application form (pass the whole array). astn_delete only works on an opportunity with ' +
     'nothing attached: no applications, surveys, extra polls or sent emails.',
   surveys:
-    'status ∈ draft|open|closed. Opening publishes it. formFields replaces the questions (pass ' +
+    'status ∈ draft|open|closed. Opening publishes it — and an identified survey and an anonymous ' +
+    'one can both be open on the same opportunity, so publishing one never means retiring the ' +
+    'other. The one-active limit is per kind, not per opportunity. formFields replaces the ' +
+    'questions (pass ' +
     'the whole array) and works at any status — adding is always free; removing a question is ' +
     'refused while somebody has answered it, and the refusal names the questions and the count. ' +
     'Repeat with confirmDiscardsAnswers: true to strand those answers on purpose.',

@@ -93,10 +93,17 @@ export async function createSurveyFor(
         (s.anonymous === true) === wantAnonymous,
     )
   )
+    // Naming the kind matters: "an active survey already exists" reads as one
+    // survey per opportunity, which is the misconception this limit keeps
+    // producing. The limit is per kind — the other kind is still available.
     throw new ConvexError(
       wantAnonymous
-        ? 'An active anonymous survey already exists for this opportunity'
-        : 'An active survey already exists for this opportunity',
+        ? 'This opportunity already has an active anonymous survey (draft or open). ' +
+          'Close or edit that one — the limit is one per kind, so its identified ' +
+          'survey is unaffected.'
+        : 'This opportunity already has an active identified survey (draft or open). ' +
+          'Close or edit that one — the limit is one per kind, so you can still add ' +
+          'an anonymous survey alongside it.',
     )
 
   const now = Date.now()
