@@ -84,21 +84,25 @@ export function SignInPanel({
   body,
   buttonLabel,
   children,
+  headingLevel = 'h2',
 }: {
   title: string
   body: string
   buttonLabel?: string
   children?: React.ReactNode
+  // h1 when the panel is the whole page (the attendee pages' sign-in gate).
+  headingLevel?: 'h1' | 'h2'
 }) {
+  const Heading = headingLevel
   const t = useCopy(copy)
   const redirect =
     typeof window !== 'undefined' ? window.location.href : undefined
   return (
     <Panel raised aria-label={title}>
       <div className="flex flex-col gap-1.5">
-        <h2 className="text-[19px] font-semibold text-[var(--baish-strong)]">
+        <Heading className="text-[19px] font-semibold text-[var(--baish-strong)]">
           {title}
-        </h2>
+        </Heading>
         <p className="text-[15px] leading-normal">{body}</p>
       </div>
       <SignInButton
@@ -127,7 +131,11 @@ export function SignedInGate({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated) {
     return (
       <main className="px-5 pb-10 pt-6">
-        <SignInPanel title={t.signInTitle} body={t.signInBody} />
+        <SignInPanel
+          title={t.signInTitle}
+          body={t.signInBody}
+          headingLevel="h1"
+        />
       </main>
     )
   }
