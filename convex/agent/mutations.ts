@@ -1,5 +1,6 @@
 import { v } from 'convex/values'
 import { internalMutation, mutation } from '../_generated/server'
+import { safeLinkedinUrl } from '../social/lib'
 import { getUserId } from '../lib/auth'
 import { SKILLS_LIST } from './prompts'
 import { convertDateString, educationMatches, workMatches } from './utils'
@@ -92,6 +93,11 @@ export const applyToolChange = internalMutation({
 
     // Parse and apply updates to profile
     const updates = JSON.parse(args.updates) as Record<string, unknown>
+    // Same rule as profiles.updateField: only store linkable LinkedIn URLs.
+    if ('linkedinUrl' in updates) {
+      updates.linkedinUrl =
+        safeLinkedinUrl(updates.linkedinUrl as string | undefined) ?? undefined
+    }
     const affectsMatches = Object.keys(updates).some((f) =>
       MATCH_AFFECTING_FIELDS.has(f),
     )

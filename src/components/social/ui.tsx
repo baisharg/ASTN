@@ -1,6 +1,10 @@
 import { Link } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { cn } from '~/lib/utils'
+import { useCopy } from '~/lib/social-i18n'
+import type { FunctionReturnType } from 'convex/server'
+import type { api } from '../../../convex/_generated/api'
+import type { SocialLang } from '~/lib/social-i18n'
 
 /** Shared building blocks for the in-person event pages (BAISH theme). */
 
@@ -30,53 +34,57 @@ export function Avatar({
   )
 }
 
-export type AttendeeState = 'available' | 'in_meeting' | 'busy'
+export type AttendeeState = FunctionReturnType<
+  typeof api.social.meetings.listAttendees
+>[number]['state']
+
+const stateCopy = {
+  es: {
+    available: 'Disponible',
+    in_meeting: 'En reunión',
+    busy: 'No disponible',
+  },
+  en: {
+    available: 'Available',
+    in_meeting: 'In a meeting',
+    busy: 'Not available',
+  },
+} satisfies Record<SocialLang, Record<AttendeeState, string>>
+
+const stateStyle: Record<AttendeeState, { text: string; dot: string }> = {
+  available: {
+    text: 'text-[var(--baish-ok)]',
+    dot: 'bg-[var(--baish-ok-dot)]',
+  },
+  in_meeting: {
+    text: 'text-[var(--baish-warn)]',
+    dot: 'bg-[var(--baish-warn-dot)]',
+  },
+  busy: {
+    text: 'text-muted-foreground',
+    dot: 'border-[1.5px] border-muted-foreground',
+  },
+}
 
 export function StateLabel({
   state,
-  copy,
   compact = false,
 }: {
   state: AttendeeState
-  copy: { available: string; in_meeting: string; busy: string }
   compact?: boolean
 }) {
-  const textSize = compact ? 'text-xs' : 'text-[13px]'
-  if (state === 'available') {
-    return (
-      <span
-        className={cn(
-          'flex items-center gap-1.5 font-medium text-[var(--baish-ok)]',
-          textSize,
-        )}
-      >
-        <span className="size-2 rounded-full bg-[var(--baish-ok-dot)]" />
-        {copy.available}
-      </span>
-    )
-  }
-  if (state === 'in_meeting') {
-    return (
-      <span
-        className={cn(
-          'flex items-center gap-1.5 font-medium text-[var(--baish-warn)]',
-          textSize,
-        )}
-      >
-        <span className="size-2 rounded-full bg-[var(--baish-warn-dot)]" />
-        {copy.in_meeting}
-      </span>
-    )
-  }
+  const t = useCopy(stateCopy)
+  const style = stateStyle[state]
   return (
     <span
       className={cn(
-        'flex items-center gap-1.5 font-medium text-muted-foreground',
-        textSize,
+        'flex items-center gap-1.5 font-medium',
+        compact ? 'text-xs' : 'text-[13px]',
+        style.text,
       )}
     >
-      <span className="size-2 rounded-full border-[1.5px] border-muted-foreground" />
-      {copy.busy}
+      <span className={cn('size-2 rounded-full', style.dot)} />
+      {t[state]}
     </span>
   )
 }

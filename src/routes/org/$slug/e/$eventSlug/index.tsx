@@ -1,4 +1,3 @@
-import { SignInButton } from '@clerk/clerk-react'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import {
   AuthLoading,
@@ -20,12 +19,14 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../convex/_generated/api'
 import { useSocialEvent } from '~/components/social/SocialEventContext'
+import { SignInPanel } from '~/components/social/live'
 import {
   Panel,
   primaryButtonClass,
   secondaryButtonClass,
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
+import { useBusyAction } from '~/lib/use-busy-action'
 import {
   formatEventDate,
   formatTime,
@@ -174,7 +175,10 @@ function EventRegistrationPage() {
   const event = useSocialEvent()
   const t = useCopy(copy)
   const { lang } = useSocialLang()
-  const peopleLine = t.people(event.approvedCount)
+  const approvedCount = useQuery(api.social.events.getApprovedCount, {
+    eventId: event._id,
+  })
+  const peopleLine = t.people(approvedCount ?? 0)
 
   return (
     <main className="flex flex-col gap-6 px-5 pb-10 pt-6">
@@ -198,14 +202,12 @@ function EventRegistrationPage() {
               {[event.venueName, event.venueAddress].filter(Boolean).join(', ')}
             </InfoRow>
           )}
-          {event.meetingsOpenAt && event.meetingsCloseAt && (
-            <InfoRow icon={Clock3}>
-              {t.meetingsWindow(
-                formatTime(event.meetingsOpenAt, event.timezone, lang),
-                formatTime(event.meetingsCloseAt, event.timezone, lang),
-              )}
-            </InfoRow>
-          )}
+          <InfoRow icon={Clock3}>
+            {t.meetingsWindow(
+              formatTime(event.meetingsOpenAt, event.timezone, lang),
+              formatTime(event.meetingsCloseAt, event.timezone, lang),
+            )}
+          </InfoRow>
           {peopleLine && <InfoRow icon={Users}>{peopleLine}</InfoRow>}
         </div>
         {event.description && (
@@ -227,7 +229,15 @@ function EventRegistrationPage() {
             </Panel>
           </AuthLoading>
           <Unauthenticated>
-            <SignInCard />
+            <SignInPanel
+              title={t.signInTitle}
+              body={t.signInBody}
+              buttonLabel={t.signInButton}
+            >
+              <p className="text-[13px] leading-normal text-muted-foreground">
+                {t.signInHint}
+              </p>
+            </SignInPanel>
           </Unauthenticated>
           <Authenticated>
             <RegistrationCard />
@@ -279,34 +289,6 @@ function InfoRow({
   )
 }
 
-function SignInCard() {
-  const t = useCopy(copy)
-  const redirect =
-    typeof window !== 'undefined' ? window.location.href : undefined
-  return (
-    <Panel raised aria-label={t.signInTitle}>
-      <div className="flex flex-col gap-1.5">
-        <h2 className="text-[19px] font-semibold text-[var(--baish-strong)]">
-          {t.signInTitle}
-        </h2>
-        <p className="text-[15px] leading-normal">{t.signInBody}</p>
-      </div>
-      <SignInButton
-        mode="modal"
-        forceRedirectUrl={redirect}
-        signUpForceRedirectUrl={redirect}
-      >
-        <button type="button" className={primaryButtonClass}>
-          {t.signInButton}
-        </button>
-      </SignInButton>
-      <p className="text-[13px] leading-normal text-muted-foreground">
-        {t.signInHint}
-      </p>
-    </Panel>
-  )
-}
-
 function RegistrationCard() {
   const event = useSocialEvent()
   const t = useCopy(copy)
@@ -316,7 +298,8 @@ function RegistrationCard() {
   })
   const register = useMutation(api.social.events.register)
   const [linkedin, setLinkedin] = useState('')
-  const [submitting, setSubmitting] = useState(false)
+  const { busy, run } = useBusyAction<'register'>()
+  const submitting = busy !== null
 
   if (registration === undefined) {
     return (
@@ -327,33 +310,28 @@ function RegistrationCard() {
   }
   if (registration === null) return null
 
-  const onRegister = async () => {
-    setSubmitting(true)
-    try {
-      await register({
-        eventId: event._id,
-        linkedinUrl: linkedin.trim() || undefined,
-      })
-    } catch (error) {
-      console.error(error)
-      toast.error(t.registerFailed)
-    } finally {
-      setSubmitting(false)
-    }
-  }
+  const onRegister = () =>
+    run(
+      'register',
+      () =>
+        register({
+          eventId: event._id,
+          linkedinUrl: linkedin.trim() || undefined,
+        }),
+      () => toast.error(t.registerFailed),
+    )
 
   const guest = registration.guest
   const profileReady = registration.profileMissing.length === 0
-  const profileLink = (
+  // "Set up profile" is the main action once approved; otherwise secondary.
+  const profileLink = (prominent: boolean) => (
     <Link
       to="/org/$slug/e/$eventSlug/profile"
       params={{ slug, eventSlug }}
-      className={profileReady ? secondaryButtonClass : primaryButtonClass}
+      className={prominent ? primaryButtonClass : secondaryButtonClass}
     >
       {profileReady ? t.editProfile : t.buildProfile}
-      {!profileReady && (
-        <ArrowRight className="size-[18px]" aria-hidden="true" />
-      )}
+      {prominent && <ArrowRight className="size-[18px]" aria-hidden="true" />}
     </Link>
   )
 
@@ -440,7 +418,7 @@ function RegistrationCard() {
             >
               {t.seePeople}
             </Link>
-            {profileLink}
+            {profileLink(!profileReady)}
           </>
         ) : (
           <>
@@ -450,7 +428,7 @@ function RegistrationCard() {
               </h2>
               <p className="text-[15px] leading-normal">{t.nextProfileBody}</p>
             </div>
-            {profileLink}
+            {profileLink(!profileReady)}
           </>
         )}
       </Panel>
@@ -471,13 +449,7 @@ function RegistrationCard() {
           </h2>
           <p className="text-[15px] leading-normal">{t.pendingProfileBody}</p>
         </div>
-        <Link
-          to="/org/$slug/e/$eventSlug/profile"
-          params={{ slug, eventSlug }}
-          className={secondaryButtonClass}
-        >
-          {profileReady ? t.editProfile : t.buildProfile}
-        </Link>
+        {profileLink(false)}
       </Panel>
     )
   }

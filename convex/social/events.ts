@@ -2,28 +2,34 @@ import { ConvexError, v } from 'convex/values'
 import { internal } from '../_generated/api'
 import { mutation, query } from '../_generated/server'
 import { getUserId, requireOrgAdmin } from '../lib/auth'
+import { slugifyTitle } from '../orgOpportunities'
+import schema from '../schema'
+import { DEFAULT_MEETING_MINUTES } from './constants'
 import {
-  DEFAULT_MEETING_MINUTES,
   addToAllowlist,
   findGuestForIdentity,
   focusFromPrompt,
   getProfileByUser,
   isOnAllowlist,
+  isProfileReadyForMatching,
+  meetingsWindow,
   normalizeEmail,
   profileMissingForMatching,
+  requireEventAdmin,
   safeLinkedinUrl,
+  updateGuestAndSync,
 } from './lib'
+import {
+  allowlistSourceValidator,
+  eventStatusValidator,
+  guestSourceValidator,
+  guestStatusValidator,
+  lumaSyncValidator,
+  profileMissingValidator,
+} from './validators'
 import type { GuestStatus } from './lib'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
-
-const guestStatusValidator = v.union(
-  v.literal('approved'),
-  v.literal('pending_approval'),
-  v.literal('declined'),
-  v.literal('waitlist'),
-  v.literal('invited'),
-)
 
 const eventPublicValidator = v.object({
   _id: v.id('socialEvents'),
@@ -38,33 +44,15 @@ const eventPublicValidator = v.object({
   timezone: v.string(),
   venueName: v.union(v.string(), v.null()),
   venueAddress: v.union(v.string(), v.null()),
-  status: v.union(
-    v.literal('draft'),
-    v.literal('published'),
-    v.literal('closed'),
-  ),
+  status: eventStatusValidator,
   lumaUrl: v.union(v.string(), v.null()),
-  meetingsOpenAt: v.union(v.number(), v.null()),
-  meetingsCloseAt: v.union(v.number(), v.null()),
+  // Effective 1:1 window (defaults to the event's own hours).
+  meetingsOpenAt: v.number(),
+  meetingsCloseAt: v.number(),
   meetingMinutes: v.number(),
   focus: v.union(v.string(), v.null()),
-  approvedCount: v.number(),
   viewerIsAdmin: v.boolean(),
 })
-
-function slugify(text: string): string {
-  return (
-    text
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '')
-      .replace(/[^a-z0-9\s-]/g, '')
-      .trim()
-      .replace(/[\s-]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 60) || 'evento'
-  )
-}
 
 async function uniqueEventSlug(
   ctx: MutationCtx,
@@ -114,16 +102,6 @@ async function countGuestsWithStatus(
   return rows.length
 }
 
-async function requireEventAdmin(
-  ctx: QueryCtx | MutationCtx,
-  eventId: Id<'socialEvents'>,
-): Promise<{ event: Doc<'socialEvents'>; userId: string }> {
-  const event = await ctx.db.get('socialEvents', eventId)
-  if (!event) throw new ConvexError('Event not found')
-  const userId = await requireOrgAdmin(ctx, event.orgId)
-  return { event, userId }
-}
-
 // ── Public ──────────────────────────────────────────────────────────────
 
 /** Everything the public event page needs. Drafts are visible to admins only. */
@@ -163,13 +141,26 @@ export const getEventPage = query({
       venueAddress: event.venueAddress ?? null,
       status: event.status,
       lumaUrl: event.lumaUrl ?? null,
-      meetingsOpenAt: event.meetingsOpenAt ?? null,
-      meetingsCloseAt: event.meetingsCloseAt ?? null,
+      meetingsOpenAt: meetingsWindow(event).openAt,
+      meetingsCloseAt: meetingsWindow(event).closeAt,
       meetingMinutes: event.meetingMinutes,
       focus: focusFromPrompt(event.matchingPrompt),
-      approvedCount: await countGuestsWithStatus(ctx, event._id, 'approved'),
       viewerIsAdmin,
     }
+  },
+})
+
+/**
+ * How many people are confirmed. Separate from getEventPage so guest-row
+ * changes don't re-run the page query every event screen subscribes to.
+ */
+export const getApprovedCount = query({
+  args: { eventId: v.id('socialEvents') },
+  returns: v.number(),
+  handler: async (ctx, { eventId }) => {
+    const event = await ctx.db.get('socialEvents', eventId)
+    if (!event || event.status === 'draft') return 0
+    return await countGuestsWithStatus(ctx, eventId, 'approved')
   },
 })
 
@@ -187,21 +178,10 @@ export const getMyRegistration = query({
           _id: v.id('socialEventGuests'),
           status: guestStatusValidator,
           linkedToAccount: v.boolean(),
-          lumaSync: v.union(
-            v.literal('not_linked'),
-            v.literal('pending'),
-            v.literal('synced'),
-            v.literal('error'),
-          ),
+          lumaSync: lumaSyncValidator,
         }),
       ),
-      profileMissing: v.array(
-        v.union(
-          v.literal('background'),
-          v.literal('seeking'),
-          v.literal('canHelpWith'),
-        ),
-      ),
+      profileMissing: v.array(profileMissingValidator),
     }),
   ),
   handler: async (ctx, { eventId }) => {
@@ -345,11 +325,7 @@ export const listEvents = query({
       title: v.string(),
       startAt: v.number(),
       timezone: v.string(),
-      status: v.union(
-        v.literal('draft'),
-        v.literal('published'),
-        v.literal('closed'),
-      ),
+      status: eventStatusValidator,
       lumaLinked: v.boolean(),
       approvedCount: v.number(),
       pendingCount: v.number(),
@@ -384,7 +360,23 @@ export const listEvents = query({
 
 export const getEventAdmin = query({
   args: { eventId: v.id('socialEvents') },
-  returns: v.any(),
+  returns: v.object({
+    ...schema.tables.socialEvents.validator.fields,
+    _id: v.id('socialEvents'),
+    _creationTime: v.number(),
+    orgSlug: v.union(v.string(), v.null()),
+    spots: v.array(
+      v.object({
+        ...schema.tables.socialEventSpots.validator.fields,
+        _id: v.id('socialEventSpots'),
+        _creationTime: v.number(),
+      }),
+    ),
+    floorPlanUrl: v.union(v.string(), v.null()),
+    approvedCount: v.number(),
+    pendingCount: v.number(),
+    lumaErrors: v.number(),
+  }),
   handler: async (ctx, { eventId }) => {
     const { event } = await requireEventAdmin(ctx, eventId)
     const spots = await ctx.db
@@ -434,7 +426,11 @@ export const createEvent = mutation({
     const userId = await requireOrgAdmin(ctx, args.orgId)
     const title = args.title.trim()
     if (!title) throw new ConvexError('Title is required')
-    const slug = await uniqueEventSlug(ctx, args.orgId, slugify(title))
+    const slug = await uniqueEventSlug(
+      ctx,
+      args.orgId,
+      slugifyTitle(title) || 'evento',
+    )
     const now = Date.now()
     const eventId = await ctx.db.insert('socialEvents', {
       orgId: args.orgId,
@@ -466,9 +462,7 @@ export const updateEvent = mutation({
     timezone: v.optional(v.string()),
     venueName: v.optional(v.string()),
     venueAddress: v.optional(v.string()),
-    status: v.optional(
-      v.union(v.literal('draft'), v.literal('published'), v.literal('closed')),
-    ),
+    status: v.optional(eventStatusValidator),
     meetingsOpenAt: v.optional(v.union(v.number(), v.null())),
     meetingsCloseAt: v.optional(v.union(v.number(), v.null())),
     meetingMinutes: v.optional(v.number()),
@@ -574,16 +568,11 @@ export const listGuests = query({
       email: v.string(),
       name: v.union(v.string(), v.null()),
       status: guestStatusValidator,
-      source: v.union(v.literal('app'), v.literal('luma'), v.literal('admin')),
+      source: guestSourceValidator,
       linkedinUrl: v.union(v.string(), v.null()),
       hasAccount: v.boolean(),
       profileReady: v.boolean(),
-      lumaSync: v.union(
-        v.literal('not_linked'),
-        v.literal('pending'),
-        v.literal('synced'),
-        v.literal('error'),
-      ),
+      lumaSync: lumaSyncValidator,
       lumaSyncError: v.union(v.string(), v.null()),
       checkedIn: v.boolean(),
       registeredAt: v.number(),
@@ -608,8 +597,7 @@ export const listGuests = query({
             safeLinkedinUrl(g.linkedinUrl) ??
             safeLinkedinUrl(profile?.linkedinUrl),
           hasAccount: !!g.userId,
-          profileReady:
-            !!profile && profileMissingForMatching(profile).length === 0,
+          profileReady: isProfileReadyForMatching(profile),
           lumaSync: g.lumaSync,
           lumaSyncError: g.lumaSyncError ?? null,
           checkedIn: g.checkedInAt !== undefined,
@@ -636,12 +624,7 @@ export const setGuestStatus = mutation({
     const { event, userId } = await requireEventAdmin(ctx, guest.eventId)
     if (guest.status === status) return null
 
-    await ctx.db.patch('socialEventGuests', guestId, {
-      status,
-      lumaSync: event.lumaEventId ? 'pending' : 'not_linked',
-      lumaSyncError: undefined,
-      updatedAt: Date.now(),
-    })
+    await updateGuestAndSync(ctx, event, guestId, { status })
     if (status === 'approved') {
       await addToAllowlist(ctx, {
         orgId: event.orgId,
@@ -649,11 +632,6 @@ export const setGuestStatus = mutation({
         name: guest.name,
         source: 'approval',
         addedBy: userId,
-      })
-    }
-    if (event.lumaEventId) {
-      await ctx.scheduler.runAfter(0, internal.social.lumaSync.pushGuest, {
-        guestId,
       })
     }
     return null
@@ -665,7 +643,7 @@ export const retryLumaErrors = mutation({
   args: { eventId: v.id('socialEvents') },
   returns: v.number(),
   handler: async (ctx, { eventId }) => {
-    await requireEventAdmin(ctx, eventId)
+    const { event } = await requireEventAdmin(ctx, eventId)
     const failed = await ctx.db
       .query('socialEventGuests')
       .withIndex('by_eventId_and_lumaSync', (q) =>
@@ -673,12 +651,7 @@ export const retryLumaErrors = mutation({
       )
       .take(100)
     for (const guest of failed) {
-      await ctx.db.patch('socialEventGuests', guest._id, {
-        lumaSync: 'pending',
-      })
-      await ctx.scheduler.runAfter(0, internal.social.lumaSync.pushGuest, {
-        guestId: guest._id,
-      })
+      await updateGuestAndSync(ctx, event, guest._id, {})
     }
     return failed.length
   },
@@ -693,11 +666,7 @@ export const listAllowlist = query({
       _id: v.id('orgAllowlist'),
       email: v.string(),
       name: v.union(v.string(), v.null()),
-      source: v.union(
-        v.literal('csv'),
-        v.literal('approval'),
-        v.literal('manual'),
-      ),
+      source: allowlistSourceValidator,
       addedAt: v.number(),
     }),
   ),
@@ -775,25 +744,17 @@ export const importAllowlist = mutation({
         )
         .take(20)
     ).filter((e) => e.status === 'published')
+    const justAdded = new Set(addedEmails)
     for (const event of openEvents) {
-      for (const email of addedEmails) {
-        const guest = await ctx.db
-          .query('socialEventGuests')
-          .withIndex('by_eventId_and_email', (q) =>
-            q.eq('eventId', event._id).eq('email', email),
-          )
-          .first()
-        if (guest?.status !== 'pending_approval') continue
-        await ctx.db.patch('socialEventGuests', guest._id, {
-          status: 'approved',
-          lumaSync: event.lumaEventId ? 'pending' : 'not_linked',
-          updatedAt: Date.now(),
-        })
-        if (event.lumaEventId) {
-          await ctx.scheduler.runAfter(0, internal.social.lumaSync.pushGuest, {
-            guestId: guest._id,
-          })
-        }
+      const pending = await ctx.db
+        .query('socialEventGuests')
+        .withIndex('by_eventId_and_status', (q) =>
+          q.eq('eventId', event._id).eq('status', 'pending_approval'),
+        )
+        .take(1000)
+      for (const guest of pending) {
+        if (!justAdded.has(guest.email)) continue
+        await updateGuestAndSync(ctx, event, guest._id, { status: 'approved' })
         approvedPending++
       }
     }

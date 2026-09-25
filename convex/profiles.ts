@@ -4,6 +4,7 @@ import { internalMutation, mutation, query } from './_generated/server'
 import { getUserId } from './lib/auth'
 import { debouncedSchedule } from './lib/debouncer'
 import { safeLinkedinUrl } from './social/lib'
+import { socialVisibilityValidator } from './social/validators'
 
 // Section completeness rules
 const COMPLETENESS_SECTIONS = [
@@ -257,13 +258,7 @@ export const updateField = mutation({
       aiSafetyInterests: v.optional(v.array(v.string())),
       seeking: v.optional(v.string()),
       canHelpWith: v.optional(v.string()),
-      socialVisibility: v.optional(
-        v.union(
-          v.literal('event_attendees'),
-          v.literal('org_members'),
-          v.literal('public'),
-        ),
-      ),
+      socialVisibility: v.optional(socialVisibilityValidator),
       enrichmentSummary: v.optional(v.string()),
       hasEnrichmentConversation: v.optional(v.boolean()),
       privacySettings: v.optional(

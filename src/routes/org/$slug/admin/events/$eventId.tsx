@@ -2,12 +2,10 @@ import { Link, createFileRoute } from '@tanstack/react-router'
 import { useQuery } from 'convex/react'
 import {
   Activity,
-  Building2,
   CalendarDays,
   ExternalLink,
   ListChecks,
   Settings,
-  Shield,
   Users,
 } from 'lucide-react'
 import { api } from '../../../../../../convex/_generated/api'
@@ -16,79 +14,45 @@ import { AllowlistTab } from '~/components/social-admin/AllowlistTab'
 import { EventSettingsTab } from '~/components/social-admin/EventSettingsTab'
 import { GuestsTab } from '~/components/social-admin/GuestsTab'
 import { LiveTab } from '~/components/social-admin/LiveTab'
-import { EventStatusBadge } from '~/components/social-admin/shared'
-import type { AdminEvent } from '~/components/social-admin/shared'
-import { AuthHeader } from '~/components/layout/auth-header'
+import {
+  EventStatusBadge,
+  OrgAdminGate,
+  PageShell,
+} from '~/components/social-admin/shared'
 import { Button } from '~/components/ui/button'
 import { Spinner } from '~/components/ui/spinner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
-import { useDotGridStyle } from '~/hooks/use-dot-grid-style'
 import { formatEventDateTime } from '~/lib/zoned-time'
 
 export const Route = createFileRoute('/org/$slug/admin/events/$eventId')({
-  component: AdminEventPage,
+  component: AdminEventRoute,
 })
 
-function PageShell({ children }: { children: React.ReactNode }) {
-  const dotGridStyle = useDotGridStyle()
+function AdminEventRoute() {
+  const { slug, eventId } = Route.useParams()
   return (
-    <div className="min-h-screen" style={dotGridStyle}>
-      <AuthHeader />
-      <main className="container mx-auto px-4 py-8">{children}</main>
-    </div>
+    <OrgAdminGate slug={slug}>
+      {(org) => (
+        <AdminEventPage
+          orgId={org._id}
+          slug={slug}
+          eventId={eventId as Id<'socialEvents'>}
+        />
+      )}
+    </OrgAdminGate>
   )
 }
 
-function AdminEventPage() {
-  const { slug, eventId } = Route.useParams()
-
-  const org = useQuery(api.orgs.directory.getOrgBySlug, { slug })
-  const membership = useQuery(
-    api.orgs.membership.getMembership,
-    org ? { orgId: org._id } : 'skip',
-  )
-  const isAdmin = !!org && membership?.role === 'admin'
-  const event = useQuery(
-    api.social.events.getEventAdmin,
-    isAdmin ? { eventId: eventId as Id<'socialEvents'> } : 'skip',
-  ) as AdminEvent | null | undefined
-
-  if (org === undefined || membership === undefined) {
-    return (
-      <PageShell>
-        <Spinner className="size-8 mx-auto" />
-      </PageShell>
-    )
-  }
-
-  if (!org) {
-    return (
-      <PageShell>
-        <div className="max-w-lg mx-auto text-center py-12">
-          <Building2 className="size-8 text-slate-400 mx-auto mb-4" />
-          <h1 className="text-2xl font-display mb-4">
-            No encontramos la organización
-          </h1>
-        </div>
-      </PageShell>
-    )
-  }
-
-  if (!isAdmin) {
-    return (
-      <PageShell>
-        <div className="max-w-lg mx-auto text-center py-12">
-          <Shield className="size-8 text-slate-400 mx-auto mb-4" />
-          <h1 className="text-2xl font-display mb-4">Necesitás ser admin</h1>
-          <Button asChild>
-            <Link to="/org/$slug" params={{ slug }}>
-              Volver a la organización
-            </Link>
-          </Button>
-        </div>
-      </PageShell>
-    )
-  }
+function AdminEventPage({
+  orgId,
+  slug,
+  eventId,
+}: {
+  orgId: Id<'organizations'>
+  slug: string
+  eventId: Id<'socialEvents'>
+}) {
+  const event = useQuery(api.social.events.getEventAdmin, { eventId })
 
   if (event === undefined) {
     return (
@@ -98,7 +62,7 @@ function AdminEventPage() {
     )
   }
 
-  if (event === null || event.orgId !== org._id) {
+  if (event === null || event.orgId !== orgId) {
     return (
       <PageShell>
         <div className="max-w-lg mx-auto text-center py-12">

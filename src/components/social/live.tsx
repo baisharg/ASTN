@@ -1,15 +1,18 @@
 import { SignInButton } from '@clerk/clerk-react'
-import { Link } from '@tanstack/react-router'
-import { ConvexError } from 'convex/values'
-import { useConvexAuth, useQuery } from 'convex/react'
+import { Link, useNavigate } from '@tanstack/react-router'
+import { useConvexAuth, useMutation, useQuery } from 'convex/react'
 import { ArrowRight, MapPin } from 'lucide-react'
-import { useState } from 'react'
 import { api } from '../../../convex/_generated/api'
+import { MAX_OUTGOING_PENDING } from '../../../convex/social/constants'
 import { useNow, useSocialEvent } from './SocialEventContext'
 import { Panel, primaryButtonClass, secondaryButtonClass } from './ui'
 import type { FunctionReturnType } from 'convex/server'
+import type { Id } from '../../../convex/_generated/dataModel'
+import type { MeetingErrorCode } from '../../../convex/social/constants'
+import type { AttendeeState } from './ui'
 import type { SocialLang } from '~/lib/social-i18n'
 import { Spinner } from '~/components/ui/spinner'
+import { errorCode, errorText } from '~/lib/convex-error'
 import { useCopy, useSocialLang } from '~/lib/social-i18n'
 
 /** Live state for the signed-in attendee (see meetings.getLiveState). */
@@ -51,23 +54,65 @@ const copy = {
 
 /**
  * The viewer's live state, or undefined while it loads (null when signed out
- * or the event is gone).
+ * or the event is gone). Every caller passes the same args, so the header
+ * badge and the page share one subscription.
  */
 export function useLiveState(): LiveState | null | undefined {
   const event = useSocialEvent()
   const { isAuthenticated } = useConvexAuth()
-  const now = useNow()
   const result = useQuery(
     api.social.meetings.getLiveState,
-    isAuthenticated ? { eventId: event._id, now } : 'skip',
+    isAuthenticated ? { eventId: event._id } : 'skip',
   )
-  // `now` changes every 30 s, and useQuery returns undefined until the result
-  // for the new args arrives. Keep returning the last result meanwhile so
-  // pages don't unmount (and lose a half-written note) twice a minute.
-  const [lastResult, setLastResult] = useState(result)
-  if (result !== undefined && result !== lastResult) setLastResult(result)
-  if (!isAuthenticated) return null
-  return result ?? lastResult
+  return isAuthenticated ? result : null
+}
+
+/** Whether 1:1s are open right now; re-checked every 30 seconds. */
+export function useMeetingsOpen(): boolean {
+  const event = useSocialEvent()
+  const now = useNow()
+  return (
+    event.status === 'published' &&
+    now >= event.meetingsOpenAt &&
+    now <= event.meetingsCloseAt
+  )
+}
+
+/** A card with a title, a body and a Clerk sign-in button. */
+export function SignInPanel({
+  title,
+  body,
+  buttonLabel,
+  children,
+}: {
+  title: string
+  body: string
+  buttonLabel?: string
+  children?: React.ReactNode
+}) {
+  const t = useCopy(copy)
+  const redirect =
+    typeof window !== 'undefined' ? window.location.href : undefined
+  return (
+    <Panel raised aria-label={title}>
+      <div className="flex flex-col gap-1.5">
+        <h2 className="text-[19px] font-semibold text-[var(--baish-strong)]">
+          {title}
+        </h2>
+        <p className="text-[15px] leading-normal">{body}</p>
+      </div>
+      <SignInButton
+        mode="modal"
+        forceRedirectUrl={redirect}
+        signUpForceRedirectUrl={redirect}
+      >
+        <button type="button" className={primaryButtonClass}>
+          {buttonLabel ?? t.signInButton}
+        </button>
+      </SignInButton>
+      {children}
+    </Panel>
+  )
 }
 
 /**
@@ -79,31 +124,13 @@ export function SignedInGate({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useConvexAuth()
 
   if (isLoading) return <PageSpinner />
-
   if (!isAuthenticated) {
-    const redirect =
-      typeof window !== 'undefined' ? window.location.href : undefined
     return (
       <main className="px-5 pb-10 pt-6">
-        <Panel raised>
-          <h1 className="text-[19px] font-semibold text-[var(--baish-strong)]">
-            {t.signInTitle}
-          </h1>
-          <p className="text-[15px] leading-normal">{t.signInBody}</p>
-          <SignInButton
-            mode="modal"
-            forceRedirectUrl={redirect}
-            signUpForceRedirectUrl={redirect}
-          >
-            <button type="button" className={primaryButtonClass}>
-              {t.signInButton}
-            </button>
-          </SignInButton>
-        </Panel>
+        <SignInPanel title={t.signInTitle} body={t.signInBody} />
       </main>
     )
   }
-
   return <>{children}</>
 }
 
@@ -210,72 +237,45 @@ export function MeetingBanner({ meeting }: { meeting: LiveMeeting | null }) {
 
 // ── Errors ──────────────────────────────────────────────────────────────
 
-const errorCopy: Record<
-  SocialLang,
-  { generic: string; known: Array<[string, string]> }
-> = {
+const genericError = {
+  es: 'Algo salió mal. Probá de nuevo en un momento.',
+  en: 'Something went wrong. Please try again in a moment.',
+} satisfies Record<SocialLang, string>
+
+const meetingErrorCopy = {
   es: {
-    generic: 'Algo salió mal. Probá de nuevo en un momento.',
-    known: [
-      ['not open right now', 'Los 1:1 no están abiertos en este momento.'],
-      ['Finish your current meeting', 'Primero terminá tu reunión actual.'],
-      [
-        'They are in a meeting',
-        'Está en una reunión. Probá de nuevo cuando termine.',
-      ],
-      [
-        'not taking requests',
-        'Esta persona no está tomando solicitudes ahora.',
-      ],
-      [
-        'requests waiting at once',
-        'Ya tenés 5 solicitudes esperando. Cancelá alguna para mandar otra.',
-      ],
-      ['Only confirmed attendees', 'Esto es solo para asistentes confirmados.'],
-      ["can't meet yourself", 'No podés pedirte un 1:1 a vos mismo.'],
-      ['Request not found', 'Esa solicitud ya no existe.'],
-      ['meeting has ended', 'Esta reunión ya terminó.'],
-      ['Meeting not found', 'No encontramos esa reunión.'],
-    ],
+    closed: 'Los 1:1 no están abiertos en este momento.',
+    not_attendee: 'Esto es solo para asistentes confirmados.',
+    self: 'No podés pedirte un 1:1 a vos mismo.',
+    busy: 'Esta persona no está tomando solicitudes ahora.',
+    limit: `Ya tenés ${MAX_OUTGOING_PENDING} solicitudes esperando. Cancelá alguna para mandar otra.`,
+    self_in_meeting: 'Primero terminá tu reunión actual.',
+    they_in_meeting: 'Está en una reunión. Probá de nuevo cuando termine.',
+    ended: 'Esta reunión ya terminó.',
+    not_found: 'Eso ya no existe.',
   },
   en: {
-    generic: 'Something went wrong. Please try again in a moment.',
-    known: [
-      ['not open right now', '1:1s are not open right now.'],
-      ['Finish your current meeting', 'Finish your current meeting first.'],
-      [
-        'They are in a meeting',
-        "They're in a meeting. Try again when it ends.",
-      ],
-      ['not taking requests', "They're not taking requests right now."],
-      [
-        'requests waiting at once',
-        'You already have 5 requests waiting. Cancel one to send another.',
-      ],
-      ['Only confirmed attendees', 'This is only for confirmed attendees.'],
-      ["can't meet yourself", "You can't ask yourself for a 1:1."],
-      ['Request not found', 'That request no longer exists.'],
-      ['meeting has ended', 'This meeting has already ended.'],
-      ['Meeting not found', "We couldn't find that meeting."],
-    ],
+    closed: '1:1s are not open right now.',
+    not_attendee: 'This is only for confirmed attendees.',
+    self: "You can't ask yourself for a 1:1.",
+    busy: "They're not taking requests right now.",
+    limit: `You already have ${MAX_OUTGOING_PENDING} requests waiting. Cancel one to send another.`,
+    self_in_meeting: 'Finish your current meeting first.',
+    they_in_meeting: "They're in a meeting. Try again when it ends.",
+    ended: 'This meeting has already ended.',
+    not_found: 'That no longer exists.',
   },
-}
+} satisfies Record<SocialLang, Record<MeetingErrorCode, string>>
 
-/** A friendly message for an error thrown by a social mutation. */
-export function socialErrorMessage(error: unknown, lang: SocialLang): string {
-  const text =
-    error instanceof ConvexError && typeof error.data === 'string'
-      ? error.data
-      : error instanceof Error
-        ? error.message
-        : ''
-  const { generic, known } = errorCopy[lang]
-  return known.find(([needle]) => text.includes(needle))?.[1] ?? generic
-}
-
+/** Turns an error from a 1:1 mutation into a message in the page language. */
 export function useSocialErrorMessage() {
   const { lang } = useSocialLang()
-  return (error: unknown) => socialErrorMessage(error, lang)
+  return (error: unknown) => {
+    const code = errorCode<MeetingErrorCode>(error)
+    return code && code in meetingErrorCopy[lang]
+      ? meetingErrorCopy[lang][code]
+      : errorText(error, genericError[lang])
+  }
 }
 
 // ── Time ────────────────────────────────────────────────────────────────
@@ -304,17 +304,10 @@ export function formatDuration(ms: number): string {
 
 // ── Requests ────────────────────────────────────────────────────────────
 
-/** Mirrors MAX_OUTGOING_PENDING in convex/social/meetings.ts. */
-export const MAX_OUTGOING_REQUESTS = 5
-/** Mirrors MAX_NOTE_LENGTH in convex/social/meetings.ts. */
-export const MAX_NOTE_LENGTH = 280
-
-export type RequestBlock =
-  | 'closed'
-  | 'busy'
-  | 'limit'
-  | 'self_in_meeting'
-  | 'they_in_meeting'
+export type RequestBlock = Extract<
+  MeetingErrorCode,
+  'closed' | 'busy' | 'limit' | 'self_in_meeting' | 'they_in_meeting'
+>
 
 /**
  * Why the viewer can't ask `otherUserId` to meet right now, or null if they
@@ -323,39 +316,76 @@ export type RequestBlock =
  */
 export function requestBlock(
   live: LiveState,
+  meetingsOpen: boolean,
   otherUserId: string,
-  otherState: 'available' | 'in_meeting' | 'busy',
+  otherState: AttendeeState,
 ): RequestBlock | null {
-  if (!live.meetingsOpen) return 'closed'
+  if (!meetingsOpen) return 'closed'
   if (live.incoming.some((r) => r.from.userId === otherUserId)) {
     if (live.meeting) return 'self_in_meeting'
     if (otherState === 'in_meeting') return 'they_in_meeting'
     return null
   }
   if (otherState === 'busy') return 'busy'
-  if (live.outgoing.length >= MAX_OUTGOING_REQUESTS) return 'limit'
+  if (live.outgoing.length >= MAX_OUTGOING_PENDING) return 'limit'
   return null
 }
 
 export const requestBlockCopy = {
   es: {
-    closed: (_name: string) => 'Los 1:1 no están abiertos en este momento.',
+    closed: () => 'Los 1:1 no están abiertos en este momento.',
     busy: (name: string) => `${name} no está tomando solicitudes ahora.`,
-    limit: (_name: string) =>
-      `Tenés ${MAX_OUTGOING_REQUESTS} solicitudes esperando. Cancelá alguna para mandar otra.`,
+    limit: () =>
+      `Tenés ${MAX_OUTGOING_PENDING} solicitudes esperando. Cancelá alguna para mandar otra.`,
     self_in_meeting: (name: string) =>
       `${name} te pidió un 1:1. Vas a poder aceptar cuando termine tu reunión.`,
     they_in_meeting: (name: string) =>
       `${name} te pidió un 1:1 y ahora está en una reunión. Vas a poder aceptar cuando termine.`,
   },
   en: {
-    closed: (_name: string) => '1:1s are not open right now.',
+    closed: () => '1:1s are not open right now.',
     busy: (name: string) => `${name} isn't taking requests right now.`,
-    limit: (_name: string) =>
-      `You have ${MAX_OUTGOING_REQUESTS} requests waiting. Cancel one to send another.`,
+    limit: () =>
+      `You have ${MAX_OUTGOING_PENDING} requests waiting. Cancel one to send another.`,
     self_in_meeting: (name: string) =>
       `${name} asked you for a 1:1. You can accept once your meeting ends.`,
     they_in_meeting: (name: string) =>
       `${name} asked you for a 1:1 and is in a meeting now. You can accept once it ends.`,
   },
 } satisfies Record<SocialLang, Record<RequestBlock, (name: string) => string>>
+
+/**
+ * Asking someone to meet and accepting a request can both start a meeting
+ * (asking someone who already asked you accepts theirs). Either way, a
+ * started meeting opens the meeting page.
+ */
+export function useStartMeeting() {
+  const event = useSocialEvent()
+  const navigate = useNavigate()
+  const requestMeeting = useMutation(api.social.meetings.requestMeeting)
+  const respondToRequest = useMutation(api.social.meetings.respondToRequest)
+
+  const openIfStarted = (meetingId: Id<'socialMeetings'> | null) => {
+    if (meetingId) {
+      void navigate({
+        to: '/org/$slug/e/$eventSlug/meeting',
+        params: { slug: event.orgSlug, eventSlug: event.slug },
+      })
+    }
+    return meetingId !== null
+  }
+
+  return {
+    /** Resolves to true if this started a meeting. */
+    request: async (toUserId: string, note?: string) => {
+      const { meetingId } = await requestMeeting({
+        eventId: event._id,
+        toUserId,
+        note,
+      })
+      return openIfStarted(meetingId)
+    },
+    accept: async (requestId: Id<'socialMeetingRequests'>) =>
+      openIfStarted(await respondToRequest({ requestId, accept: true })),
+  }
+}

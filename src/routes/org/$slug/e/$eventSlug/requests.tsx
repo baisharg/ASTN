@@ -1,7 +1,6 @@
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation } from 'convex/react'
 import { Clock3, MapPin } from 'lucide-react'
-import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../convex/_generated/api'
 import type { LiveState } from '~/components/social/live'
@@ -9,7 +8,9 @@ import { useNow } from '~/components/social/SocialEventContext'
 import {
   AttendeeGate,
   timeAgo,
+  useMeetingsOpen,
   useSocialErrorMessage,
+  useStartMeeting,
 } from '~/components/social/live'
 import {
   Avatar,
@@ -20,6 +21,7 @@ import {
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
 import { useCopy, useSocialLang } from '~/lib/social-i18n'
+import { useBusyAction } from '~/lib/use-busy-action'
 
 export const Route = createFileRoute('/org/$slug/e/$eventSlug/requests')({
   component: RequestsPage,
@@ -104,7 +106,7 @@ function RequestsContent({ live }: { live: LiveState }) {
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
   const now = useNow(15_000)
-  const incoming = [...live.incoming].sort((a, b) => a.createdAt - b.createdAt)
+  const meetingsOpen = useMeetingsOpen()
 
   return (
     <main className="flex flex-col gap-[22px] px-5 pb-8 pt-4">
@@ -134,13 +136,19 @@ function RequestsContent({ live }: { live: LiveState }) {
           id="incoming-title"
           className="text-sm font-semibold text-muted-foreground"
         >
-          {t.incoming(incoming.length)}
+          {t.incoming(live.incoming.length)}
         </h2>
-        {incoming.length === 0 ? (
+        {live.incoming.length === 0 ? (
           <p className="text-[15px] text-muted-foreground">{t.noIncoming}</p>
         ) : (
-          incoming.map((r) => (
-            <IncomingCard key={r._id} live={live} request={r} now={now} />
+          live.incoming.map((r) => (
+            <IncomingCard
+              key={r._id}
+              live={live}
+              meetingsOpen={meetingsOpen}
+              request={r}
+              now={now}
+            />
           ))
         )}
       </section>
@@ -159,7 +167,7 @@ function RequestsContent({ live }: { live: LiveState }) {
         )}
       </section>
 
-      {incoming.length === 0 && live.outgoing.length === 0 && (
+      {live.incoming.length === 0 && live.outgoing.length === 0 && (
         <Link
           to="/org/$slug/e/$eventSlug/people"
           params={{ slug, eventSlug }}
@@ -174,10 +182,12 @@ function RequestsContent({ live }: { live: LiveState }) {
 
 function IncomingCard({
   live,
+  meetingsOpen,
   request: r,
   now,
 }: {
   live: LiveState
+  meetingsOpen: boolean
   request: Incoming
   now: number
 }) {
@@ -185,33 +195,26 @@ function IncomingCard({
   const t = useCopy(copy)
   const { lang } = useSocialLang()
   const errorMessage = useSocialErrorMessage()
-  const navigate = useNavigate()
+  const startMeeting = useStartMeeting()
   const respond = useMutation(api.social.meetings.respondToRequest)
-  const [busy, setBusy] = useState<'accept' | 'decline' | null>(null)
+  const { busy, run } = useBusyAction<'accept' | 'decline'>()
+  const onError = (error: unknown) => toast.error(errorMessage(error))
 
-  const onRespond = async (accept: boolean) => {
-    setBusy(accept ? 'accept' : 'decline')
-    try {
-      const meetingId = await respond({ requestId: r._id, accept })
-      if (accept && meetingId) {
-        void navigate({
-          to: '/org/$slug/e/$eventSlug/meeting',
-          params: { slug, eventSlug },
-        })
-      } else if (!accept) {
+  const onAccept = () =>
+    run('accept', () => startMeeting.accept(r._id), onError)
+  const onDecline = () =>
+    run(
+      'decline',
+      async () => {
+        await respond({ requestId: r._id, accept: false })
         toast.success(t.declined)
-      }
-    } catch (error) {
-      console.error(error)
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(null)
-    }
-  }
+      },
+      onError,
+    )
 
   const hint = live.meeting
     ? t.waitingForYou
-    : !live.meetingsOpen
+    : !meetingsOpen
       ? t.closedHint
       : r.fromState === 'in_meeting'
         ? t.requesterInMeeting
@@ -261,7 +264,7 @@ function IncomingCard({
         <button
           type="button"
           disabled={busy !== null}
-          onClick={() => void onRespond(false)}
+          onClick={() => void onDecline()}
           aria-label={t.declineLabel(r.from.name)}
           className={`${secondaryButtonClass} grow basis-0`}
         >
@@ -271,7 +274,7 @@ function IncomingCard({
           <button
             type="button"
             disabled={busy !== null}
-            onClick={() => void onRespond(true)}
+            onClick={() => void onAccept()}
             aria-label={t.acceptLabel(r.from.name)}
             className={`${primaryButtonClass} h-12 grow basis-0 text-[15px]`}
           >
@@ -288,20 +291,17 @@ function OutgoingRow({ request: r }: { request: Outgoing }) {
   const t = useCopy(copy)
   const errorMessage = useSocialErrorMessage()
   const cancelRequest = useMutation(api.social.meetings.cancelRequest)
-  const [cancelling, setCancelling] = useState(false)
+  const { busy, run } = useBusyAction<'cancel'>()
 
-  const onCancel = async () => {
-    setCancelling(true)
-    try {
-      await cancelRequest({ requestId: r._id })
-      toast.success(t.cancelled)
-    } catch (error) {
-      console.error(error)
-      toast.error(errorMessage(error))
-    } finally {
-      setCancelling(false)
-    }
-  }
+  const onCancel = () =>
+    run(
+      'cancel',
+      async () => {
+        await cancelRequest({ requestId: r._id })
+        toast.success(t.cancelled)
+      },
+      (error) => toast.error(errorMessage(error)),
+    )
 
   const status = [
     t.waiting,
@@ -332,12 +332,12 @@ function OutgoingRow({ request: r }: { request: Outgoing }) {
       </Link>
       <button
         type="button"
-        disabled={cancelling}
+        disabled={busy !== null}
         onClick={() => void onCancel()}
         aria-label={t.cancelLabel(r.to.name)}
         className="flex h-11 shrink-0 items-center justify-center rounded-xl border border-input bg-card px-3.5 text-sm font-semibold text-[var(--baish-brand-text)] hover:bg-muted disabled:opacity-60"
       >
-        {cancelling ? <Spinner size="sm" /> : t.cancel}
+        {busy ? <Spinner size="sm" /> : t.cancel}
       </button>
     </article>
   )

@@ -1,14 +1,9 @@
 import { useMutation, useQuery } from 'convex/react'
 import { Check, Linkedin, Loader2, Search, X } from 'lucide-react'
 import { useState } from 'react'
-import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
-import {
-  GUEST_STATUS_COLORS,
-  GUEST_STATUS_LABELS,
-  errorMessage,
-} from './shared'
+import { GUEST_STATUS_COLORS, GUEST_STATUS_LABELS, toastError } from './shared'
 import type { GuestStatus } from './shared'
 import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
@@ -28,6 +23,7 @@ import {
   SelectValue,
 } from '~/components/ui/select'
 import { Spinner } from '~/components/ui/spinner'
+import { useBusyAction } from '~/lib/use-busy-action'
 
 const SOURCE_LABELS = { app: 'App', luma: 'Luma', admin: 'Admin' } as const
 
@@ -46,7 +42,7 @@ export function GuestsTab({ eventId }: { eventId: Id<'socialEvents'> }) {
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [search, setSearch] = useState('')
-  const [busy, setBusy] = useState<string | null>(null)
+  const { busy, run } = useBusyAction()
 
   if (guests === undefined) {
     return (
@@ -56,22 +52,17 @@ export function GuestsTab({ eventId }: { eventId: Id<'socialEvents'> }) {
     )
   }
 
-  const decide = async (
+  const decide = (
     guestId: Id<'socialEventGuests'>,
     status: 'approved' | 'declined',
-  ) => {
-    setBusy(`${guestId}:${status}`)
-    try {
-      await setGuestStatus({ guestId, status })
-    } catch (err) {
-      toast.error(
+  ) =>
+    run(
+      `${guestId}:${status}`,
+      () => setGuestStatus({ guestId, status }),
+      toastError(
         status === 'approved' ? 'No se pudo aprobar' : 'No se pudo rechazar',
-        { description: errorMessage(err) },
-      )
-    } finally {
-      setBusy(null)
-    }
-  }
+      ),
+    )
 
   const pending = guests
     .filter((g) => g.status === 'pending_approval')

@@ -19,8 +19,8 @@ export function useSocialEvent(): SocialEventPage {
 }
 
 /**
- * The current time, refreshed every `intervalMs`. Queries take `now` as an
- * argument instead of reading the clock, so live screens pass this in.
+ * The current time, refreshed every `intervalMs`, for countdowns and for
+ * working out whether 1:1s are open.
  */
 export function useNow(intervalMs = 30_000): number {
   const [now, setNow] = useState(() => Date.now())

@@ -4,7 +4,7 @@ import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
-import { errorMessage } from './shared'
+import { toastError } from './shared'
 import type { AdminEvent } from './shared'
 import { Button } from '~/components/ui/button'
 import {
@@ -15,6 +15,7 @@ import {
   CardTitle,
 } from '~/components/ui/card'
 import { Input } from '~/components/ui/input'
+import { useBusyAction } from '~/lib/use-busy-action'
 import { cn } from '~/lib/utils'
 
 type Spot = { key: string; number: number; label: string; x: number; y: number }
@@ -65,8 +66,9 @@ export function SpotsCard({ event }: { event: AdminEvent }) {
     })),
   )
   const [selected, setSelected] = useState<string | null>(null)
-  const [uploading, setUploading] = useState(false)
-  const [saving, setSaving] = useState(false)
+  const { busy, run } = useBusyAction<'upload' | 'remove' | 'save'>()
+  const uploading = busy === 'upload' || busy === 'remove'
+  const saving = busy === 'save'
 
   const planRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -185,67 +187,58 @@ export function SpotsCard({ event }: { event: AdminEvent }) {
       toast.error('La imagen pesa más de 10 MB')
       return
     }
-    setUploading(true)
-    try {
-      const url = await generateUploadUrl({ eventId: event._id })
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': file.type },
-        body: file,
-      })
-      if (!res.ok) throw new Error(`Upload failed (${res.status})`)
-      const { storageId } = (await res.json()) as { storageId: Id<'_storage'> }
-      await setFloorPlan({ eventId: event._id, storageId })
-      toast.success('Plano subido')
-    } catch (err) {
-      toast.error('No se pudo subir el plano', {
-        description: errorMessage(err),
-      })
-    } finally {
-      setUploading(false)
-      if (fileRef.current) fileRef.current.value = ''
-    }
+    await run(
+      'upload',
+      async () => {
+        const url = await generateUploadUrl({ eventId: event._id })
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': file.type },
+          body: file,
+        })
+        if (!res.ok) throw new Error(`Upload failed (${res.status})`)
+        const { storageId } = (await res.json()) as {
+          storageId: Id<'_storage'>
+        }
+        await setFloorPlan({ eventId: event._id, storageId })
+        toast.success('Plano subido')
+      },
+      toastError('No se pudo subir el plano'),
+    )
+    if (fileRef.current) fileRef.current.value = ''
   }
 
-  const handleRemovePlan = async () => {
-    setUploading(true)
-    try {
-      await setFloorPlan({ eventId: event._id, storageId: null })
-      toast.success(
-        'Plano quitado. Los lugares quedan sobre un salón genérico.',
-      )
-    } catch (err) {
-      toast.error('No se pudo quitar el plano', {
-        description: errorMessage(err),
-      })
-    } finally {
-      setUploading(false)
-    }
-  }
+  const handleRemovePlan = () =>
+    run(
+      'remove',
+      async () => {
+        await setFloorPlan({ eventId: event._id, storageId: null })
+        toast.success(
+          'Plano quitado. Los lugares quedan sobre un salón genérico.',
+        )
+      },
+      toastError('No se pudo quitar el plano'),
+    )
 
-  const handleSave = async () => {
-    setSaving(true)
-    try {
-      await setSpotsMutation({
-        eventId: event._id,
-        spots: [...spots]
-          .sort((a, b) => a.number - b.number)
-          .map((s) => ({
-            number: s.number,
-            label: s.label.trim() || undefined,
-            x: s.x,
-            y: s.y,
-          })),
-      })
-      toast.success('Lugares guardados')
-    } catch (err) {
-      toast.error('No se pudieron guardar los lugares', {
-        description: errorMessage(err),
-      })
-    } finally {
-      setSaving(false)
-    }
-  }
+  const handleSave = () =>
+    run(
+      'save',
+      async () => {
+        await setSpotsMutation({
+          eventId: event._id,
+          spots: [...spots]
+            .sort((a, b) => a.number - b.number)
+            .map((s) => ({
+              number: s.number,
+              label: s.label.trim() || undefined,
+              x: s.x,
+              y: s.y,
+            })),
+        })
+        toast.success('Lugares guardados')
+      },
+      toastError('No se pudieron guardar los lugares'),
+    )
 
   const sortedSpots = [...spots].sort((a, b) => a.number - b.number)
   const numberCounts = new Map<number, number>()

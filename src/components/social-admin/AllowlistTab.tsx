@@ -1,10 +1,11 @@
 import { useMutation, useQuery } from 'convex/react'
+import type { FunctionReturnType } from 'convex/server'
 import { FileUp, Loader2, Plus, Search, Trash2, Upload } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
-import { errorMessage } from './shared'
+import { toastError } from './shared'
 import { Button } from '~/components/ui/button'
 import {
   Card,
@@ -16,8 +17,10 @@ import {
 import { Input } from '~/components/ui/input'
 import { Label } from '~/components/ui/label'
 import { Spinner } from '~/components/ui/spinner'
+import { errorText } from '~/lib/convex-error'
 import { parseAllowlistCsv } from '~/lib/parse-allowlist-csv'
 import type { ParsedAllowlist } from '~/lib/parse-allowlist-csv'
+import { useBusyAction } from '~/lib/use-busy-action'
 
 const CHUNK_SIZE = 2000
 
@@ -27,12 +30,7 @@ const SOURCE_LABELS = {
   manual: 'A mano',
 } as const
 
-type ImportResult = {
-  added: number
-  alreadyListed: number
-  invalid: number
-  approvedPending: number
-}
+type ImportResult = FunctionReturnType<typeof api.social.events.importAllowlist>
 
 function importSummary(r: ImportResult): string {
   const parts = [
@@ -60,12 +58,16 @@ export function AllowlistTab({ orgId }: { orgId: Id<'organizations'> }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [fileName, setFileName] = useState<string | null>(null)
   const [parsed, setParsed] = useState<ParsedAllowlist | null>(null)
-  const [importing, setImporting] = useState(false)
   const [manualEmail, setManualEmail] = useState('')
   const [manualName, setManualName] = useState('')
-  const [addingManual, setAddingManual] = useState(false)
   const [search, setSearch] = useState('')
-  const [removing, setRemoving] = useState<string | null>(null)
+  // Separate trackers: removing a row must not clear an import's spinner.
+  const importAction = useBusyAction<'import'>()
+  const manualAction = useBusyAction<'add'>()
+  const removeAction = useBusyAction<Id<'orgAllowlist'>>()
+  const importing = importAction.busy !== null
+  const addingManual = manualAction.busy !== null
+  const removing = removeAction.busy
 
   const handleFile = async (file: File) => {
     try {
@@ -76,10 +78,8 @@ export function AllowlistTab({ orgId }: { orgId: Id<'organizations'> }) {
       if (result.rows.length === 0) {
         toast.error('No encontramos emails en el archivo')
       }
-    } catch (err) {
-      toast.error('No se pudo leer el archivo', {
-        description: errorMessage(err),
-      })
+    } catch {
+      toast.error('No se pudo leer el archivo')
     }
   }
 
@@ -91,79 +91,86 @@ export function AllowlistTab({ orgId }: { orgId: Id<'organizations'> }) {
 
   const handleImport = async () => {
     if (!parsed || parsed.rows.length === 0) return
-    setImporting(true)
+    const rows = parsed.rows
     const total: ImportResult = {
       added: 0,
       alreadyListed: 0,
       invalid: parsed.invalid,
       approvedPending: 0,
     }
-    try {
-      for (let i = 0; i < parsed.rows.length; i += CHUNK_SIZE) {
-        const r = await importAllowlist({
-          orgId,
-          rows: parsed.rows.slice(i, i + CHUNK_SIZE),
-          source: 'csv',
+    await importAction.run(
+      'import',
+      async () => {
+        for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+          const r = await importAllowlist({
+            orgId,
+            rows: rows.slice(i, i + CHUNK_SIZE),
+            source: 'csv',
+          })
+          total.added += r.added
+          total.alreadyListed += r.alreadyListed
+          total.invalid += r.invalid
+          total.approvedPending += r.approvedPending
+        }
+        toast.success('Lista importada', {
+          description: importSummary(total),
         })
-        total.added += r.added
-        total.alreadyListed += r.alreadyListed
-        total.invalid += r.invalid
-        total.approvedPending += r.approvedPending
-      }
-      toast.success('Lista importada', { description: importSummary(total) })
-      clearFile()
-    } catch (err) {
-      toast.error('La importación se cortó', {
-        description:
-          total.added + total.alreadyListed > 0
-            ? `Se llegaron a procesar ${total.added + total.alreadyListed} filas. ${errorMessage(err) ?? ''}`
-            : errorMessage(err),
-      })
-    } finally {
-      setImporting(false)
-    }
+        clearFile()
+      },
+      (err) => {
+        const processed = total.added + total.alreadyListed
+        const detail = errorText(err, '')
+        toast.error('La importación se cortó', {
+          description:
+            [
+              processed > 0 ? `Se llegaron a procesar ${processed} filas.` : '',
+              detail,
+            ]
+              .filter(Boolean)
+              .join(' ') || undefined,
+        })
+      },
+    )
   }
 
   const handleManualAdd = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!manualEmail.trim()) return
-    setAddingManual(true)
-    try {
-      const r = await importAllowlist({
-        orgId,
-        rows: [
-          { email: manualEmail.trim(), name: manualName.trim() || undefined },
-        ],
-        source: 'manual',
-      })
-      if (r.invalid > 0) toast.error('Ese email no parece válido')
-      else if (r.alreadyListed > 0) toast.info('Ya estaba en la lista')
-      else {
-        toast.success(
-          r.approvedPending > 0
-            ? 'Agregado. Estaba pendiente y quedó aprobado.'
-            : 'Agregado a la lista',
-        )
-        setManualEmail('')
-        setManualName('')
-      }
-    } catch (err) {
-      toast.error('No se pudo agregar', { description: errorMessage(err) })
-    } finally {
-      setAddingManual(false)
-    }
+    await manualAction.run(
+      'add',
+      async () => {
+        const r = await importAllowlist({
+          orgId,
+          rows: [
+            {
+              email: manualEmail.trim(),
+              name: manualName.trim() || undefined,
+            },
+          ],
+          source: 'manual',
+        })
+        if (r.invalid > 0) toast.error('Ese email no parece válido')
+        else if (r.alreadyListed > 0) toast.info('Ya estaba en la lista')
+        else {
+          toast.success(
+            r.approvedPending > 0
+              ? 'Agregado. Estaba pendiente y quedó aprobado.'
+              : 'Agregado a la lista',
+          )
+          setManualEmail('')
+          setManualName('')
+        }
+      },
+      toastError('No se pudo agregar'),
+    )
   }
 
-  const handleRemove = async (entryId: Id<'orgAllowlist'>) => {
-    setRemoving(entryId)
-    try {
-      await removeEntry({ entryId })
-    } catch (err) {
-      toast.error('No se pudo quitar', { description: errorMessage(err) })
-    } finally {
-      setRemoving(null)
-    }
-  }
+  const handleRemove = (entryId: Id<'orgAllowlist'>) =>
+    removeAction.run(
+      entryId,
+      () => removeEntry({ entryId }),
+      toastError('No se pudo quitar'),
+    )
 
   const q = search.trim().toLowerCase()
   const visible = (entries ?? [])

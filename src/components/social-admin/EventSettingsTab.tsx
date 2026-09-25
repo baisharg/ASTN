@@ -12,13 +12,14 @@ import {
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
-import { SpotsCard } from './SpotsCard'
+import { DEFAULT_EVENT_HOURS } from '../../../convex/social/constants'
 import {
-  EVENT_STATUS_LABELS,
-  EventStatusBadge,
-  TimezoneSelect,
-  errorMessage,
-} from './shared'
+  EventDetailsFields,
+  detailsFromEvent,
+  useEventDetailsForm,
+} from './EventDetailsFields'
+import { SpotsCard } from './SpotsCard'
+import { EVENT_STATUS_LABELS, EventStatusBadge, toastError } from './shared'
 import type { AdminEvent, EventStatus } from './shared'
 import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
@@ -39,8 +40,8 @@ import {
   SelectValue,
 } from '~/components/ui/select'
 import { Textarea } from '~/components/ui/textarea'
+import { useBusyAction } from '~/lib/use-busy-action'
 import {
-  differsFromBrowserZone,
   epochToZoned,
   nextDate,
   timeOnEventNight,
@@ -59,6 +60,10 @@ export function EventSettingsTab({ event }: { event: AdminEvent }) {
   )
 }
 
+function Busy({ show }: { show: boolean }) {
+  return show ? <Loader2 className="size-4 mr-2 animate-spin" /> : null
+}
+
 // ── Status ──────────────────────────────────────────────────────────────
 
 const STATUS_HELP: Record<EventStatus, string> = {
@@ -70,41 +75,31 @@ const STATUS_HELP: Record<EventStatus, string> = {
     'La página sigue visible, pero ya no se puede inscribir nadie desde la app.',
 }
 
+const STATUS_ACTIONS: Record<
+  EventStatus,
+  Array<{ status: EventStatus; label: string; variant: 'default' | 'outline' }>
+> = {
+  draft: [{ status: 'published', label: 'Publicar', variant: 'default' }],
+  published: [
+    { status: 'closed', label: 'Cerrar inscripciones', variant: 'outline' },
+    { status: 'draft', label: 'Volver a borrador', variant: 'outline' },
+  ],
+  closed: [{ status: 'published', label: 'Reabrir', variant: 'default' }],
+}
+
 function StatusCard({ event }: { event: AdminEvent }) {
   const updateEvent = useMutation(api.social.events.updateEvent)
-  const [pending, setPending] = useState<EventStatus | null>(null)
+  const { busy, run } = useBusyAction<EventStatus>()
 
-  const setStatus = async (status: EventStatus) => {
-    setPending(status)
-    try {
-      await updateEvent({ eventId: event._id, status })
-      toast.success(`Evento: ${EVENT_STATUS_LABELS[status].toLowerCase()}`)
-    } catch (err) {
-      toast.error('No se pudo cambiar el estado', {
-        description: errorMessage(err),
-      })
-    } finally {
-      setPending(null)
-    }
-  }
-
-  const actions: Array<{
-    status: EventStatus
-    label: string
-    variant: 'default' | 'outline'
-  }> =
-    event.status === 'draft'
-      ? [{ status: 'published', label: 'Publicar', variant: 'default' }]
-      : event.status === 'published'
-        ? [
-            {
-              status: 'closed',
-              label: 'Cerrar inscripciones',
-              variant: 'outline',
-            },
-            { status: 'draft', label: 'Volver a borrador', variant: 'outline' },
-          ]
-        : [{ status: 'published', label: 'Reabrir', variant: 'default' }]
+  const setStatus = (status: EventStatus) =>
+    run(
+      status,
+      async () => {
+        await updateEvent({ eventId: event._id, status })
+        toast.success(`Evento: ${EVENT_STATUS_LABELS[status].toLowerCase()}`)
+      },
+      toastError('No se pudo cambiar el estado'),
+    )
 
   return (
     <Card>
@@ -115,17 +110,15 @@ function StatusCard({ event }: { event: AdminEvent }) {
         <CardDescription>{STATUS_HELP[event.status]}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-wrap items-center gap-2">
-        {actions.map((a) => (
+        {STATUS_ACTIONS[event.status].map((a) => (
           <Button
             key={a.status}
             variant={a.variant}
             className="min-h-11"
-            disabled={pending !== null}
+            disabled={busy !== null}
             onClick={() => void setStatus(a.status)}
           >
-            {pending === a.status && (
-              <Loader2 className="size-4 mr-2 animate-spin" />
-            )}
+            <Busy show={busy === a.status} />
             {a.label}
           </Button>
         ))}
@@ -144,8 +137,8 @@ function carryTime(
   ms: number | undefined,
   old: { date: string; tz: string },
   next: { date: string; tz: string },
-): number | undefined {
-  if (ms === undefined) return undefined
+): number | null {
+  if (ms === undefined) return null
   const z = epochToZoned(ms, old.tz)
   const date = z.date === old.date ? next.date : nextDate(next.date)
   return zonedToEpoch(date, z.time, next.tz)
@@ -153,61 +146,35 @@ function carryTime(
 
 function DetailsCard({ event }: { event: AdminEvent }) {
   const updateEvent = useMutation(api.social.events.updateEvent)
-  const start = epochToZoned(event.startAt, event.timezone)
-
-  const [title, setTitle] = useState(event.title)
-  const [date, setDate] = useState(start.date)
-  const [startTime, setStartTime] = useState(start.time)
-  const [endTime, setEndTime] = useState(
-    event.endAt ? epochToZoned(event.endAt, event.timezone).time : '',
-  )
-  const [timezone, setTimezone] = useState(event.timezone)
-  const [venueName, setVenueName] = useState(event.venueName ?? '')
-  const [venueAddress, setVenueAddress] = useState(event.venueAddress ?? '')
-  const [description, setDescription] = useState(event.description ?? '')
-  const [saving, setSaving] = useState(false)
-
-  const canSave = title.trim() !== '' && date !== '' && startTime !== ''
+  const form = useEventDetailsForm(detailsFromEvent(event))
+  const { busy, run } = useBusyAction<'save'>()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!canSave || saving) return
-    setSaving(true)
-    try {
-      const startAt = zonedToEpoch(date, startTime, timezone)
-      const endAt = endTime
-        ? timeOnEventNight(date, startTime, endTime, timezone)
-        : null
-      // Moving the event to another day keeps the 1:1 window on it.
-      const moved = date !== start.date || timezone !== event.timezone
-      const old = { date: start.date, tz: event.timezone }
-      const next = { date, tz: timezone }
-      await updateEvent({
-        eventId: event._id,
-        title: title.trim(),
-        startAt,
-        endAt,
-        timezone,
-        venueName,
-        venueAddress,
-        description,
-        ...(moved
-          ? {
-              meetingsOpenAt:
-                carryTime(event.meetingsOpenAt, old, next) ?? null,
-              meetingsCloseAt:
-                carryTime(event.meetingsCloseAt, old, next) ?? null,
-            }
-          : {}),
-      })
-      toast.success('Datos del evento guardados')
-    } catch (err) {
-      toast.error('No se pudieron guardar los datos', {
-        description: errorMessage(err),
-      })
-    } finally {
-      setSaving(false)
-    }
+    if (!form.canSave || busy) return
+    const { date, timezone } = form.values
+    const oldDate = epochToZoned(event.startAt, event.timezone).date
+    // Moving the event to another day keeps the 1:1 window on it.
+    const moved = date !== oldDate || timezone !== event.timezone
+    const old = { date: oldDate, tz: event.timezone }
+    const next = { date, tz: timezone }
+    await run(
+      'save',
+      async () => {
+        await updateEvent({
+          eventId: event._id,
+          ...form.toArgs(),
+          ...(moved
+            ? {
+                meetingsOpenAt: carryTime(event.meetingsOpenAt, old, next),
+                meetingsCloseAt: carryTime(event.meetingsCloseAt, old, next),
+              }
+            : {}),
+        })
+        toast.success('Datos del evento guardados')
+      },
+      toastError('No se pudieron guardar los datos'),
+    )
   }
 
   return (
@@ -220,92 +187,13 @@ function DetailsCard({ event }: { event: AdminEvent }) {
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1">
-            <Label htmlFor="event-title">Nombre</Label>
-            <Input
-              id="event-title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              required
-            />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="space-y-1">
-              <Label htmlFor="event-date">Fecha</Label>
-              <Input
-                id="event-date"
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                required
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="event-start">Empieza</Label>
-              <Input
-                id="event-start"
-                type="time"
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                required
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="event-end">Termina (opcional)</Label>
-              <Input
-                id="event-end"
-                type="time"
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="event-tz">Zona horaria</Label>
-            <TimezoneSelect
-              id="event-tz"
-              value={timezone}
-              onChange={setTimezone}
-            />
-            {differsFromBrowserZone(timezone) && (
-              <p className="text-xs text-muted-foreground">
-                Los horarios están en la hora del evento, no en la tuya.
-              </p>
-            )}
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="event-venue">Lugar</Label>
-              <Input
-                id="event-venue"
-                value={venueName}
-                onChange={(e) => setVenueName(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="event-address">Dirección</Label>
-              <Input
-                id="event-address"
-                value={venueAddress}
-                onChange={(e) => setVenueAddress(e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="event-desc">Descripción</Label>
-            <Textarea
-              id="event-desc"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={4}
-            />
-          </div>
+          <EventDetailsFields form={form} idPrefix="event" />
           <Button
             type="submit"
             className="min-h-11"
-            disabled={!canSave || saving}
+            disabled={!form.canSave || busy !== null}
           >
-            {saving ? (
+            {busy ? (
               <Loader2 className="size-4 mr-2 animate-spin" />
             ) : (
               <Save className="size-4 mr-2" />
@@ -330,10 +218,10 @@ function LumaCard({ event }: { event: AdminEvent }) {
   const linkLuma = useMutation(api.social.events.linkLumaEvent)
   const syncNow = useMutation(api.social.events.syncLumaNow)
   const retryErrors = useMutation(api.social.events.retryLumaErrors)
+  const { busy, run } = useBusyAction<'link' | 'sync' | 'retry'>()
 
   const [editing, setEditing] = useState(!event.lumaEventId)
   const [input, setInput] = useState('')
-  const [busy, setBusy] = useState<'link' | 'sync' | 'retry' | null>(null)
 
   const parsedId = extractLumaEventId(input)
   const linked = !!event.lumaEventId
@@ -341,44 +229,41 @@ function LumaCard({ event }: { event: AdminEvent }) {
   const handleLink = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!parsedId) return
-    setBusy('link')
-    try {
-      await linkLuma({ eventId: event._id, lumaEventId: parsedId })
-      toast.success('Evento vinculado. Estamos trayendo los invitados de Luma.')
-      setEditing(false)
-      setInput('')
-    } catch (err) {
-      toast.error('No se pudo vincular', { description: errorMessage(err) })
-    } finally {
-      setBusy(null)
-    }
+    await run(
+      'link',
+      async () => {
+        await linkLuma({ eventId: event._id, lumaEventId: parsedId })
+        toast.success(
+          'Evento vinculado. Estamos trayendo los invitados de Luma.',
+        )
+        setEditing(false)
+        setInput('')
+      },
+      toastError('No se pudo vincular'),
+    )
   }
 
-  const handleSync = async () => {
-    setBusy('sync')
-    try {
-      await syncNow({ eventId: event._id })
-      toast.success('Sincronizando con Luma')
-    } catch (err) {
-      toast.error('No se pudo sincronizar', { description: errorMessage(err) })
-    } finally {
-      setBusy(null)
-    }
-  }
+  const handleSync = () =>
+    run(
+      'sync',
+      async () => {
+        await syncNow({ eventId: event._id })
+        toast.success('Sincronizando con Luma')
+      },
+      toastError('No se pudo sincronizar'),
+    )
 
-  const handleRetry = async () => {
-    setBusy('retry')
-    try {
-      const n = await retryErrors({ eventId: event._id })
-      toast.success(
-        n === 1 ? 'Reintentando 1 invitado' : `Reintentando ${n} invitados`,
-      )
-    } catch (err) {
-      toast.error('No se pudo reintentar', { description: errorMessage(err) })
-    } finally {
-      setBusy(null)
-    }
-  }
+  const handleRetry = () =>
+    run(
+      'retry',
+      async () => {
+        const n = await retryErrors({ eventId: event._id })
+        toast.success(
+          n === 1 ? 'Reintentando 1 invitado' : `Reintentando ${n} invitados`,
+        )
+      },
+      toastError('No se pudo reintentar'),
+    )
 
   return (
     <Card>
@@ -443,9 +328,7 @@ function LumaCard({ event }: { event: AdminEvent }) {
               disabled={busy !== null}
               onClick={() => void handleRetry()}
             >
-              {busy === 'retry' && (
-                <Loader2 className="size-4 mr-2 animate-spin" />
-              )}
+              <Busy show={busy === 'retry'} />
               Reintentar
             </Button>
           </div>
@@ -544,6 +427,7 @@ const MEETING_LENGTHS = [15, 20, 30]
 
 function OneOnOneCard({ event }: { event: AdminEvent }) {
   const updateEvent = useMutation(api.social.events.updateEvent)
+  const { busy, run } = useBusyAction<'save'>()
   const start = epochToZoned(event.startAt, event.timezone)
 
   const [openTime, setOpenTime] = useState(
@@ -558,7 +442,6 @@ function OneOnOneCard({ event }: { event: AdminEvent }) {
   )
   const [minutes, setMinutes] = useState(String(event.meetingMinutes))
   const [prompt, setPrompt] = useState(event.matchingPrompt ?? '')
-  const [saving, setSaving] = useState(false)
 
   const toEpoch = (time: string) =>
     time ? timeOnEventNight(start.date, start.time, time, event.timezone) : null
@@ -572,22 +455,21 @@ function OneOnOneCard({ event }: { event: AdminEvent }) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (windowInvalid || saving) return
-    setSaving(true)
-    try {
-      await updateEvent({
-        eventId: event._id,
-        meetingsOpenAt: openAt,
-        meetingsCloseAt: closeAt,
-        meetingMinutes: Number(minutes),
-        matchingPrompt: prompt,
-      })
-      toast.success('Configuración de 1:1 guardada')
-    } catch (err) {
-      toast.error('No se pudo guardar', { description: errorMessage(err) })
-    } finally {
-      setSaving(false)
-    }
+    if (windowInvalid || busy) return
+    await run(
+      'save',
+      async () => {
+        await updateEvent({
+          eventId: event._id,
+          meetingsOpenAt: openAt,
+          meetingsCloseAt: closeAt,
+          meetingMinutes: Number(minutes),
+          matchingPrompt: prompt,
+        })
+        toast.success('Configuración de 1:1 guardada')
+      },
+      toastError('No se pudo guardar'),
+    )
   }
 
   return (
@@ -596,8 +478,8 @@ function OneOnOneCard({ event }: { event: AdminEvent }) {
         <CardTitle>1:1</CardTitle>
         <CardDescription>
           Cuándo pueden pedirse reuniones los asistentes y cuánto dura cada una.
-          Horarios en la hora del evento ({event.timezone.replace(/_/g, ' ')}
-          ); los anteriores al inicio del evento cuentan como del día siguiente.
+          Horarios en la hora del evento ({event.timezone.replace(/_/g, ' ')});
+          los anteriores al inicio del evento cuentan como del día siguiente.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -643,10 +525,12 @@ function OneOnOneCard({ event }: { event: AdminEvent }) {
               El cierre tiene que ser después de la apertura.
             </p>
           )}
-          {!openTime && !closeTime && (
+          {(!openTime || !closeTime) && (
             <p className="text-xs text-muted-foreground">
-              Sin horarios, los 1:1 quedan abiertos todo el tiempo que el evento
-              esté publicado, también los días previos.
+              Sin horario de apertura, los 1:1 abren cuando empieza el evento.
+              Sin horario de cierre, cierran cuando termina, o{' '}
+              {DEFAULT_EVENT_HOURS} horas después del inicio si el evento no
+              tiene hora de fin.
             </p>
           )}
 
@@ -675,9 +559,9 @@ function OneOnOneCard({ event }: { event: AdminEvent }) {
           <Button
             type="submit"
             className="min-h-11"
-            disabled={windowInvalid || saving}
+            disabled={windowInvalid || busy !== null}
           >
-            {saving ? (
+            {busy ? (
               <Loader2 className="size-4 mr-2 animate-spin" />
             ) : (
               <Save className="size-4 mr-2" />

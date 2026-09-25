@@ -1,10 +1,9 @@
 import { useMutation, useQuery } from 'convex/react'
 import { Loader2, Sparkles } from 'lucide-react'
-import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
-import { errorMessage } from './shared'
+import { toastError } from './shared'
 import { Button } from '~/components/ui/button'
 import {
   Card,
@@ -13,6 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from '~/components/ui/card'
+import { useBusyAction } from '~/lib/use-busy-action'
 
 function Stat({ label, value }: { label: string; value: number | undefined }) {
   return (
@@ -26,29 +26,26 @@ function Stat({ label, value }: { label: string; value: number | undefined }) {
 export function LiveTab({ eventId }: { eventId: Id<'socialEvents'> }) {
   const overview = useQuery(api.social.meetings.getLiveOverview, { eventId })
   const generateAll = useMutation(api.social.suggestions.generateAllSuggestions)
-  const [generating, setGenerating] = useState(false)
+  const { busy, run } = useBusyAction<'generate'>()
+  const generating = busy === 'generate'
 
-  const handleGenerate = async () => {
-    setGenerating(true)
-    try {
-      const n = await generateAll({ eventId })
-      if (n === 0) {
-        toast.info(
-          'Nadie aprobado tiene cuenta y perfil completo todavía, así que no hay sugerencias para generar.',
-        )
-      } else {
-        toast.success(
-          `Generando sugerencias para ${n} persona${n !== 1 ? 's' : ''}`,
-        )
-      }
-    } catch (err) {
-      toast.error('No se pudieron generar las sugerencias', {
-        description: errorMessage(err),
-      })
-    } finally {
-      setGenerating(false)
-    }
-  }
+  const handleGenerate = () =>
+    run(
+      'generate',
+      async () => {
+        const n = await generateAll({ eventId })
+        if (n === 0) {
+          toast.info(
+            'Nadie aprobado tiene cuenta y perfil completo todavía, así que no hay sugerencias para generar.',
+          )
+        } else {
+          toast.success(
+            `Generando sugerencias para ${n} persona${n !== 1 ? 's' : ''}`,
+          )
+        }
+      },
+      toastError('No se pudieron generar las sugerencias'),
+    )
 
   return (
     <div className="space-y-6">

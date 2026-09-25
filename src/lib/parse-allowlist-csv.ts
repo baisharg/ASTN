@@ -12,7 +12,6 @@ export type ParsedAllowlist = {
   rows: Array<AllowlistRow>
   invalid: number
   duplicates: number
-  hasHeader: boolean
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -103,7 +102,7 @@ function parseCsv(text: string): Array<Array<string>> {
 export function parseAllowlistCsv(text: string): ParsedAllowlist {
   const table = parseCsv(text)
   if (table.length === 0) {
-    return { rows: [], invalid: 0, duplicates: 0, hasHeader: false }
+    return { rows: [], invalid: 0, duplicates: 0 }
   }
 
   const header = table[0].map(normalizeHeader)
@@ -157,5 +156,5 @@ export function parseAllowlistCsv(text: string): ParsedAllowlist {
     rows.push({ email: normalized, name: name?.trim() || undefined })
   }
 
-  return { rows, invalid, duplicates, hasHeader }
+  return { rows, invalid, duplicates }
 }

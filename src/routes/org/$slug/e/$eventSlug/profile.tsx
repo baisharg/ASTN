@@ -23,12 +23,16 @@ import {
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
 import { useCopy } from '~/lib/social-i18n'
+import { useBusyAction } from '~/lib/use-busy-action'
 
 export const Route = createFileRoute('/org/$slug/e/$eventSlug/profile')({
   component: EventProfilePage,
 })
 
-type Visibility = 'event_attendees' | 'org_members' | 'public'
+type Visibility = NonNullable<Doc<'profiles'>['socialVisibility']>
+
+/** The free-text fields edited on this page. */
+type DraftField = 'headline' | 'seeking' | 'canHelpWith'
 
 const copy = {
   es: {
@@ -75,7 +79,7 @@ const copy = {
       event_attendees: 'Asistentes de los eventos a los que vas',
       org_members: 'Todos los miembros de BAISH',
       public: 'Cualquier persona con cuenta',
-    } as Record<Visibility, string>,
+    } satisfies Record<Visibility, string>,
     seePeople: 'Ver quiénes van',
     englishNote:
       'El asistente guarda tus respuestas en inglés, que es el idioma que usamos para el matching.',
@@ -124,7 +128,7 @@ const copy = {
       event_attendees: "Attendees of events you're going to",
       org_members: 'All BAISH members',
       public: 'Anyone with an account',
-    } as Record<Visibility, string>,
+    } satisfies Record<Visibility, string>,
     seePeople: "See who's coming",
     englishNote:
       'The assistant saves your answers in English, the language we use for matching.',
@@ -209,28 +213,20 @@ function ProfileForm({ profile }: { profile: Doc<'profiles'> }) {
 
   const [linkedin, setLinkedin] = useState(profile.linkedinUrl ?? '')
   const [importing, setImporting] = useState(false)
-  const [headline, setHeadline] = useState(profile.headline ?? '')
-  const [seeking, setSeeking] = useState(profile.seeking ?? '')
-  const [canHelpWith, setCanHelpWith] = useState(profile.canHelpWith ?? '')
-  const [saving, setSaving] = useState(false)
-
-  // Keep the fields in step when the assistant updates the profile.
-  useEffect(() => setHeadline(profile.headline ?? ''), [profile.headline])
-  useEffect(() => setSeeking(profile.seeking ?? ''), [profile.seeking])
-  useEffect(
-    () => setCanHelpWith(profile.canHelpWith ?? ''),
-    [profile.canHelpWith],
-  )
+  // Only the fields the person has edited. Untouched fields show the saved
+  // profile, so updates from the assistant appear as they happen.
+  const [draft, setDraft] = useState<Partial<Record<DraftField, string>>>({})
+  const { busy, run } = useBusyAction<'save'>()
+  const value = (field: DraftField) => draft[field] ?? profile[field] ?? ''
+  const edit = (field: DraftField) => (next: string) =>
+    setDraft((d) => ({ ...d, [field]: next }))
 
   const missing = registration?.profileMissing ?? []
   const done = 3 - missing.length
   const ready = registration !== undefined && missing.length === 0
   const isAttendee = registration?.guest?.status === 'approved'
 
-  const dirty =
-    headline !== (profile.headline ?? '') ||
-    seeking !== (profile.seeking ?? '') ||
-    canHelpWith !== (profile.canHelpWith ?? '')
+  const dirty = Object.keys(draft).length > 0
 
   const onImport = async () => {
     const url = linkedin.trim()
@@ -279,25 +275,23 @@ function ProfileForm({ profile }: { profile: Doc<'profiles'> }) {
     }
   }
 
-  const onSave = async () => {
-    setSaving(true)
-    try {
-      await updateField({
-        profileId: profile._id,
-        updates: {
-          headline: headline.trim() || undefined,
-          seeking: seeking.trim() || undefined,
-          canHelpWith: canHelpWith.trim() || undefined,
-        },
-      })
-      toast.success(t.saved)
-    } catch (error) {
-      console.error(error)
-      toast.error(t.saveFailed)
-    } finally {
-      setSaving(false)
-    }
-  }
+  const onSave = () =>
+    run(
+      'save',
+      async () => {
+        await updateField({
+          profileId: profile._id,
+          updates: {
+            headline: value('headline').trim() || undefined,
+            seeking: value('seeking').trim() || undefined,
+            canHelpWith: value('canHelpWith').trim() || undefined,
+          },
+        })
+        setDraft({})
+        toast.success(t.saved)
+      },
+      () => toast.error(t.saveFailed),
+    )
 
   const onVisibility = async (value: Visibility) => {
     try {
@@ -436,33 +430,33 @@ function ProfileForm({ profile }: { profile: Doc<'profiles'> }) {
         <Field
           id="headline"
           label={t.headline}
-          value={headline}
-          onChange={setHeadline}
+          value={value('headline')}
+          onChange={edit('headline')}
           placeholder={t.headlinePlaceholder}
         />
         <Field
           id="seeking"
           label={t.seeking}
-          value={seeking}
-          onChange={setSeeking}
+          value={value('seeking')}
+          onChange={edit('seeking')}
           placeholder={t.seekingPlaceholder}
           multiline
         />
         <Field
           id="canHelpWith"
           label={t.canHelpWith}
-          value={canHelpWith}
-          onChange={setCanHelpWith}
+          value={value('canHelpWith')}
+          onChange={edit('canHelpWith')}
           placeholder={t.canHelpWithPlaceholder}
           multiline
         />
         <button
           type="button"
-          onClick={onSave}
-          disabled={!dirty || saving}
+          onClick={() => void onSave()}
+          disabled={!dirty || busy !== null}
           className={secondaryButtonClass}
         >
-          {saving ? <Spinner className="size-5" /> : t.save}
+          {busy ? <Spinner className="size-5" /> : t.save}
         </button>
       </section>
 

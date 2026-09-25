@@ -17,6 +17,7 @@ import {
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
 import { useCopy } from '~/lib/social-i18n'
+import { useBusyAction } from '~/lib/use-busy-action'
 
 export const Route = createFileRoute('/org/$slug/e/$eventSlug/meeting')({
   component: MeetingPage,
@@ -230,7 +231,7 @@ function Countdown({ meeting }: { meeting: LiveMeeting }) {
   const now = useNow(1000)
   const extendMeeting = useMutation(api.social.meetings.extendMeeting)
   const endMeeting = useMutation(api.social.meetings.endMeeting)
-  const [busy, setBusy] = useState<'extend' | 'end' | null>(null)
+  const { busy, run: runBusy } = useBusyAction<'extend' | 'end'>()
 
   const total = Math.max(1, meeting.endsAt - meeting.startedAt)
   const remainingMs = Math.max(0, meeting.endsAt - now)
@@ -238,17 +239,8 @@ function Countdown({ meeting }: { meeting: LiveMeeting }) {
   const clock = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
   const fraction = Math.min(1, remainingMs / total)
 
-  const run = async (kind: 'extend' | 'end', action: () => Promise<void>) => {
-    setBusy(kind)
-    try {
-      await action()
-    } catch (error) {
-      console.error(error)
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(null)
-    }
-  }
+  const run = (key: 'extend' | 'end', action: () => Promise<void>) =>
+    runBusy(key, action, (error) => toast.error(errorMessage(error)))
 
   return (
     <Panel
@@ -345,21 +337,18 @@ function EndedCard({
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
   const setAvailability = useMutation(api.social.meetings.setAvailability)
-  const [saving, setSaving] = useState(false)
-  const next = [...live.incoming].sort((a, b) => a.createdAt - b.createdAt)[0]
+  const { busy, run } = useBusyAction<'break'>()
+  const next = live.incoming.at(0)
 
-  const takeBreak = async () => {
-    setSaving(true)
-    try {
-      await setAvailability({ eventId: event._id, availability: 'busy' })
-      toast.success(t.breakSet)
-    } catch (error) {
-      console.error(error)
-      toast.error(t.breakFailed)
-    } finally {
-      setSaving(false)
-    }
-  }
+  const takeBreak = () =>
+    run(
+      'break',
+      async () => {
+        await setAvailability({ eventId: event._id, availability: 'busy' })
+        toast.success(t.breakSet)
+      },
+      () => toast.error(t.breakFailed),
+    )
 
   return (
     <Panel raised role="status" className="gap-3 border-input p-4">
@@ -373,11 +362,11 @@ function EndedCard({
         {live.availability === 'available' && (
           <button
             type="button"
-            disabled={saving}
+            disabled={busy !== null}
             onClick={() => void takeBreak()}
             className={`${secondaryButtonClass} grow basis-0`}
           >
-            {saving ? <Spinner size="sm" /> : t.takeBreak}
+            {busy ? <Spinner size="sm" /> : t.takeBreak}
           </button>
         )}
         {next ? (

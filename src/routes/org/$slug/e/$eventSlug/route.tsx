@@ -1,15 +1,13 @@
 import { Link, Outlet, createFileRoute } from '@tanstack/react-router'
 import { useSuspenseQuery } from '@tanstack/react-query'
 import { convexQuery } from '@convex-dev/react-query'
-import { useConvexAuth, useMutation, useQuery } from 'convex/react'
+import { useConvexAuth, useMutation } from 'convex/react'
 import { Inbox } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
-import {
-  SocialEventProvider,
-  useNow,
-} from '~/components/social/SocialEventContext'
+import { SocialEventProvider } from '~/components/social/SocialEventContext'
+import { useLiveState } from '~/components/social/live'
 import { LangToggle, SocialLangProvider, useCopy } from '~/lib/social-i18n'
 
 const FONTS_HREF =
@@ -115,7 +113,7 @@ function EventLayoutInner() {
             </span>
           </Link>
           <div className="flex items-center gap-2">
-            <RequestsBadge eventId={event._id} />
+            <RequestsBadge />
             <LangToggle />
           </div>
         </div>
@@ -145,15 +143,10 @@ function LinkGuestOnLoad({ eventId }: { eventId: Id<'socialEvents'> }) {
   return null
 }
 
-function RequestsBadge({ eventId }: { eventId: Id<'socialEvents'> }) {
+function RequestsBadge() {
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
-  const { isAuthenticated } = useConvexAuth()
-  const now = useNow()
-  const live = useQuery(
-    api.social.meetings.getLiveState,
-    isAuthenticated ? { eventId, now } : 'skip',
-  )
+  const live = useLiveState()
   if (!live?.isAttendee) return null
   const count = live.incoming.length
   return (

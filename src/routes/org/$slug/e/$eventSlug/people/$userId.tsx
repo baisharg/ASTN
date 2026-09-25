@@ -1,24 +1,26 @@
 import { useUser } from '@clerk/clerk-react'
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import { CheckCircle2, ExternalLink } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../../convex/_generated/api'
+import { MAX_NOTE_LENGTH } from '../../../../../../../convex/social/constants'
 import type { socialProfileView } from '../../../../../../../convex/social/lib'
 import type { LiveState } from '~/components/social/live'
 import type { AttendeeState } from '~/components/social/ui'
 import type { Id } from '../../../../../../../convex/_generated/dataModel'
 import { useSocialEvent } from '~/components/social/SocialEventContext'
 import {
-  MAX_NOTE_LENGTH,
   MeetingBanner,
   PageSpinner,
   requestBlock,
   requestBlockCopy,
   SignedInGate,
   useLiveState,
+  useMeetingsOpen,
   useSocialErrorMessage,
+  useStartMeeting,
 } from '~/components/social/live'
 import {
   Avatar,
@@ -32,6 +34,7 @@ import {
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
 import { useCopy } from '~/lib/social-i18n'
+import { useBusyAction } from '~/lib/use-busy-action'
 
 export const Route = createFileRoute('/org/$slug/e/$eventSlug/people/$userId')({
   component: PersonPage,
@@ -51,11 +54,6 @@ const copy = {
     selfTitle: 'Este es tu perfil',
     selfBody: 'Así te ven los demás asistentes.',
     editProfile: 'Editar perfil',
-    state: {
-      available: 'Disponible',
-      in_meeting: 'En reunión',
-      busy: 'No disponible',
-    },
     whyTitle: (name: string) => `Por qué conversar con ${name}`,
     topics: 'Temas para arrancar',
     seeking: 'Qué busca',
@@ -100,11 +98,6 @@ const copy = {
     selfTitle: 'This is your profile',
     selfBody: 'This is how other attendees see you.',
     editProfile: 'Edit profile',
-    state: {
-      available: 'Available',
-      in_meeting: 'In a meeting',
-      busy: 'Not available',
-    },
     whyTitle: (name: string) => `Why talk to ${name}`,
     topics: 'Conversation starters',
     seeking: "What they're looking for",
@@ -228,9 +221,7 @@ function PersonContent() {
           )}
         </div>
         <div className="flex items-center gap-4">
-          {person.viewerIsAttendee && (
-            <StateLabel state={person.state} copy={t.state} />
-          )}
+          {person.viewerIsAttendee && <StateLabel state={person.state} />}
           {profile.linkedinUrl && (
             <a
               href={profile.linkedinUrl}
@@ -414,42 +405,22 @@ function RequestCard({
   pendingRequestId: Id<'socialMeetingRequests'> | null
   theyRequestedMe: Id<'socialMeetingRequests'> | null
 }) {
-  const event = useSocialEvent()
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
   const blockText = useCopy(requestBlockCopy)
   const errorMessage = useSocialErrorMessage()
-  const navigate = useNavigate()
-  const requestMeeting = useMutation(api.social.meetings.requestMeeting)
+  const startMeeting = useStartMeeting()
   const respondToRequest = useMutation(api.social.meetings.respondToRequest)
   const cancelRequest = useMutation(api.social.meetings.cancelRequest)
+  const meetingsOpen = useMeetingsOpen()
   const [note, setNote] = useState('')
-  const [busy, setBusy] = useState<
-    'send' | 'accept' | 'decline' | 'cancel' | null
-  >(null)
+  const { busy, run: runBusy } = useBusyAction<
+    'send' | 'accept' | 'decline' | 'cancel'
+  >()
+  const run = <T,>(key: NonNullable<typeof busy>, action: () => Promise<T>) =>
+    runBusy(key, action, (error) => toast.error(errorMessage(error)))
 
-  const goToMeeting = () =>
-    void navigate({
-      to: '/org/$slug/e/$eventSlug/meeting',
-      params: { slug, eventSlug },
-    })
-
-  const run = async (
-    kind: NonNullable<typeof busy>,
-    action: () => Promise<void>,
-  ) => {
-    setBusy(kind)
-    try {
-      await action()
-    } catch (error) {
-      console.error(error)
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const block = requestBlock(live, userId, state)
+  const block = requestBlock(live, meetingsOpen, userId, state)
 
   if (theyRequestedMe) {
     const requestId = theyRequestedMe
@@ -484,13 +455,7 @@ function RequestCard({
             type="button"
             disabled={busy !== null || block !== null}
             onClick={() =>
-              void run('accept', async () => {
-                const meetingId = await respondToRequest({
-                  requestId,
-                  accept: true,
-                })
-                if (meetingId) goToMeeting()
-              })
+              void run('accept', () => startMeeting.accept(requestId))
             }
             className={`${primaryButtonClass} h-12 grow basis-0 text-[15px]`}
           >
@@ -544,20 +509,15 @@ function RequestCard({
     )
   }
 
-  const send = () =>
-    run('send', async () => {
-      const result = await requestMeeting({
-        eventId: event._id,
-        toUserId: userId,
-        note: note.trim() || undefined,
-      })
-      if (result.meetingId) {
-        goToMeeting()
-      } else {
-        setNote('')
-        toast.success(t.sent)
-      }
-    })
+  const send = async () => {
+    const started = await run('send', () =>
+      startMeeting.request(userId, note.trim() || undefined),
+    )
+    if (started === false) {
+      setNote('')
+      toast.success(t.sent)
+    }
+  }
 
   return (
     <Panel raised aria-label={t.requestLabel} className="gap-2.5 p-4">

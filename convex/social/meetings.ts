@@ -2,21 +2,31 @@ import { ConvexError, v } from 'convex/values'
 import { internal } from '../_generated/api'
 import { internalMutation, mutation, query } from '../_generated/server'
 import { getUserId, requireAuth } from '../lib/auth'
+import { MAX_NOTE_LENGTH, MAX_OUTGOING_PENDING } from './constants'
 import {
+  approvedGuests,
+  attendeeCard,
   canViewSocialProfile,
+  findSuggestion,
   getGuestByUser,
   getProfileByUser,
   initialsOf,
   isProfileReadyForMatching,
+  meetingsWindow,
+  requireEventAdmin,
   socialProfileView,
 } from './lib'
+import { availabilityValidator } from './validators'
+import type { MeetingErrorCode } from './constants'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 
-const MAX_OUTGOING_PENDING = 5
-const MAX_NOTE_LENGTH = 280
-
 type AttendeeState = 'available' | 'in_meeting' | 'busy'
+
+/** Refuse a 1:1 action with a code the pages translate. */
+function refuse(code: MeetingErrorCode, message: string): never {
+  throw new ConvexError({ code, message })
+}
 
 async function requireApprovedAttendee(
   ctx: QueryCtx | MutationCtx,
@@ -25,7 +35,7 @@ async function requireApprovedAttendee(
 ): Promise<Doc<'socialEventGuests'>> {
   const guest = await getGuestByUser(ctx, eventId, userId)
   if (!guest || guest.status !== 'approved') {
-    throw new ConvexError('Only confirmed attendees can do this')
+    refuse('not_attendee', 'Only confirmed attendees can do this')
   }
   return guest
 }
@@ -50,18 +60,25 @@ async function activeMeetingFor(
     .first()
 }
 
-async function availabilityFor(
+async function statusRow(
   ctx: QueryCtx | MutationCtx,
   eventId: Id<'socialEvents'>,
   userId: string,
-): Promise<'available' | 'busy'> {
-  const row = await ctx.db
+): Promise<Doc<'socialAttendeeStatus'> | null> {
+  return await ctx.db
     .query('socialAttendeeStatus')
     .withIndex('by_eventId_and_userId', (q) =>
       q.eq('eventId', eventId).eq('userId', userId),
     )
     .first()
-  return row?.availability ?? 'available'
+}
+
+async function availabilityFor(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+  userId: string,
+): Promise<'available' | 'busy'> {
+  return (await statusRow(ctx, eventId, userId))?.availability ?? 'available'
 }
 
 async function attendeeState(
@@ -73,42 +90,24 @@ async function attendeeState(
   return await availabilityFor(ctx, eventId, userId)
 }
 
-const DEFAULT_EVENT_HOURS = 6
-
-/**
- * When 1:1s run. Without explicit times, they follow the event itself: from
- * its start to its end (or six hours after the start).
- */
-function meetingsWindow(event: Doc<'socialEvents'>): {
-  openAt: number
-  closeAt: number
-} {
-  return {
-    openAt: event.meetingsOpenAt ?? event.startAt,
-    closeAt:
-      event.meetingsCloseAt ??
-      event.endAt ??
-      event.startAt + DEFAULT_EVENT_HOURS * 3600 * 1000,
-  }
-}
-
-function meetingsOpen(event: Doc<'socialEvents'>, now: number): boolean {
-  const { openAt, closeAt } = meetingsWindow(event)
-  return event.status === 'published' && now >= openAt && now <= closeAt
-}
-
-async function attendeeCard(
-  ctx: QueryCtx,
+async function pendingRequestsFrom(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
   userId: string,
-  fallbackName: string | undefined,
-) {
-  const profile = await getProfileByUser(ctx, userId)
-  const name = profile?.name ?? fallbackName ?? 'Asistente'
-  return {
-    userId,
-    name,
-    initials: initialsOf(name),
-    headline: profile?.headline ?? null,
+): Promise<Array<Doc<'socialMeetingRequests'>>> {
+  return await ctx.db
+    .query('socialMeetingRequests')
+    .withIndex('by_eventId_and_fromUserId_and_status', (q) =>
+      q.eq('eventId', eventId).eq('fromUserId', userId).eq('status', 'pending'),
+    )
+    .take(MAX_OUTGOING_PENDING * 2)
+}
+
+function requireMeetingsOpen(event: Doc<'socialEvents'>): void {
+  const { openAt, closeAt } = meetingsWindow(event)
+  const now = Date.now()
+  if (event.status !== 'published' || now < openAt || now > closeAt) {
+    refuse('closed', '1:1s are not open right now')
   }
 }
 
@@ -119,20 +118,10 @@ async function meetingTopics(
   userId: string,
   partnerId: string,
 ): Promise<Array<string>> {
-  for (const [owner, other] of [
-    [userId, partnerId],
-    [partnerId, userId],
-  ]) {
-    const rows = await ctx.db
-      .query('socialSuggestions')
-      .withIndex('by_eventId_and_userId_and_rank', (q) =>
-        q.eq('eventId', eventId).eq('userId', owner),
-      )
-      .take(20)
-    const match = rows.find((r) => r.suggestedUserId === other)
-    if (match) return match.topics
-  }
-  return []
+  const mine = await findSuggestion(ctx, eventId, userId, partnerId)
+  if (mine) return mine.topics
+  const theirs = await findSuggestion(ctx, eventId, partnerId, userId)
+  return theirs?.topics ?? []
 }
 
 const cardValidator = v.object({
@@ -152,21 +141,20 @@ const stateValidator = v.union(
 
 /**
  * Everything the attendee's live screens need: their status, current
- * meeting, and incoming and outgoing requests. `now` comes from the client
- * so the query doesn't read the clock.
+ * meeting, and incoming and outgoing requests. Whether 1:1s are open right
+ * now is left to the client, which has a clock; the query only returns the
+ * window, so it doesn't re-run as time passes.
  */
 export const getLiveState = query({
-  args: { eventId: v.id('socialEvents'), now: v.number() },
+  args: { eventId: v.id('socialEvents') },
   returns: v.union(
     v.null(),
     v.object({
       isAttendee: v.boolean(),
       profileReady: v.boolean(),
-      meetingsOpen: v.boolean(),
-      meetingsOpenAt: v.union(v.number(), v.null()),
-      meetingsCloseAt: v.union(v.number(), v.null()),
-      meetingMinutes: v.number(),
-      availability: v.union(v.literal('available'), v.literal('busy')),
+      meetingsOpenAt: v.number(),
+      meetingsCloseAt: v.number(),
+      availability: availabilityValidator,
       meeting: v.union(
         v.null(),
         v.object({
@@ -207,37 +195,51 @@ export const getLiveState = query({
       ),
     }),
   ),
-  handler: async (ctx, { eventId, now }) => {
+  handler: async (ctx, { eventId }) => {
     const userId = await getUserId(ctx)
     if (!userId) return null
     const event = await ctx.db.get('socialEvents', eventId)
     if (!event) return null
-    const guest = await getGuestByUser(ctx, eventId, userId)
-    const profile = await getProfileByUser(ctx, userId)
+    const [guest, profile, availability] = await Promise.all([
+      getGuestByUser(ctx, eventId, userId),
+      getProfileByUser(ctx, userId),
+      availabilityFor(ctx, eventId, userId),
+    ])
+    const window = meetingsWindow(event)
     const base = {
       isAttendee: guest?.status === 'approved',
       profileReady: isProfileReadyForMatching(profile),
-      meetingsOpen: meetingsOpen(event, now),
-      meetingsOpenAt: meetingsWindow(event).openAt,
-      meetingsCloseAt: meetingsWindow(event).closeAt,
-      meetingMinutes: event.meetingMinutes,
-      availability: await availabilityFor(ctx, eventId, userId),
+      meetingsOpenAt: window.openAt,
+      meetingsCloseAt: window.closeAt,
+      availability,
     }
     if (!base.isAttendee) {
       return { ...base, meeting: null, incoming: [], outgoing: [] }
     }
 
-    const active = await activeMeetingFor(ctx, eventId, userId)
+    const [active, incomingRows, outgoingRows] = await Promise.all([
+      activeMeetingFor(ctx, eventId, userId),
+      ctx.db
+        .query('socialMeetingRequests')
+        .withIndex('by_eventId_and_toUserId_and_status', (q) =>
+          q
+            .eq('eventId', eventId)
+            .eq('toUserId', userId)
+            .eq('status', 'pending'),
+        )
+        .take(50),
+      pendingRequestsFrom(ctx, eventId, userId),
+    ])
+
     let meeting = null
     if (active) {
       const partnerId = active.userA === userId ? active.userB : active.userA
-      const partnerGuest = await getGuestByUser(ctx, eventId, partnerId)
       const spot = active.spotId
         ? await ctx.db.get('socialEventSpots', active.spotId)
         : null
       meeting = {
         _id: active._id,
-        partner: await attendeeCard(ctx, partnerId, partnerGuest?.name),
+        partner: await attendeeCard(ctx, eventId, partnerId),
         spot: spot
           ? {
               number: spot.number,
@@ -252,53 +254,35 @@ export const getLiveState = query({
       }
     }
 
-    const incomingRows = await ctx.db
-      .query('socialMeetingRequests')
-      .withIndex('by_eventId_and_toUserId_and_status', (q) =>
-        q.eq('eventId', eventId).eq('toUserId', userId).eq('status', 'pending'),
-      )
-      .take(50)
     const incoming = await Promise.all(
-      incomingRows.map(async (r) => {
-        const fromGuest = await getGuestByUser(ctx, eventId, r.fromUserId)
-        return {
-          _id: r._id,
-          from: await attendeeCard(ctx, r.fromUserId, fromGuest?.name),
-          note: r.note ?? null,
-          createdAt: r.createdAt,
-          fromState: await attendeeState(ctx, eventId, r.fromUserId),
-        }
-      }),
+      incomingRows.map(async (r) => ({
+        _id: r._id,
+        from: await attendeeCard(ctx, eventId, r.fromUserId),
+        note: r.note ?? null,
+        createdAt: r.createdAt,
+        fromState: await attendeeState(ctx, eventId, r.fromUserId),
+      })),
     )
 
-    const outgoingRows = await ctx.db
-      .query('socialMeetingRequests')
-      .withIndex('by_eventId_and_fromUserId_and_status', (q) =>
-        q
-          .eq('eventId', eventId)
-          .eq('fromUserId', userId)
-          .eq('status', 'pending'),
-      )
-      .take(MAX_OUTGOING_PENDING * 2)
     const outgoing = await Promise.all(
       outgoingRows.map(async (r) => {
-        const toGuest = await getGuestByUser(ctx, eventId, r.toUserId)
+        // Only earlier requests, so later ones don't re-run this query.
         const ahead = await ctx.db
           .query('socialMeetingRequests')
           .withIndex('by_eventId_and_toUserId_and_status', (q) =>
             q
               .eq('eventId', eventId)
               .eq('toUserId', r.toUserId)
-              .eq('status', 'pending'),
+              .eq('status', 'pending')
+              .lt('_creationTime', r._creationTime),
           )
           .take(50)
         return {
           _id: r._id,
-          to: await attendeeCard(ctx, r.toUserId, toGuest?.name),
+          to: await attendeeCard(ctx, eventId, r.toUserId),
           note: r.note ?? null,
           createdAt: r.createdAt,
-          queuePosition:
-            ahead.filter((a) => a.createdAt < r.createdAt).length + 1,
+          queuePosition: ahead.length + 1,
           toState: await attendeeState(ctx, eventId, r.toUserId),
         }
       }),
@@ -321,18 +305,12 @@ export const listAttendees = query({
       initials: v.string(),
       headline: v.union(v.string(), v.null()),
       state: stateValidator,
-      profileReady: v.boolean(),
     }),
   ),
   handler: async (ctx, { eventId }) => {
     const userId = await requireAuth(ctx)
     await requireApprovedAttendee(ctx, eventId, userId)
-    const guests = await ctx.db
-      .query('socialEventGuests')
-      .withIndex('by_eventId_and_status', (q) =>
-        q.eq('eventId', eventId).eq('status', 'approved'),
-      )
-      .take(500)
+    const guests = await approvedGuests(ctx, eventId)
     const rows = await Promise.all(
       guests
         .filter((g) => g.userId && g.userId !== userId)
@@ -346,7 +324,6 @@ export const listAttendees = query({
             initials: initialsOf(name),
             headline: profile?.headline ?? null,
             state: await attendeeState(ctx, eventId, otherId),
-            profileReady: isProfileReadyForMatching(profile),
           }
         }),
     )
@@ -359,7 +336,6 @@ export const getAttendeeProfile = query({
   returns: v.union(
     v.null(),
     v.object({
-      userId: v.string(),
       viewerIsAttendee: v.boolean(),
       initials: v.string(),
       state: stateValidator,
@@ -388,38 +364,17 @@ export const getAttendeeProfile = query({
       return null
     }
     const view = socialProfileView(profile, otherGuest.name)
-    const suggestions = await ctx.db
-      .query('socialSuggestions')
-      .withIndex('by_eventId_and_userId_and_rank', (q) =>
-        q.eq('eventId', eventId).eq('userId', viewerId),
-      )
-      .take(20)
-    const suggestion = suggestions.find((s) => s.suggestedUserId === otherId)
-
-    const mine = await ctx.db
-      .query('socialMeetingRequests')
-      .withIndex('by_eventId_and_fromUserId_and_status', (q) =>
-        q
-          .eq('eventId', eventId)
-          .eq('fromUserId', viewerId)
-          .eq('status', 'pending'),
-      )
-      .take(MAX_OUTGOING_PENDING * 2)
-    const theirs = await ctx.db
-      .query('socialMeetingRequests')
-      .withIndex('by_eventId_and_fromUserId_and_status', (q) =>
-        q
-          .eq('eventId', eventId)
-          .eq('fromUserId', otherId)
-          .eq('status', 'pending'),
-      )
-      .take(MAX_OUTGOING_PENDING * 2)
+    const [suggestion, mine, theirs, state] = await Promise.all([
+      findSuggestion(ctx, eventId, viewerId, otherId),
+      pendingRequestsFrom(ctx, eventId, viewerId),
+      pendingRequestsFrom(ctx, eventId, otherId),
+      attendeeState(ctx, eventId, otherId),
+    ])
 
     return {
-      userId: otherId,
       viewerIsAttendee,
       initials: initialsOf(view.name),
-      state: await attendeeState(ctx, eventId, otherId),
+      state,
       profile: view,
       suggestion: suggestion
         ? { reason: suggestion.reason, topics: suggestion.topics }
@@ -435,18 +390,13 @@ export const getAttendeeProfile = query({
 export const setAvailability = mutation({
   args: {
     eventId: v.id('socialEvents'),
-    availability: v.union(v.literal('available'), v.literal('busy')),
+    availability: availabilityValidator,
   },
   returns: v.null(),
   handler: async (ctx, { eventId, availability }) => {
     const userId = await requireAuth(ctx)
     await requireApprovedAttendee(ctx, eventId, userId)
-    const row = await ctx.db
-      .query('socialAttendeeStatus')
-      .withIndex('by_eventId_and_userId', (q) =>
-        q.eq('eventId', eventId).eq('userId', userId),
-      )
-      .first()
+    const row = await statusRow(ctx, eventId, userId)
     if (row) {
       await ctx.db.patch('socialAttendeeStatus', row._id, {
         availability,
@@ -500,6 +450,33 @@ async function startMeeting(
   return meetingId
 }
 
+/** Accept a pending request: both must be free; starts the meeting. */
+async function acceptRequest(
+  ctx: MutationCtx,
+  event: Doc<'socialEvents'>,
+  request: Doc<'socialMeetingRequests'>,
+): Promise<Id<'socialMeetings'>> {
+  requireMeetingsOpen(event)
+  if (await activeMeetingFor(ctx, event._id, request.toUserId)) {
+    refuse('self_in_meeting', 'Finish your current meeting first')
+  }
+  if (await activeMeetingFor(ctx, event._id, request.fromUserId)) {
+    refuse('they_in_meeting', 'They are in a meeting right now')
+  }
+  const meetingId = await startMeeting(
+    ctx,
+    event,
+    request.fromUserId,
+    request.toUserId,
+  )
+  await ctx.db.patch('socialMeetingRequests', request._id, {
+    status: 'accepted',
+    meetingId,
+    respondedAt: Date.now(),
+  })
+  return meetingId
+}
+
 /**
  * Ask someone to meet now. If they already asked you, this accepts their
  * request instead.
@@ -516,61 +493,30 @@ export const requestMeeting = mutation({
   }),
   handler: async (ctx, { eventId, toUserId, note }) => {
     const userId = await requireAuth(ctx)
-    if (toUserId === userId) throw new ConvexError("You can't meet yourself")
+    if (toUserId === userId) refuse('self', "You can't meet yourself")
     const event = await ctx.db.get('socialEvents', eventId)
-    if (!event) throw new ConvexError('Event not found')
-    if (!meetingsOpen(event, Date.now())) {
-      throw new ConvexError('1:1s are not open right now')
-    }
+    if (!event) refuse('not_found', 'Event not found')
+    requireMeetingsOpen(event)
     await requireApprovedAttendee(ctx, eventId, userId)
     await requireApprovedAttendee(ctx, eventId, toUserId)
 
-    const cleanNote = note?.trim().slice(0, MAX_NOTE_LENGTH) || undefined
-    const now = Date.now()
-
     // They already asked me: accept that instead of opening a second request.
-    const theirs = await ctx.db
-      .query('socialMeetingRequests')
-      .withIndex('by_eventId_and_fromUserId_and_status', (q) =>
-        q
-          .eq('eventId', eventId)
-          .eq('fromUserId', toUserId)
-          .eq('status', 'pending'),
-      )
-      .take(MAX_OUTGOING_PENDING * 2)
+    const theirs = await pendingRequestsFrom(ctx, eventId, toUserId)
     const reverse = theirs.find((r) => r.toUserId === userId)
     if (reverse) {
-      if (await activeMeetingFor(ctx, eventId, userId)) {
-        throw new ConvexError('Finish your current meeting first')
-      }
-      if (await activeMeetingFor(ctx, eventId, toUserId)) {
-        throw new ConvexError('They are in a meeting right now')
-      }
-      const meetingId = await startMeeting(ctx, event, toUserId, userId)
-      await ctx.db.patch('socialMeetingRequests', reverse._id, {
-        status: 'accepted',
-        meetingId,
-        respondedAt: now,
-      })
+      const meetingId = await acceptRequest(ctx, event, reverse)
       return { requestId: reverse._id, meetingId }
     }
 
     if ((await availabilityFor(ctx, eventId, toUserId)) === 'busy') {
-      throw new ConvexError('They are not taking requests right now')
+      refuse('busy', 'They are not taking requests right now')
     }
-    const mine = await ctx.db
-      .query('socialMeetingRequests')
-      .withIndex('by_eventId_and_fromUserId_and_status', (q) =>
-        q
-          .eq('eventId', eventId)
-          .eq('fromUserId', userId)
-          .eq('status', 'pending'),
-      )
-      .take(MAX_OUTGOING_PENDING * 2)
+    const mine = await pendingRequestsFrom(ctx, eventId, userId)
     const existing = mine.find((r) => r.toUserId === toUserId)
     if (existing) return { requestId: existing._id, meetingId: null }
     if (mine.length >= MAX_OUTGOING_PENDING) {
-      throw new ConvexError(
+      refuse(
+        'limit',
         `You can have at most ${MAX_OUTGOING_PENDING} requests waiting at once`,
       )
     }
@@ -579,9 +525,9 @@ export const requestMeeting = mutation({
       eventId,
       fromUserId: userId,
       toUserId,
-      note: cleanNote,
+      note: note?.trim().slice(0, MAX_NOTE_LENGTH) || undefined,
       status: 'pending',
-      createdAt: now,
+      createdAt: Date.now(),
     })
     return { requestId, meetingId: null }
   },
@@ -597,38 +543,20 @@ export const respondToRequest = mutation({
     const userId = await requireAuth(ctx)
     const request = await ctx.db.get('socialMeetingRequests', requestId)
     if (!request || request.toUserId !== userId) {
-      throw new ConvexError('Request not found')
+      refuse('not_found', 'Request not found')
     }
     if (request.status !== 'pending') return request.meetingId ?? null
-    const now = Date.now()
 
     if (!accept) {
       await ctx.db.patch('socialMeetingRequests', requestId, {
         status: 'declined',
-        respondedAt: now,
+        respondedAt: Date.now(),
       })
       return null
     }
-
     const event = await ctx.db.get('socialEvents', request.eventId)
-    if (!event) throw new ConvexError('Event not found')
-    if (!meetingsOpen(event, now))
-      throw new ConvexError('1:1s are not open right now')
-    if (await activeMeetingFor(ctx, request.eventId, userId)) {
-      throw new ConvexError('Finish your current meeting first')
-    }
-    if (await activeMeetingFor(ctx, request.eventId, request.fromUserId)) {
-      throw new ConvexError(
-        'They are in a meeting right now. Try again when it ends.',
-      )
-    }
-    const meetingId = await startMeeting(ctx, event, request.fromUserId, userId)
-    await ctx.db.patch('socialMeetingRequests', requestId, {
-      status: 'accepted',
-      meetingId,
-      respondedAt: now,
-    })
-    return meetingId
+    if (!event) refuse('not_found', 'Event not found')
+    return await acceptRequest(ctx, event, request)
   },
 })
 
@@ -639,7 +567,7 @@ export const cancelRequest = mutation({
     const userId = await requireAuth(ctx)
     const request = await ctx.db.get('socialMeetingRequests', requestId)
     if (!request || request.fromUserId !== userId) {
-      throw new ConvexError('Request not found')
+      refuse('not_found', 'Request not found')
     }
     if (request.status === 'pending') {
       await ctx.db.patch('socialMeetingRequests', requestId, {
@@ -658,7 +586,7 @@ async function requireParticipant(
   const userId = await requireAuth(ctx)
   const meeting = await ctx.db.get('socialMeetings', meetingId)
   if (!meeting || (meeting.userA !== userId && meeting.userB !== userId)) {
-    throw new ConvexError('Meeting not found')
+    refuse('not_found', 'Meeting not found')
   }
   return meeting
 }
@@ -668,8 +596,7 @@ export const extendMeeting = mutation({
   returns: v.null(),
   handler: async (ctx, { meetingId, minutes }) => {
     const meeting = await requireParticipant(ctx, meetingId)
-    if (meeting.status !== 'active')
-      throw new ConvexError('This meeting has ended')
+    if (meeting.status !== 'active') refuse('ended', 'This meeting has ended')
     const add = Math.min(15, Math.max(1, Math.round(minutes)))
     const endsAt = meeting.endsAt + add * 60 * 1000
     await ctx.db.patch('socialMeetings', meetingId, { endsAt })
@@ -722,54 +649,30 @@ export const getLiveOverview = query({
     meetingsSoFar: v.number(),
   }),
   handler: async (ctx, { eventId }) => {
-    const event = await ctx.db.get('socialEvents', eventId)
-    if (!event) throw new ConvexError('Event not found')
-    const userId = await requireAuth(ctx)
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_user_and_org', (q) =>
-        q.eq('userId', userId).eq('orgId', event.orgId),
-      )
-      .first()
-    if (membership?.role !== 'admin')
-      throw new ConvexError('Admin access required')
-
-    const active = await ctx.db
-      .query('socialMeetings')
-      .withIndex('by_eventId_and_status', (q) =>
-        q.eq('eventId', eventId).eq('status', 'active'),
-      )
-      .take(500)
-    const ended = await ctx.db
-      .query('socialMeetings')
-      .withIndex('by_eventId_and_status', (q) =>
-        q.eq('eventId', eventId).eq('status', 'ended'),
-      )
-      .take(2000)
-    const guests = await ctx.db
-      .query('socialEventGuests')
-      .withIndex('by_eventId_and_status', (q) =>
-        q.eq('eventId', eventId).eq('status', 'approved'),
-      )
-      .take(500)
-    let pendingRequests = 0
-    for (const g of guests) {
-      if (!g.userId) continue
-      const rows = await ctx.db
+    await requireEventAdmin(ctx, eventId)
+    const countMeetings = async (status: Doc<'socialMeetings'>['status']) =>
+      (
+        await ctx.db
+          .query('socialMeetings')
+          .withIndex('by_eventId_and_status', (q) =>
+            q.eq('eventId', eventId).eq('status', status),
+          )
+          .take(2000)
+      ).length
+    const [activeMeetings, endedMeetings, pending] = await Promise.all([
+      countMeetings('active'),
+      countMeetings('ended'),
+      ctx.db
         .query('socialMeetingRequests')
-        .withIndex('by_eventId_and_toUserId_and_status', (q) =>
-          q
-            .eq('eventId', eventId)
-            .eq('toUserId', g.userId as string)
-            .eq('status', 'pending'),
+        .withIndex('by_eventId_and_status', (q) =>
+          q.eq('eventId', eventId).eq('status', 'pending'),
         )
-        .take(50)
-      pendingRequests += rows.length
-    }
+        .take(2000),
+    ])
     return {
-      activeMeetings: active.length,
-      pendingRequests,
-      meetingsSoFar: active.length + ended.length,
+      activeMeetings,
+      pendingRequests: pending.length,
+      meetingsSoFar: activeMeetings + endedMeetings,
     }
   },
 })

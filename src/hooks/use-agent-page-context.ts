@@ -21,8 +21,8 @@ export function useAgentPageContext(): AgentPageContext | undefined {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
 
   if (pathname === '/') return { type: 'viewing_home' }
-  // In-person event pages: /org/<org>/e/<event>/...
-  const eventMatch = pathname.match(/^\/org\/([^/]+)\/e\/([^/]+)/)
+  // In-person event profile page: /org/<org>/e/<event>/profile
+  const eventMatch = pathname.match(/^\/org\/([^/]+)\/e\/([^/]+)\/profile\/?$/)
   if (eventMatch) {
     return {
       type: 'event_profile',

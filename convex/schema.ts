@@ -1,5 +1,14 @@
 import { defineSchema, defineTable } from 'convex/server'
 import { v } from 'convex/values'
+import {
+  allowlistSourceValidator,
+  availabilityValidator,
+  eventStatusValidator,
+  guestSourceValidator,
+  guestStatusValidator,
+  lumaSyncValidator,
+  socialVisibilityValidator,
+} from './social/validators'
 
 // Legacy auth tables (from @convex-dev/auth) — kept temporarily for user ID migration.
 // Remove after all users have migrated to Clerk IDs.
@@ -110,13 +119,7 @@ export default defineSchema({
     canHelpWith: v.optional(v.string()),
     // Who can see this profile at in-person events. Unset means attendees of
     // the same event only.
-    socialVisibility: v.optional(
-      v.union(
-        v.literal('event_attendees'),
-        v.literal('org_members'),
-        v.literal('public'),
-      ),
-    ),
+    socialVisibility: v.optional(socialVisibilityValidator),
 
     // LLM-generated content
     enrichmentSummary: v.optional(v.string()),
@@ -2012,11 +2015,7 @@ export default defineSchema({
     timezone: v.string(),
     venueName: v.optional(v.string()),
     venueAddress: v.optional(v.string()),
-    status: v.union(
-      v.literal('draft'),
-      v.literal('published'),
-      v.literal('closed'),
-    ),
+    status: eventStatusValidator,
 
     // Luma link. Guests sync both ways once lumaEventId is set.
     lumaEventId: v.optional(v.string()), // "evt-..."
@@ -2057,11 +2056,7 @@ export default defineSchema({
     orgId: v.id('organizations'),
     email: v.string(), // lowercased
     name: v.optional(v.string()),
-    source: v.union(
-      v.literal('csv'),
-      v.literal('approval'),
-      v.literal('manual'),
-    ),
+    source: allowlistSourceValidator,
     addedBy: v.optional(v.string()),
     addedAt: v.number(),
   }).index('by_orgId_and_email', ['orgId', 'email']),
@@ -2074,26 +2069,14 @@ export default defineSchema({
     email: v.string(), // lowercased
     name: v.optional(v.string()),
     userId: v.optional(v.string()),
-    status: v.union(
-      v.literal('approved'),
-      v.literal('pending_approval'),
-      v.literal('declined'),
-      v.literal('waitlist'),
-      v.literal('invited'),
-    ),
-    source: v.union(v.literal('app'), v.literal('luma'), v.literal('admin')),
+    status: guestStatusValidator,
+    source: guestSourceValidator,
     linkedinUrl: v.optional(v.string()),
     // Luma mirror state
     lumaGuestId: v.optional(v.string()), // "gst-..."
-    lumaSync: v.union(
-      v.literal('not_linked'),
-      v.literal('pending'),
-      v.literal('synced'),
-      v.literal('error'),
-    ),
+    lumaSync: lumaSyncValidator,
     lumaSyncError: v.optional(v.string()),
     checkedInAt: v.optional(v.number()),
-    suggestionsGeneratedAt: v.optional(v.number()),
     registeredAt: v.number(),
     updatedAt: v.number(),
   })
@@ -2109,7 +2092,9 @@ export default defineSchema({
   socialAttendeeStatus: defineTable({
     eventId: v.id('socialEvents'),
     userId: v.string(),
-    availability: v.union(v.literal('available'), v.literal('busy')),
+    availability: availabilityValidator,
+    // When suggestions were last requested for this attendee (throttle).
+    suggestionsRequestedAt: v.optional(v.number()),
     updatedAt: v.number(),
   }).index('by_eventId_and_userId', ['eventId', 'userId']),
 
@@ -2128,6 +2113,7 @@ export default defineSchema({
     createdAt: v.number(),
     respondedAt: v.optional(v.number()),
   })
+    .index('by_eventId_and_status', ['eventId', 'status'])
     .index('by_eventId_and_toUserId_and_status', [
       'eventId',
       'toUserId',

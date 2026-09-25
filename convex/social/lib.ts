@@ -1,7 +1,9 @@
+import { ConvexError } from 'convex/values'
+import { internal } from '../_generated/api'
+import { requireOrgAdmin } from '../lib/auth'
+import { DEFAULT_EVENT_HOURS } from './constants'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
-
-export const DEFAULT_MEETING_MINUTES = 20
 
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase()
@@ -242,4 +244,103 @@ export function initialsOf(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean)
   const letters = (parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')
   return letters.toUpperCase() || '?'
+}
+
+export async function requireEventAdmin(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+): Promise<{ event: Doc<'socialEvents'>; userId: string }> {
+  const event = await ctx.db.get('socialEvents', eventId)
+  if (!event) throw new ConvexError('Event not found')
+  const userId = await requireOrgAdmin(ctx, event.orgId)
+  return { event, userId }
+}
+
+/**
+ * When 1:1s run. Without explicit times, they follow the event itself: from
+ * its start to its end (or DEFAULT_EVENT_HOURS after the start).
+ */
+export function meetingsWindow(event: Doc<'socialEvents'>): {
+  openAt: number
+  closeAt: number
+} {
+  return {
+    openAt: event.meetingsOpenAt ?? event.startAt,
+    closeAt:
+      event.meetingsCloseAt ??
+      event.endAt ??
+      event.startAt + DEFAULT_EVENT_HOURS * 3600 * 1000,
+  }
+}
+
+/**
+ * Patch a guest and, when the event is linked to Luma, mark the row pending
+ * and schedule the push. Every status change goes through here so the Luma
+ * mirror stays in step.
+ */
+export async function updateGuestAndSync(
+  ctx: MutationCtx,
+  event: Doc<'socialEvents'>,
+  guestId: Id<'socialEventGuests'>,
+  patch: Partial<Doc<'socialEventGuests'>>,
+): Promise<void> {
+  await ctx.db.patch('socialEventGuests', guestId, {
+    ...patch,
+    lumaSync: event.lumaEventId ? 'pending' : 'not_linked',
+    lumaSyncError: undefined,
+    updatedAt: Date.now(),
+  })
+  if (event.lumaEventId) {
+    await ctx.scheduler.runAfter(0, internal.social.lumaSync.pushGuest, {
+      guestId,
+    })
+  }
+}
+
+/** Approved guests of an event (with or without an account). */
+export async function approvedGuests(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+): Promise<Array<Doc<'socialEventGuests'>>> {
+  return await ctx.db
+    .query('socialEventGuests')
+    .withIndex('by_eventId_and_status', (q) =>
+      q.eq('eventId', eventId).eq('status', 'approved'),
+    )
+    .take(500)
+}
+
+/** A person's name, initials and headline for cards and lists. */
+export async function attendeeCard(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+  userId: string,
+) {
+  const profile = await getProfileByUser(ctx, userId)
+  const name =
+    profile?.name ??
+    (await getGuestByUser(ctx, eventId, userId))?.name ??
+    'Asistente'
+  return {
+    userId,
+    name,
+    initials: initialsOf(name),
+    headline: profile?.headline ?? null,
+  }
+}
+
+/** The suggestion `owner` got about `other`, if any. */
+export async function findSuggestion(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+  owner: string,
+  other: string,
+): Promise<Doc<'socialSuggestions'> | null> {
+  const rows = await ctx.db
+    .query('socialSuggestions')
+    .withIndex('by_eventId_and_userId_and_rank', (q) =>
+      q.eq('eventId', eventId).eq('userId', owner),
+    )
+    .take(20)
+  return rows.find((r) => r.suggestedUserId === other) ?? null
 }

@@ -1,4 +1,4 @@
-import { ConvexError, v } from 'convex/values'
+import { v } from 'convex/values'
 import { internal } from '../_generated/api'
 import {
   internalMutation,
@@ -6,14 +6,17 @@ import {
   mutation,
   query,
 } from '../_generated/server'
-import { getUserId, requireAuth, requireOrgAdmin } from '../lib/auth'
+import { getUserId, requireAuth } from '../lib/auth'
 import {
+  approvedGuests,
+  attendeeCard,
   getGuestByUser,
   getProfileByUser,
-  initialsOf,
   isProfileReadyForMatching,
+  requireEventAdmin,
 } from './lib'
-import type { Doc } from '../_generated/dataModel'
+import type { Doc, Id } from '../_generated/dataModel'
+import type { MutationCtx } from '../_generated/server'
 
 // Don't regenerate a person's suggestions more often than this.
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000
@@ -71,12 +74,7 @@ export const getSuggestionContext = internalQuery({
     const myProfile = await getProfileByUser(ctx, userId)
     if (!isProfileReadyForMatching(myProfile)) return null
 
-    const guests = await ctx.db
-      .query('socialEventGuests')
-      .withIndex('by_eventId_and_status', (q) =>
-        q.eq('eventId', eventId).eq('status', 'approved'),
-      )
-      .take(500)
+    const guests = await approvedGuests(ctx, eventId)
     const candidates: Array<{ userId: string; summary: string }> = []
     // The same roster (the attendee included) goes to every attendee's
     // request so the model provider can cache it.
@@ -146,8 +144,43 @@ export const saveSuggestions = internalMutation({
 })
 
 /**
+ * Record that suggestions were requested and return the previous request
+ * time. Kept on the attendee status row, not the guest row, so it doesn't
+ * re-run every attendee's guest-list queries.
+ */
+async function markSuggestionsRequested(
+  ctx: MutationCtx,
+  eventId: Id<'socialEvents'>,
+  userId: string,
+  now: number,
+): Promise<number | undefined> {
+  const row = await ctx.db
+    .query('socialAttendeeStatus')
+    .withIndex('by_eventId_and_userId', (q) =>
+      q.eq('eventId', eventId).eq('userId', userId),
+    )
+    .first()
+  const last = row?.suggestionsRequestedAt
+  if (last !== undefined && now - last < REFRESH_INTERVAL_MS) return last
+  if (row) {
+    await ctx.db.patch('socialAttendeeStatus', row._id, {
+      suggestionsRequestedAt: now,
+    })
+  } else {
+    await ctx.db.insert('socialAttendeeStatus', {
+      eventId,
+      userId,
+      availability: 'available',
+      suggestionsRequestedAt: now,
+      updatedAt: now,
+    })
+  }
+  return last
+}
+
+/**
  * Ask for fresh suggestions. Throttled per person; the attendee screen calls
- * this on load and when the attendee count changes.
+ * this when the people page opens.
  */
 export const refreshMySuggestions = mutation({
   args: { eventId: v.id('socialEvents') },
@@ -164,15 +197,10 @@ export const refreshMySuggestions = mutation({
     const profile = await getProfileByUser(ctx, userId)
     if (!isProfileReadyForMatching(profile)) return 'profile_incomplete'
     const now = Date.now()
-    if (
-      guest.suggestionsGeneratedAt &&
-      now - guest.suggestionsGeneratedAt < REFRESH_INTERVAL_MS
-    ) {
+    const last = await markSuggestionsRequested(ctx, eventId, userId, now)
+    if (last !== undefined && now - last < REFRESH_INTERVAL_MS) {
       return 'recent'
     }
-    await ctx.db.patch('socialEventGuests', guest._id, {
-      suggestionsGeneratedAt: now,
-    })
     await ctx.scheduler.runAfter(
       0,
       internal.social.suggestionsAction.generateForUser,
@@ -187,24 +215,15 @@ export const generateAllSuggestions = mutation({
   args: { eventId: v.id('socialEvents') },
   returns: v.number(),
   handler: async (ctx, { eventId }) => {
-    const event = await ctx.db.get('socialEvents', eventId)
-    if (!event) throw new ConvexError('Event not found')
-    await requireOrgAdmin(ctx, event.orgId)
-    const guests = await ctx.db
-      .query('socialEventGuests')
-      .withIndex('by_eventId_and_status', (q) =>
-        q.eq('eventId', eventId).eq('status', 'approved'),
-      )
-      .take(500)
+    await requireEventAdmin(ctx, eventId)
+    const guests = await approvedGuests(ctx, eventId)
     let scheduled = 0
     const now = Date.now()
     for (const g of guests) {
       if (!g.userId) continue
       const profile = await getProfileByUser(ctx, g.userId)
       if (!isProfileReadyForMatching(profile)) continue
-      await ctx.db.patch('socialEventGuests', g._id, {
-        suggestionsGeneratedAt: now,
-      })
+      await markSuggestionsRequested(ctx, eventId, g.userId, now)
       // Spread the calls out a little to stay clear of rate limits.
       await ctx.scheduler.runAfter(
         scheduled * 1500,
@@ -238,22 +257,18 @@ export const getMySuggestions = query({
         q.eq('eventId', eventId).eq('userId', userId),
       )
       .take(10)
-    const result = []
-    for (const row of rows) {
-      const guest = await getGuestByUser(ctx, eventId, row.suggestedUserId)
-      // Skip people who have since cancelled or been declined.
-      if (guest?.status !== 'approved') continue
-      const profile = await getProfileByUser(ctx, row.suggestedUserId)
-      const name = profile?.name ?? guest.name ?? 'Asistente'
-      result.push({
-        userId: row.suggestedUserId,
-        name,
-        initials: initialsOf(name),
-        headline: profile?.headline ?? null,
-        reason: row.reason,
-        topics: row.topics,
-      })
-    }
-    return result
+    const cards = await Promise.all(
+      rows.map(async (row) => {
+        const guest = await getGuestByUser(ctx, eventId, row.suggestedUserId)
+        // Skip people who have since cancelled or been declined.
+        if (guest?.status !== 'approved') return null
+        return {
+          ...(await attendeeCard(ctx, eventId, row.suggestedUserId)),
+          reason: row.reason,
+          topics: row.topics,
+        }
+      }),
+    )
+    return cards.filter((c) => c !== null)
   },
 })

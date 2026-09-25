@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import type { Infer } from 'convex/values'
 import { internal } from '../_generated/api'
 import {
   internalAction,
@@ -33,13 +34,7 @@ const lumaGuestValidator = v.object({
   checkedInAt: v.optional(v.number()),
 })
 
-type IncomingLumaGuest = {
-  id: string
-  email: string
-  name: string | null
-  approvalStatus: string
-  checkedInAt?: number
-}
+type IncomingLumaGuest = Infer<typeof lumaGuestValidator>
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -141,10 +136,6 @@ export const setEventSyncResult = internalMutation({
     eventId: v.id('socialEvents'),
     error: v.optional(v.string()),
     lumaUrl: v.optional(v.string()),
-    title: v.optional(v.string()),
-    startAt: v.optional(v.number()),
-    endAt: v.optional(v.number()),
-    timezone: v.optional(v.string()),
     venueAddress: v.optional(v.string()),
   },
   returns: v.null(),
@@ -160,7 +151,6 @@ export const setEventSyncResult = internalMutation({
     if (details.venueAddress && !event.venueAddress) {
       patch.venueAddress = details.venueAddress
     }
-    if (details.timezone && !event.timezone) patch.timezone = details.timezone
     await ctx.db.patch('socialEvents', eventId, patch)
     return null
   },
@@ -429,7 +419,6 @@ export const importLumaEvent = internalAction({
       await ctx.runMutation(internal.social.lumaSync.setEventSyncResult, {
         eventId,
         lumaUrl: lumaEvent.url,
-        timezone: lumaEvent.timezone,
         venueAddress:
           lumaEvent.geo_address_json?.full_address ??
           lumaEvent.geo_address_json?.address ??

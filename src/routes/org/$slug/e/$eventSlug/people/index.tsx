@@ -1,7 +1,7 @@
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import { CheckCircle2, Sparkles } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../../convex/_generated/api'
 import type { FunctionReturnType } from 'convex/server'
@@ -15,7 +15,9 @@ import {
   formatDuration,
   requestBlock,
   requestBlockCopy,
+  useMeetingsOpen,
   useSocialErrorMessage,
+  useStartMeeting,
 } from '~/components/social/live'
 import {
   Avatar,
@@ -29,6 +31,7 @@ import {
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
 import { cn } from '~/lib/utils'
+import { useBusyAction } from '~/lib/use-busy-action'
 import { formatTime, useCopy, useSocialLang } from '~/lib/social-i18n'
 
 export const Route = createFileRoute('/org/$slug/e/$eventSlug/people/')({
@@ -48,7 +51,6 @@ type RefreshResult = FunctionReturnType<
 const copy = {
   es: {
     openLeft: (left: string) => `1:1 abiertos · quedan ${left}`,
-    open: '1:1 abiertos',
     opensAt: (time: string) => `Los 1:1 abren a las ${time}`,
     closed: 'Los 1:1 están cerrados',
     yourStatus: 'Tu estado',
@@ -66,11 +68,6 @@ const copy = {
     requested: 'Solicitud enviada',
     sent: (name: string) =>
       `Le mandamos tu solicitud a ${name}. Si acepta, les asignamos un lugar.`,
-    state: {
-      available: 'Disponible',
-      in_meeting: 'En reunión',
-      busy: 'No disponible',
-    },
     incompleteTitle: 'Completá tu perfil para recibir sugerencias',
     incompleteBody:
       'Te sugerimos personas según tu trayectoria, lo que buscás y en qué podés ayudar.',
@@ -83,7 +80,6 @@ const copy = {
   },
   en: {
     openLeft: (left: string) => `1:1s open · ${left} left`,
-    open: '1:1s open',
     opensAt: (time: string) => `1:1s open at ${time}`,
     closed: '1:1s are closed',
     yourStatus: 'Your status',
@@ -101,11 +97,6 @@ const copy = {
     requested: 'Request sent',
     sent: (name: string) =>
       `We sent your request to ${name}. If they accept, you both get a spot.`,
-    state: {
-      available: 'Available',
-      in_meeting: 'In a meeting',
-      busy: 'Not available',
-    },
     incompleteTitle: 'Complete your profile to get suggestions',
     incompleteBody:
       "We suggest people based on your background, what you're looking for and what you can help with.",
@@ -134,7 +125,8 @@ function PeopleContent({ live }: { live: LiveState }) {
   const attendees = useQuery(api.social.meetings.listAttendees, {
     eventId: event._id,
   })
-  const refreshResult = useRefreshSuggestions(attendees?.length)
+  const refreshResult = useRefreshSuggestions()
+  const meetingsOpen = useMeetingsOpen()
 
   const tabs: Array<{ id: Tab; label: string }> = [
     { id: 'suggested', label: t.suggested(suggestions?.length ?? 0) },
@@ -157,7 +149,7 @@ function PeopleContent({ live }: { live: LiveState }) {
     <main className="flex flex-col gap-[18px] px-5 pb-8 pt-[18px]">
       <div className="flex flex-col gap-1">
         <PageTitle>{event.title}</PageTitle>
-        <MeetingsWindowLine live={live} />
+        <MeetingsWindowLine open={meetingsOpen} />
       </div>
 
       <AvailabilityToggle live={live} />
@@ -211,6 +203,7 @@ function PeopleContent({ live }: { live: LiveState }) {
         {tab === 'suggested' ? (
           <SuggestedPanel
             live={live}
+            meetingsOpen={meetingsOpen}
             suggestions={suggestions}
             stateById={stateById}
             refreshResult={refreshResult}
@@ -227,44 +220,31 @@ function PeopleContent({ live }: { live: LiveState }) {
 }
 
 /**
- * Asks for fresh suggestions on load and whenever more attendees show up.
- * The backend throttles this, so calling it often is fine.
+ * Asks for fresh suggestions once, when the page opens. The backend throttles
+ * this per person.
  */
-function useRefreshSuggestions(
-  attendeeCount: number | undefined,
-): RefreshResult | null {
+function useRefreshSuggestions(): RefreshResult | null {
   const event = useSocialEvent()
   const refresh = useMutation(api.social.suggestions.refreshMySuggestions)
   const [result, setResult] = useState<RefreshResult | null>(null)
-  const lastCount = useRef(-1)
   useEffect(() => {
-    if (attendeeCount === undefined || attendeeCount <= lastCount.current) {
-      return
-    }
-    lastCount.current = attendeeCount
     refresh({ eventId: event._id })
       .then(setResult)
       .catch((error: unknown) => console.error(error))
-  }, [attendeeCount, event._id, refresh])
+  }, [event._id, refresh])
   return result
 }
 
-function MeetingsWindowLine({ live }: { live: LiveState }) {
+function MeetingsWindowLine({ open }: { open: boolean }) {
   const event = useSocialEvent()
   const t = useCopy(copy)
   const { lang } = useSocialLang()
   const now = useNow()
-  let text: string
-  if (live.meetingsOpen) {
-    text =
-      live.meetingsCloseAt !== null
-        ? t.openLeft(formatDuration(live.meetingsCloseAt - now))
-        : t.open
-  } else if (live.meetingsOpenAt !== null && now < live.meetingsOpenAt) {
-    text = t.opensAt(formatTime(live.meetingsOpenAt, event.timezone, lang))
-  } else {
-    text = t.closed
-  }
+  const text = open
+    ? t.openLeft(formatDuration(event.meetingsCloseAt - now))
+    : now < event.meetingsOpenAt
+      ? t.opensAt(formatTime(event.meetingsOpenAt, event.timezone, lang))
+      : t.closed
   return <p className="text-sm text-muted-foreground">{text}</p>
 }
 
@@ -272,19 +252,16 @@ function AvailabilityToggle({ live }: { live: LiveState }) {
   const event = useSocialEvent()
   const t = useCopy(copy)
   const setAvailability = useMutation(api.social.meetings.setAvailability)
-  const [saving, setSaving] = useState(false)
+  const { busy, run } = useBusyAction<'status'>()
+  const saving = busy !== null
 
-  const choose = async (availability: 'available' | 'busy') => {
+  const choose = async (availability: LiveState['availability']) => {
     if (availability === live.availability || saving) return
-    setSaving(true)
-    try {
-      await setAvailability({ eventId: event._id, availability })
-    } catch (error) {
-      console.error(error)
-      toast.error(t.statusFailed)
-    } finally {
-      setSaving(false)
-    }
+    await run(
+      'status',
+      () => setAvailability({ eventId: event._id, availability }),
+      () => toast.error(t.statusFailed),
+    )
   }
 
   const options = [
@@ -335,12 +312,14 @@ function AvailabilityToggle({ live }: { live: LiveState }) {
 
 function SuggestedPanel({
   live,
+  meetingsOpen,
   suggestions,
   stateById,
   refreshResult,
   onSeeEveryone,
 }: {
   live: LiveState
+  meetingsOpen: boolean
   suggestions: Array<Suggestion> | undefined
   stateById: Map<string, AttendeeState>
   refreshResult: RefreshResult | null
@@ -402,6 +381,7 @@ function SuggestedPanel({
         <SuggestionCard
           key={s.userId}
           live={live}
+          meetingsOpen={meetingsOpen}
           suggestion={s}
           state={stateById.get(s.userId) ?? 'available'}
         />
@@ -412,48 +392,36 @@ function SuggestedPanel({
 
 function SuggestionCard({
   live,
+  meetingsOpen,
   suggestion: s,
   state,
 }: {
   live: LiveState
+  meetingsOpen: boolean
   suggestion: Suggestion
   state: AttendeeState
 }) {
-  const event = useSocialEvent()
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
   const blockText = useCopy(requestBlockCopy)
   const errorMessage = useSocialErrorMessage()
-  const navigate = useNavigate()
-  const requestMeeting = useMutation(api.social.meetings.requestMeeting)
-  const [sending, setSending] = useState(false)
+  const startMeeting = useStartMeeting()
+  const { busy, run } = useBusyAction<'send'>()
 
   const requested = live.outgoing.some((r) => r.to.userId === s.userId)
   const theyAsked = live.incoming.some((r) => r.from.userId === s.userId)
-  const block = requested ? null : requestBlock(live, s.userId, state)
+  const block = requested
+    ? null
+    : requestBlock(live, meetingsOpen, s.userId, state)
   const firstName = s.name.split(' ')[0] ?? s.name
 
   const onMeet = async () => {
-    setSending(true)
-    try {
-      const result = await requestMeeting({
-        eventId: event._id,
-        toUserId: s.userId,
-      })
-      if (result.meetingId) {
-        void navigate({
-          to: '/org/$slug/e/$eventSlug/meeting',
-          params: { slug, eventSlug },
-        })
-      } else {
-        toast.success(t.sent(firstName))
-      }
-    } catch (error) {
-      console.error(error)
-      toast.error(errorMessage(error))
-    } finally {
-      setSending(false)
-    }
+    const started = await run(
+      'send',
+      () => startMeeting.request(s.userId),
+      (error) => toast.error(errorMessage(error)),
+    )
+    if (started === false) toast.success(t.sent(firstName))
   }
 
   return (
@@ -471,7 +439,7 @@ function SuggestionCard({
           )}
         </div>
       </div>
-      <StateLabel state={state} copy={t.state} />
+      <StateLabel state={state} />
       <p className="text-sm leading-normal">
         <span className="font-semibold text-[var(--baish-strong)]">
           {t.why}
@@ -505,11 +473,11 @@ function SuggestionCard({
           <button
             type="button"
             onClick={() => void onMeet()}
-            disabled={sending || block !== null}
+            disabled={busy !== null || block !== null}
             aria-label={`${theyAsked ? t.accept : t.meetNow}: ${s.name}`}
             className="flex h-11 grow basis-0 items-center justify-center rounded-xl bg-primary text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
           >
-            {sending ? <Spinner size="sm" /> : theyAsked ? t.accept : t.meetNow}
+            {busy ? <Spinner size="sm" /> : theyAsked ? t.accept : t.meetNow}
           </button>
         )}
       </div>
@@ -558,7 +526,7 @@ function EveryonePanel({
               )}
             </span>
             <span className="shrink-0">
-              <StateLabel state={a.state} copy={t.state} compact />
+              <StateLabel state={a.state} compact />
             </span>
           </Link>
         </li>
