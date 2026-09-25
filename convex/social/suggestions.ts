@@ -15,12 +15,16 @@ import {
   isProfileReadyForMatching,
   requireEventAdmin,
 } from './lib'
+import { suggestionLanguageValidator } from './validators'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx } from '../_generated/server'
+import type { Infer } from 'convex/values'
 
 // Don't regenerate a person's suggestions more often than this.
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000
 const MAX_CANDIDATES = 150
+
+type SuggestionLanguage = Infer<typeof suggestionLanguageValidator>
 
 function summarizeProfile(
   profile: Doc<'profiles'> | null,
@@ -53,7 +57,11 @@ function summarizeProfile(
 }
 
 export const getSuggestionContext = internalQuery({
-  args: { eventId: v.id('socialEvents'), userId: v.string() },
+  args: {
+    eventId: v.id('socialEvents'),
+    userId: v.string(),
+    language: v.optional(suggestionLanguageValidator),
+  },
   returns: v.union(
     v.null(),
     v.object({
@@ -66,7 +74,7 @@ export const getSuggestionContext = internalQuery({
       ),
     }),
   ),
-  handler: async (ctx, { eventId, userId }) => {
+  handler: async (ctx, { eventId, userId, language }) => {
     const event = await ctx.db.get('socialEvents', eventId)
     if (!event) return null
     const myGuest = await getGuestByUser(ctx, eventId, userId)
@@ -99,7 +107,8 @@ export const getSuggestionContext = internalQuery({
     return {
       eventTitle: event.title,
       matchingPrompt: event.matchingPrompt ?? null,
-      language: myProfile?.preferredLanguage === 'en' ? 'en' : 'es',
+      language:
+        language ?? (myProfile?.preferredLanguage === 'en' ? 'en' : 'es'),
       me: summarizeProfile(myProfile, myGuest.name),
       candidates,
     }
@@ -153,29 +162,35 @@ async function markSuggestionsRequested(
   eventId: Id<'socialEvents'>,
   userId: string,
   now: number,
-): Promise<number | undefined> {
+  language: SuggestionLanguage | undefined,
+): Promise<{ recent: boolean; language: SuggestionLanguage | undefined }> {
   const row = await ctx.db
     .query('socialAttendeeStatus')
     .withIndex('by_eventId_and_userId', (q) =>
       q.eq('eventId', eventId).eq('userId', userId),
     )
     .first()
+  const lang = language ?? row?.suggestionsLanguage
   const last = row?.suggestionsRequestedAt
-  if (last !== undefined && now - last < REFRESH_INTERVAL_MS) return last
+  // A language switch regenerates straight away; otherwise throttle.
+  const recent =
+    last !== undefined &&
+    now - last < REFRESH_INTERVAL_MS &&
+    lang === row?.suggestionsLanguage
+  if (recent) return { recent, language: lang }
+  const fields = { suggestionsRequestedAt: now, suggestionsLanguage: lang }
   if (row) {
-    await ctx.db.patch('socialAttendeeStatus', row._id, {
-      suggestionsRequestedAt: now,
-    })
+    await ctx.db.patch('socialAttendeeStatus', row._id, fields)
   } else {
     await ctx.db.insert('socialAttendeeStatus', {
       eventId,
       userId,
       availability: 'available',
-      suggestionsRequestedAt: now,
+      ...fields,
       updatedAt: now,
     })
   }
-  return last
+  return { recent, language: lang }
 }
 
 /**
@@ -183,28 +198,34 @@ async function markSuggestionsRequested(
  * this when the people page opens.
  */
 export const refreshMySuggestions = mutation({
-  args: { eventId: v.id('socialEvents') },
+  args: {
+    eventId: v.id('socialEvents'),
+    language: v.optional(suggestionLanguageValidator),
+  },
   returns: v.union(
     v.literal('scheduled'),
     v.literal('recent'),
     v.literal('profile_incomplete'),
     v.literal('not_attendee'),
   ),
-  handler: async (ctx, { eventId }) => {
+  handler: async (ctx, { eventId, language }) => {
     const userId = await requireAuth(ctx)
     const guest = await getGuestByUser(ctx, eventId, userId)
     if (guest?.status !== 'approved') return 'not_attendee'
     const profile = await getProfileByUser(ctx, userId)
     if (!isProfileReadyForMatching(profile)) return 'profile_incomplete'
-    const now = Date.now()
-    const last = await markSuggestionsRequested(ctx, eventId, userId, now)
-    if (last !== undefined && now - last < REFRESH_INTERVAL_MS) {
-      return 'recent'
-    }
+    const marked = await markSuggestionsRequested(
+      ctx,
+      eventId,
+      userId,
+      Date.now(),
+      language,
+    )
+    if (marked.recent) return 'recent'
     await ctx.scheduler.runAfter(
       0,
       internal.social.suggestionsAction.generateForUser,
-      { eventId, userId },
+      { eventId, userId, language: marked.language },
     )
     return 'scheduled'
   },
@@ -223,12 +244,18 @@ export const generateAllSuggestions = mutation({
       if (!g.userId) continue
       const profile = await getProfileByUser(ctx, g.userId)
       if (!isProfileReadyForMatching(profile)) continue
-      await markSuggestionsRequested(ctx, eventId, g.userId, now)
+      const { language } = await markSuggestionsRequested(
+        ctx,
+        eventId,
+        g.userId,
+        now,
+        undefined,
+      )
       // Spread the calls out a little to stay clear of rate limits.
       await ctx.scheduler.runAfter(
         scheduled * 1500,
         internal.social.suggestionsAction.generateForUser,
-        { eventId, userId: g.userId },
+        { eventId, userId: g.userId, language },
       )
       scheduled++
     }

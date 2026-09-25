@@ -8,6 +8,7 @@ import {
   guestStatusValidator,
   lumaSyncValidator,
   socialVisibilityValidator,
+  suggestionLanguageValidator,
 } from './social/validators'
 
 // Legacy auth tables (from @convex-dev/auth) — kept temporarily for user ID migration.
@@ -2095,6 +2096,8 @@ export default defineSchema({
     availability: availabilityValidator,
     // When suggestions were last requested for this attendee (throttle).
     suggestionsRequestedAt: v.optional(v.number()),
+    // Language the attendee's suggestions are written in (the page's).
+    suggestionsLanguage: v.optional(suggestionLanguageValidator),
     updatedAt: v.number(),
   }).index('by_eventId_and_userId', ['eventId', 'userId']),
 

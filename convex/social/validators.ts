@@ -51,3 +51,8 @@ export const profileMissingValidator = v.union(
   v.literal('seeking'),
   v.literal('canHelpWith'),
 )
+
+export const suggestionLanguageValidator = v.union(
+  v.literal('es'),
+  v.literal('en'),
+)

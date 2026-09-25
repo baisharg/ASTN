@@ -128,7 +128,7 @@ export function Eyebrow({ children }: { children: React.ReactNode }) {
 
 export function Chip({ children }: { children: React.ReactNode }) {
   return (
-    <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[13px]">
+    <span className="inline-block max-w-full rounded-xl border border-border bg-background px-2.5 py-1 text-[13px] leading-snug">
       {children}
     </span>
   )

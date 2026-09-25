@@ -220,18 +220,20 @@ function PeopleContent({ live }: { live: LiveState }) {
 }
 
 /**
- * Asks for fresh suggestions once, when the page opens. The backend throttles
- * this per person.
+ * Asks for fresh suggestions when the page opens, in the page's language. The
+ * backend throttles this per person.
  */
 function useRefreshSuggestions(): RefreshResult | null {
   const event = useSocialEvent()
+  const { lang } = useSocialLang()
   const refresh = useMutation(api.social.suggestions.refreshMySuggestions)
   const [result, setResult] = useState<RefreshResult | null>(null)
+  // Also re-runs on a language switch, which regenerates in that language.
   useEffect(() => {
-    refresh({ eventId: event._id })
+    refresh({ eventId: event._id, language: lang })
       .then(setResult)
       .catch((error: unknown) => console.error(error))
-  }, [event._id, refresh])
+  }, [event._id, lang, refresh])
   return result
 }
 
