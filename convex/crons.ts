@@ -80,4 +80,12 @@ crons.daily(
   internal.engagement.compute.runEngagementBatch,
 )
 
+// Keep in-person events in step with Luma in case a webhook is missed
+crons.interval(
+  'sync-social-event-guests',
+  { minutes: 10 },
+  internal.social.lumaSync.pullAllOpenEvents,
+  {},
+)
+
 export default crons

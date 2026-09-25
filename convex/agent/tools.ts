@@ -61,6 +61,7 @@ async function getProfile(ctx: {
     careerGoals?: string
     aiSafetyInterests?: Array<string>
     seeking?: string
+    canHelpWith?: string
     matchPreferences?: {
       remotePreference?: string
       roleTypes?: Array<string>
@@ -451,6 +452,35 @@ export const setSeeking = createTool({
         displayText,
         updates: JSON.stringify({ seeking: input.seeking }),
         previousValues: JSON.stringify({ seeking: existing }),
+      } as never,
+    )
+
+    return displayText
+  },
+})
+
+export const setCanHelpWith = createTool({
+  description:
+    "Set what the user can help other people with: skills, experience or introductions they could offer. Shown on their profile at in-person events and used to suggest who they should meet. E.g. 'Getting started in interpretability research; reviewing MATS applications'.",
+  inputSchema: z.object({
+    canHelpWith: z.string().describe('What the user can help others with'),
+  }),
+  execute: async (ctx, input): Promise<string> => {
+    const profile = await getProfile(ctx)
+    if (!profile) return 'Error: profile not found'
+
+    const existing = profile.canHelpWith
+    const displayText = `Updated what you can help with`
+
+    await ctx.runMutation(
+      internal.agent.mutations.proposeToolChange as never,
+      {
+        profileId: profile._id,
+        threadId: ctx.threadId,
+        toolName: 'set_can_help_with',
+        displayText,
+        updates: JSON.stringify({ canHelpWith: input.canHelpWith }),
+        previousValues: JSON.stringify({ canHelpWith: existing }),
       } as never,
     )
 

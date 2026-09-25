@@ -17,6 +17,7 @@ import {
   searchOpportunities,
   setAiSafetyInterests,
   setCareerGoals,
+  setCanHelpWith,
   setLanguagePreference,
   setMatchPreferences,
   setSeeking,
@@ -42,6 +43,7 @@ export const profileAgent = new Agent(components.agent, {
     set_career_goals: setCareerGoals,
     set_ai_safety_interests: setAiSafetyInterests,
     set_seeking: setSeeking,
+    set_can_help_with: setCanHelpWith,
     set_match_preferences: setMatchPreferences,
     set_language_preference: setLanguagePreference,
     // Read-only exploration tools

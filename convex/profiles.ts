@@ -254,6 +254,14 @@ export const updateField = mutation({
       careerGoals: v.optional(v.string()),
       aiSafetyInterests: v.optional(v.array(v.string())),
       seeking: v.optional(v.string()),
+      canHelpWith: v.optional(v.string()),
+      socialVisibility: v.optional(
+        v.union(
+          v.literal('event_attendees'),
+          v.literal('org_members'),
+          v.literal('public'),
+        ),
+      ),
       enrichmentSummary: v.optional(v.string()),
       hasEnrichmentConversation: v.optional(v.boolean()),
       privacySettings: v.optional(

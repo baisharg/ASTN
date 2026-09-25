@@ -6,6 +6,7 @@ import type { Id } from '../_generated/dataModel'
 export const PRICING: Partial<
   Record<string, { input: number; output: number }>
 > = {
+  'claude-opus-5': { input: 5, output: 25 },
   'claude-sonnet-4-6': { input: 3, output: 15 },
   'claude-haiku-4-5': { input: 0.8, output: 4 },
   'gemini-3-flash-preview': { input: 0.5, output: 3 },

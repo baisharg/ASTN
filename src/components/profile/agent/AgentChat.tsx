@@ -341,6 +341,8 @@ export function AgentChat({
         return pageContext.entityId ? 'Seeing opportunity details' : null
       case 'browsing_matches':
         return 'Seeing your match overview'
+      case 'event_profile':
+        return 'Setting up your event profile'
       default:
         return null
     }

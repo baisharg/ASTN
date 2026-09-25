@@ -1,0 +1,259 @@
+import { v } from 'convex/values'
+import { internal } from '../_generated/api'
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from '../_generated/server'
+import { getUserId, requireAuth, requireOrgAdmin } from '../lib/auth'
+import {
+  getGuestByUser,
+  getProfileByUser,
+  initialsOf,
+  isProfileReadyForMatching,
+} from './lib'
+import type { Doc } from '../_generated/dataModel'
+
+// Don't regenerate a person's suggestions more often than this.
+const REFRESH_INTERVAL_MS = 10 * 60 * 1000
+const MAX_CANDIDATES = 150
+
+function summarizeProfile(
+  profile: Doc<'profiles'> | null,
+  fallbackName: string | undefined,
+): string {
+  const lines: Array<string> = []
+  lines.push(`Nombre: ${profile?.name ?? fallbackName ?? 'Sin nombre'}`)
+  if (profile?.headline) lines.push(`Titular: ${profile.headline}`)
+  const jobs = (profile?.workHistory ?? [])
+    .slice(0, 3)
+    .map(
+      (w) => `${w.title} en ${w.organization}${w.current ? ' (actual)' : ''}`,
+    )
+  if (jobs.length) lines.push(`Trayectoria: ${jobs.join('; ')}`)
+  const schools = (profile?.education ?? [])
+    .slice(0, 2)
+    .map((e) => [e.degree, e.field, e.institution].filter(Boolean).join(', '))
+  if (schools.length) lines.push(`Formación: ${schools.join('; ')}`)
+  if (profile?.seeking) lines.push(`Busca: ${profile.seeking}`)
+  if (profile?.canHelpWith)
+    lines.push(`Puede ayudar con: ${profile.canHelpWith}`)
+  if (profile?.careerGoals) lines.push(`Objetivos: ${profile.careerGoals}`)
+  if (profile?.aiSafetyInterests?.length) {
+    lines.push(`Intereses: ${profile.aiSafetyInterests.join(', ')}`)
+  }
+  if (profile?.skills?.length) {
+    lines.push(`Habilidades: ${profile.skills.slice(0, 8).join(', ')}`)
+  }
+  return lines.join('\n')
+}
+
+export const getSuggestionContext = internalQuery({
+  args: { eventId: v.id('socialEvents'), userId: v.string() },
+  returns: v.union(
+    v.null(),
+    v.object({
+      eventTitle: v.string(),
+      matchingPrompt: v.union(v.string(), v.null()),
+      language: v.string(),
+      me: v.string(),
+      candidates: v.array(
+        v.object({ userId: v.string(), summary: v.string() }),
+      ),
+    }),
+  ),
+  handler: async (ctx, { eventId, userId }) => {
+    const event = await ctx.db.get('socialEvents', eventId)
+    if (!event) return null
+    const myGuest = await getGuestByUser(ctx, eventId, userId)
+    if (myGuest?.status !== 'approved') return null
+    const myProfile = await getProfileByUser(ctx, userId)
+    if (!isProfileReadyForMatching(myProfile)) return null
+
+    const guests = await ctx.db
+      .query('socialEventGuests')
+      .withIndex('by_eventId_and_status', (q) =>
+        q.eq('eventId', eventId).eq('status', 'approved'),
+      )
+      .take(500)
+    const candidates: Array<{ userId: string; summary: string }> = []
+    // The same roster (the attendee included) goes to every attendee's
+    // request so the model provider can cache it.
+    for (const g of guests) {
+      if (!g.userId) continue
+      const profile = await getProfileByUser(ctx, g.userId)
+      // People with no profile to speak of make for vague suggestions.
+      if (
+        g.userId !== userId &&
+        !profile?.headline &&
+        !profile?.seeking &&
+        !profile?.workHistory?.length
+      ) {
+        continue
+      }
+      candidates.push({
+        userId: g.userId,
+        summary: summarizeProfile(profile, g.name),
+      })
+      if (candidates.length >= MAX_CANDIDATES) break
+    }
+    return {
+      eventTitle: event.title,
+      matchingPrompt: event.matchingPrompt ?? null,
+      language: myProfile?.preferredLanguage === 'en' ? 'en' : 'es',
+      me: summarizeProfile(myProfile, myGuest.name),
+      candidates,
+    }
+  },
+})
+
+export const saveSuggestions = internalMutation({
+  args: {
+    eventId: v.id('socialEvents'),
+    userId: v.string(),
+    suggestions: v.array(
+      v.object({
+        suggestedUserId: v.string(),
+        reason: v.string(),
+        topics: v.array(v.string()),
+      }),
+    ),
+  },
+  returns: v.null(),
+  handler: async (ctx, { eventId, userId, suggestions }) => {
+    const old = await ctx.db
+      .query('socialSuggestions')
+      .withIndex('by_eventId_and_userId_and_rank', (q) =>
+        q.eq('eventId', eventId).eq('userId', userId),
+      )
+      .take(50)
+    for (const row of old) await ctx.db.delete('socialSuggestions', row._id)
+    const now = Date.now()
+    for (const [rank, s] of suggestions.entries()) {
+      await ctx.db.insert('socialSuggestions', {
+        eventId,
+        userId,
+        suggestedUserId: s.suggestedUserId,
+        rank,
+        reason: s.reason,
+        topics: s.topics,
+        generatedAt: now,
+      })
+    }
+    return null
+  },
+})
+
+/**
+ * Ask for fresh suggestions. Throttled per person; the attendee screen calls
+ * this on load and when the attendee count changes.
+ */
+export const refreshMySuggestions = mutation({
+  args: { eventId: v.id('socialEvents') },
+  returns: v.union(
+    v.literal('scheduled'),
+    v.literal('recent'),
+    v.literal('profile_incomplete'),
+    v.literal('not_attendee'),
+  ),
+  handler: async (ctx, { eventId }) => {
+    const userId = await requireAuth(ctx)
+    const guest = await getGuestByUser(ctx, eventId, userId)
+    if (guest?.status !== 'approved') return 'not_attendee'
+    const profile = await getProfileByUser(ctx, userId)
+    if (!isProfileReadyForMatching(profile)) return 'profile_incomplete'
+    const now = Date.now()
+    if (
+      guest.suggestionsGeneratedAt &&
+      now - guest.suggestionsGeneratedAt < REFRESH_INTERVAL_MS
+    ) {
+      return 'recent'
+    }
+    await ctx.db.patch('socialEventGuests', guest._id, {
+      suggestionsGeneratedAt: now,
+    })
+    await ctx.scheduler.runAfter(
+      0,
+      internal.social.suggestionsAction.generateForUser,
+      { eventId, userId },
+    )
+    return 'scheduled'
+  },
+})
+
+/** Admin: regenerate suggestions for every attendee with a ready profile. */
+export const generateAllSuggestions = mutation({
+  args: { eventId: v.id('socialEvents') },
+  returns: v.number(),
+  handler: async (ctx, { eventId }) => {
+    const event = await ctx.db.get('socialEvents', eventId)
+    if (!event) throw new Error('Event not found')
+    await requireOrgAdmin(ctx, event.orgId)
+    const guests = await ctx.db
+      .query('socialEventGuests')
+      .withIndex('by_eventId_and_status', (q) =>
+        q.eq('eventId', eventId).eq('status', 'approved'),
+      )
+      .take(500)
+    let scheduled = 0
+    const now = Date.now()
+    for (const g of guests) {
+      if (!g.userId) continue
+      const profile = await getProfileByUser(ctx, g.userId)
+      if (!isProfileReadyForMatching(profile)) continue
+      await ctx.db.patch('socialEventGuests', g._id, {
+        suggestionsGeneratedAt: now,
+      })
+      // Spread the calls out a little to stay clear of rate limits.
+      await ctx.scheduler.runAfter(
+        scheduled * 1500,
+        internal.social.suggestionsAction.generateForUser,
+        { eventId, userId: g.userId },
+      )
+      scheduled++
+    }
+    return scheduled
+  },
+})
+
+export const getMySuggestions = query({
+  args: { eventId: v.id('socialEvents') },
+  returns: v.array(
+    v.object({
+      userId: v.string(),
+      name: v.string(),
+      initials: v.string(),
+      headline: v.union(v.string(), v.null()),
+      reason: v.string(),
+      topics: v.array(v.string()),
+    }),
+  ),
+  handler: async (ctx, { eventId }) => {
+    const userId = await getUserId(ctx)
+    if (!userId) return []
+    const rows = await ctx.db
+      .query('socialSuggestions')
+      .withIndex('by_eventId_and_userId_and_rank', (q) =>
+        q.eq('eventId', eventId).eq('userId', userId),
+      )
+      .take(10)
+    const result = []
+    for (const row of rows) {
+      const guest = await getGuestByUser(ctx, eventId, row.suggestedUserId)
+      // Skip people who have since cancelled or been declined.
+      if (guest?.status !== 'approved') continue
+      const profile = await getProfileByUser(ctx, row.suggestedUserId)
+      const name = profile?.name ?? guest.name ?? 'Asistente'
+      result.push({
+        userId: row.suggestedUserId,
+        name,
+        initials: initialsOf(name),
+        headline: profile?.headline ?? null,
+        reason: row.reason,
+        topics: row.topics,
+      })
+    }
+    return result
+  },
+})

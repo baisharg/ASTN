@@ -106,6 +106,17 @@ export default defineSchema({
     careerGoals: v.optional(v.string()),
     aiSafetyInterests: v.optional(v.array(v.string())),
     seeking: v.optional(v.string()),
+    // What this person can help others with (shown on event profiles)
+    canHelpWith: v.optional(v.string()),
+    // Who can see this profile at in-person events. Unset means attendees of
+    // the same event only.
+    socialVisibility: v.optional(
+      v.union(
+        v.literal('event_attendees'),
+        v.literal('org_members'),
+        v.literal('public'),
+      ),
+    ),
 
     // LLM-generated content
     enrichmentSummary: v.optional(v.string()),
@@ -1987,4 +1998,169 @@ export default defineSchema({
     opportunities: v.number(),
     submissions: v.number(),
   }).index('by_orgId', ['orgId']),
+  // ── In-person social events: registration, attendee profiles, 1:1s ──
+
+  // An in-person event the org runs registration and 1:1s for. Separate from
+  // `events`, which is a read-only mirror of the org's Luma calendar.
+  socialEvents: defineTable({
+    orgId: v.id('organizations'),
+    slug: v.string(),
+    title: v.string(),
+    description: v.optional(v.string()),
+    startAt: v.number(),
+    endAt: v.optional(v.number()),
+    timezone: v.string(),
+    venueName: v.optional(v.string()),
+    venueAddress: v.optional(v.string()),
+    status: v.union(
+      v.literal('draft'),
+      v.literal('published'),
+      v.literal('closed'),
+    ),
+
+    // Luma link. Guests sync both ways once lumaEventId is set.
+    lumaEventId: v.optional(v.string()), // "evt-..."
+    lumaUrl: v.optional(v.string()),
+    lumaLastSyncedAt: v.optional(v.number()),
+    lumaLastSyncError: v.optional(v.string()),
+
+    // 1:1 settings
+    meetingsOpenAt: v.optional(v.number()),
+    meetingsCloseAt: v.optional(v.number()),
+    meetingMinutes: v.number(),
+    // Admin guidance for AI suggestions. The first sentence is shown to
+    // attendees as the focus of the event.
+    matchingPrompt: v.optional(v.string()),
+    floorPlanStorageId: v.optional(v.id('_storage')),
+
+    createdBy: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_org_and_slug', ['orgId', 'slug'])
+    .index('by_org_and_startAt', ['orgId', 'startAt'])
+    .index('by_lumaEventId', ['lumaEventId']),
+
+  // Places on the floor plan where pairs meet. x and y are 0–1 fractions of
+  // the floor plan's width and height.
+  socialEventSpots: defineTable({
+    eventId: v.id('socialEvents'),
+    number: v.number(),
+    label: v.optional(v.string()),
+    x: v.number(),
+    y: v.number(),
+  }).index('by_eventId_and_number', ['eventId', 'number']),
+
+  // People the org already knows. They are approved as soon as they register
+  // for any event, in the app or on Luma. Approving someone adds them here.
+  orgAllowlist: defineTable({
+    orgId: v.id('organizations'),
+    email: v.string(), // lowercased
+    name: v.optional(v.string()),
+    source: v.union(
+      v.literal('csv'),
+      v.literal('approval'),
+      v.literal('manual'),
+    ),
+    addedBy: v.optional(v.string()),
+    addedAt: v.number(),
+  }).index('by_orgId_and_email', ['orgId', 'email']),
+
+  // One row per person registered for (or invited to) an event, whether they
+  // came through the app or Luma. Linked to an account by email.
+  socialEventGuests: defineTable({
+    eventId: v.id('socialEvents'),
+    orgId: v.id('organizations'),
+    email: v.string(), // lowercased
+    name: v.optional(v.string()),
+    userId: v.optional(v.string()),
+    status: v.union(
+      v.literal('approved'),
+      v.literal('pending_approval'),
+      v.literal('declined'),
+      v.literal('waitlist'),
+      v.literal('invited'),
+    ),
+    source: v.union(v.literal('app'), v.literal('luma'), v.literal('admin')),
+    linkedinUrl: v.optional(v.string()),
+    // Luma mirror state
+    lumaGuestId: v.optional(v.string()), // "gst-..."
+    lumaSync: v.union(
+      v.literal('not_linked'),
+      v.literal('pending'),
+      v.literal('synced'),
+      v.literal('error'),
+    ),
+    lumaSyncError: v.optional(v.string()),
+    checkedInAt: v.optional(v.number()),
+    suggestionsGeneratedAt: v.optional(v.number()),
+    registeredAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_eventId_and_email', ['eventId', 'email'])
+    .index('by_eventId_and_status', ['eventId', 'status'])
+    .index('by_eventId_and_userId', ['eventId', 'userId'])
+    .index('by_eventId_and_lumaSync', ['eventId', 'lumaSync'])
+    .index('by_email', ['email'])
+    .index('by_userId', ['userId']),
+
+  // Whether an attendee is taking 1:1 requests right now. Kept apart from
+  // the guest row because it changes often during the event.
+  socialAttendeeStatus: defineTable({
+    eventId: v.id('socialEvents'),
+    userId: v.string(),
+    availability: v.union(v.literal('available'), v.literal('busy')),
+    updatedAt: v.number(),
+  }).index('by_eventId_and_userId', ['eventId', 'userId']),
+
+  socialMeetingRequests: defineTable({
+    eventId: v.id('socialEvents'),
+    fromUserId: v.string(),
+    toUserId: v.string(),
+    note: v.optional(v.string()),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('accepted'),
+      v.literal('declined'),
+      v.literal('cancelled'),
+    ),
+    meetingId: v.optional(v.id('socialMeetings')),
+    createdAt: v.number(),
+    respondedAt: v.optional(v.number()),
+  })
+    .index('by_eventId_and_toUserId_and_status', [
+      'eventId',
+      'toUserId',
+      'status',
+    ])
+    .index('by_eventId_and_fromUserId_and_status', [
+      'eventId',
+      'fromUserId',
+      'status',
+    ]),
+
+  socialMeetings: defineTable({
+    eventId: v.id('socialEvents'),
+    userA: v.string(),
+    userB: v.string(),
+    spotId: v.optional(v.id('socialEventSpots')),
+    startedAt: v.number(),
+    endsAt: v.number(),
+    endedAt: v.optional(v.number()),
+    status: v.union(v.literal('active'), v.literal('ended')),
+  })
+    .index('by_eventId_and_status', ['eventId', 'status'])
+    .index('by_eventId_and_userA_and_status', ['eventId', 'userA', 'status'])
+    .index('by_eventId_and_userB_and_status', ['eventId', 'userB', 'status']),
+
+  // AI suggestions of who an attendee should meet, regenerated as people join.
+  socialSuggestions: defineTable({
+    eventId: v.id('socialEvents'),
+    userId: v.string(),
+    suggestedUserId: v.string(),
+    rank: v.number(),
+    reason: v.string(),
+    topics: v.array(v.string()),
+    generatedAt: v.number(),
+  }).index('by_eventId_and_userId_and_rank', ['eventId', 'userId', 'rank']),
 })

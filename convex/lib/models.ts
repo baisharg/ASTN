@@ -3,6 +3,8 @@
 export const MODEL_FAST = 'claude-haiku-4-5'
 // QUALITY: user-facing conversation, career actions
 export const MODEL_QUALITY = 'claude-sonnet-4-6'
+// SOCIAL_SUGGESTIONS: who should meet whom at in-person events
+export const MODEL_SOCIAL_SUGGESTIONS = 'claude-opus-5'
 // GEMINI_FAST: matching (structured JSON output, cheap)
 export const MODEL_GEMINI_FAST = 'gemini-3-flash-preview'
 

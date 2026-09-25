@@ -35,6 +35,7 @@ export const streamResponse = internalAction({
         v.literal('viewing_match'),
         v.literal('browsing_opportunities'),
         v.literal('viewing_opportunity'),
+        v.literal('event_profile'),
       ),
     ),
     pageContextEntityId: v.optional(v.string()),
@@ -79,6 +80,11 @@ export const streamResponse = internalAction({
           opportunityId: pageContextEntityId as Id<'opportunities'>,
           profileId,
         },
+      )
+    } else if (pageContext === 'event_profile' && pageContextEntityId) {
+      entityData = await ctx.runQuery(
+        internal.social.agentContext.getEventForAgent,
+        { key: pageContextEntityId },
       )
     } else if (pageContext === 'browsing_matches') {
       entityData = await ctx.runQuery(
