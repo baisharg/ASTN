@@ -78,10 +78,15 @@ The user is currently: ${description}
   let dataBlock = ''
 
   if (pageContext === 'event_profile') {
+    const event = entityData as {
+      title: string
+      date: string
+      focus: string | null
+    }
     return `\n\n<current_context>
 The user is ${description}.
-Event: ${String(data.title)} (${String(data.date)})
-${data.focus ? `What the organizers want people to get out of it: ${String(data.focus)}` : ''}
+Event: ${event.title} (${event.date})
+${event.focus ? `What the organizers want people to get out of it: ${event.focus}` : ''}
 </current_context>
 
 <event_profile_mode>

@@ -1,8 +1,9 @@
-import { v } from 'convex/values'
+import { ConvexError, v } from 'convex/values'
 import { internal } from '../_generated/api'
 import { internalMutation, mutation, query } from '../_generated/server'
 import { getUserId, requireAuth } from '../lib/auth'
 import {
+  canViewSocialProfile,
   getGuestByUser,
   getProfileByUser,
   initialsOf,
@@ -24,7 +25,7 @@ async function requireApprovedAttendee(
 ): Promise<Doc<'socialEventGuests'>> {
   const guest = await getGuestByUser(ctx, eventId, userId)
   if (!guest || guest.status !== 'approved') {
-    throw new Error('Only confirmed attendees can do this')
+    throw new ConvexError('Only confirmed attendees can do this')
   }
   return guest
 }
@@ -72,14 +73,28 @@ async function attendeeState(
   return await availabilityFor(ctx, eventId, userId)
 }
 
+const DEFAULT_EVENT_HOURS = 6
+
+/**
+ * When 1:1s run. Without explicit times, they follow the event itself: from
+ * its start to its end (or six hours after the start).
+ */
+function meetingsWindow(event: Doc<'socialEvents'>): {
+  openAt: number
+  closeAt: number
+} {
+  return {
+    openAt: event.meetingsOpenAt ?? event.startAt,
+    closeAt:
+      event.meetingsCloseAt ??
+      event.endAt ??
+      event.startAt + DEFAULT_EVENT_HOURS * 3600 * 1000,
+  }
+}
+
 function meetingsOpen(event: Doc<'socialEvents'>, now: number): boolean {
-  if (event.meetingsOpenAt !== undefined && now < event.meetingsOpenAt) {
-    return false
-  }
-  if (event.meetingsCloseAt !== undefined && now > event.meetingsCloseAt) {
-    return false
-  }
-  return event.status === 'published'
+  const { openAt, closeAt } = meetingsWindow(event)
+  return event.status === 'published' && now >= openAt && now <= closeAt
 }
 
 async function attendeeCard(
@@ -95,6 +110,29 @@ async function attendeeCard(
     initials: initialsOf(name),
     headline: profile?.headline ?? null,
   }
+}
+
+/** Topics for a meeting: from my suggestion for them, else theirs for me. */
+async function meetingTopics(
+  ctx: QueryCtx,
+  eventId: Id<'socialEvents'>,
+  userId: string,
+  partnerId: string,
+): Promise<Array<string>> {
+  for (const [owner, other] of [
+    [userId, partnerId],
+    [partnerId, userId],
+  ]) {
+    const rows = await ctx.db
+      .query('socialSuggestions')
+      .withIndex('by_eventId_and_userId_and_rank', (q) =>
+        q.eq('eventId', eventId).eq('userId', owner),
+      )
+      .take(20)
+    const match = rows.find((r) => r.suggestedUserId === other)
+    if (match) return match.topics
+  }
+  return []
 }
 
 const cardValidator = v.object({
@@ -180,8 +218,8 @@ export const getLiveState = query({
       isAttendee: guest?.status === 'approved',
       profileReady: isProfileReadyForMatching(profile),
       meetingsOpen: meetingsOpen(event, now),
-      meetingsOpenAt: event.meetingsOpenAt ?? null,
-      meetingsCloseAt: event.meetingsCloseAt ?? null,
+      meetingsOpenAt: meetingsWindow(event).openAt,
+      meetingsCloseAt: meetingsWindow(event).closeAt,
       meetingMinutes: event.meetingMinutes,
       availability: await availabilityFor(ctx, eventId, userId),
     }
@@ -197,12 +235,6 @@ export const getLiveState = query({
       const spot = active.spotId
         ? await ctx.db.get('socialEventSpots', active.spotId)
         : null
-      const suggestion = await ctx.db
-        .query('socialSuggestions')
-        .withIndex('by_eventId_and_userId_and_rank', (q) =>
-          q.eq('eventId', eventId).eq('userId', userId),
-        )
-        .take(20)
       meeting = {
         _id: active._id,
         partner: await attendeeCard(ctx, partnerId, partnerGuest?.name),
@@ -216,8 +248,7 @@ export const getLiveState = query({
           : null,
         startedAt: active.startedAt,
         endsAt: active.endsAt,
-        topics:
-          suggestion.find((s) => s.suggestedUserId === partnerId)?.topics ?? [],
+        topics: await meetingTopics(ctx, eventId, userId, partnerId),
       }
     }
 
@@ -329,6 +360,7 @@ export const getAttendeeProfile = query({
     v.null(),
     v.object({
       userId: v.string(),
+      viewerIsAttendee: v.boolean(),
       initials: v.string(),
       state: stateValidator,
       profile: v.any(),
@@ -342,11 +374,19 @@ export const getAttendeeProfile = query({
   ),
   handler: async (ctx, { eventId, userId: otherId }) => {
     const viewerId = await requireAuth(ctx)
-    await requireApprovedAttendee(ctx, eventId, viewerId)
     const otherGuest = await getGuestByUser(ctx, eventId, otherId)
     if (!otherGuest || otherGuest.status !== 'approved') return null
-
     const profile = await getProfileByUser(ctx, otherId)
+
+    // Attendees see each other; others only if the owner widened visibility.
+    const viewerGuest = await getGuestByUser(ctx, eventId, viewerId)
+    const viewerIsAttendee = viewerGuest?.status === 'approved'
+    if (
+      !viewerIsAttendee &&
+      !(await canViewSocialProfile(ctx, viewerId, otherId, profile))
+    ) {
+      return null
+    }
     const view = socialProfileView(profile, otherGuest.name)
     const suggestions = await ctx.db
       .query('socialSuggestions')
@@ -377,6 +417,7 @@ export const getAttendeeProfile = query({
 
     return {
       userId: otherId,
+      viewerIsAttendee,
       initials: initialsOf(view.name),
       state: await attendeeState(ctx, eventId, otherId),
       profile: view,
@@ -475,11 +516,11 @@ export const requestMeeting = mutation({
   }),
   handler: async (ctx, { eventId, toUserId, note }) => {
     const userId = await requireAuth(ctx)
-    if (toUserId === userId) throw new Error("You can't meet yourself")
+    if (toUserId === userId) throw new ConvexError("You can't meet yourself")
     const event = await ctx.db.get('socialEvents', eventId)
-    if (!event) throw new Error('Event not found')
+    if (!event) throw new ConvexError('Event not found')
     if (!meetingsOpen(event, Date.now())) {
-      throw new Error('1:1s are not open right now')
+      throw new ConvexError('1:1s are not open right now')
     }
     await requireApprovedAttendee(ctx, eventId, userId)
     await requireApprovedAttendee(ctx, eventId, toUserId)
@@ -500,10 +541,10 @@ export const requestMeeting = mutation({
     const reverse = theirs.find((r) => r.toUserId === userId)
     if (reverse) {
       if (await activeMeetingFor(ctx, eventId, userId)) {
-        throw new Error('Finish your current meeting first')
+        throw new ConvexError('Finish your current meeting first')
       }
       if (await activeMeetingFor(ctx, eventId, toUserId)) {
-        throw new Error('They are in a meeting right now')
+        throw new ConvexError('They are in a meeting right now')
       }
       const meetingId = await startMeeting(ctx, event, toUserId, userId)
       await ctx.db.patch('socialMeetingRequests', reverse._id, {
@@ -515,7 +556,7 @@ export const requestMeeting = mutation({
     }
 
     if ((await availabilityFor(ctx, eventId, toUserId)) === 'busy') {
-      throw new Error('They are not taking requests right now')
+      throw new ConvexError('They are not taking requests right now')
     }
     const mine = await ctx.db
       .query('socialMeetingRequests')
@@ -529,7 +570,7 @@ export const requestMeeting = mutation({
     const existing = mine.find((r) => r.toUserId === toUserId)
     if (existing) return { requestId: existing._id, meetingId: null }
     if (mine.length >= MAX_OUTGOING_PENDING) {
-      throw new Error(
+      throw new ConvexError(
         `You can have at most ${MAX_OUTGOING_PENDING} requests waiting at once`,
       )
     }
@@ -556,7 +597,7 @@ export const respondToRequest = mutation({
     const userId = await requireAuth(ctx)
     const request = await ctx.db.get('socialMeetingRequests', requestId)
     if (!request || request.toUserId !== userId) {
-      throw new Error('Request not found')
+      throw new ConvexError('Request not found')
     }
     if (request.status !== 'pending') return request.meetingId ?? null
     const now = Date.now()
@@ -570,14 +611,14 @@ export const respondToRequest = mutation({
     }
 
     const event = await ctx.db.get('socialEvents', request.eventId)
-    if (!event) throw new Error('Event not found')
+    if (!event) throw new ConvexError('Event not found')
     if (!meetingsOpen(event, now))
-      throw new Error('1:1s are not open right now')
+      throw new ConvexError('1:1s are not open right now')
     if (await activeMeetingFor(ctx, request.eventId, userId)) {
-      throw new Error('Finish your current meeting first')
+      throw new ConvexError('Finish your current meeting first')
     }
     if (await activeMeetingFor(ctx, request.eventId, request.fromUserId)) {
-      throw new Error(
+      throw new ConvexError(
         'They are in a meeting right now. Try again when it ends.',
       )
     }
@@ -598,7 +639,7 @@ export const cancelRequest = mutation({
     const userId = await requireAuth(ctx)
     const request = await ctx.db.get('socialMeetingRequests', requestId)
     if (!request || request.fromUserId !== userId) {
-      throw new Error('Request not found')
+      throw new ConvexError('Request not found')
     }
     if (request.status === 'pending') {
       await ctx.db.patch('socialMeetingRequests', requestId, {
@@ -617,7 +658,7 @@ async function requireParticipant(
   const userId = await requireAuth(ctx)
   const meeting = await ctx.db.get('socialMeetings', meetingId)
   if (!meeting || (meeting.userA !== userId && meeting.userB !== userId)) {
-    throw new Error('Meeting not found')
+    throw new ConvexError('Meeting not found')
   }
   return meeting
 }
@@ -627,7 +668,8 @@ export const extendMeeting = mutation({
   returns: v.null(),
   handler: async (ctx, { meetingId, minutes }) => {
     const meeting = await requireParticipant(ctx, meetingId)
-    if (meeting.status !== 'active') throw new Error('This meeting has ended')
+    if (meeting.status !== 'active')
+      throw new ConvexError('This meeting has ended')
     const add = Math.min(15, Math.max(1, Math.round(minutes)))
     const endsAt = meeting.endsAt + add * 60 * 1000
     await ctx.db.patch('socialMeetings', meetingId, { endsAt })
@@ -681,7 +723,7 @@ export const getLiveOverview = query({
   }),
   handler: async (ctx, { eventId }) => {
     const event = await ctx.db.get('socialEvents', eventId)
-    if (!event) throw new Error('Event not found')
+    if (!event) throw new ConvexError('Event not found')
     const userId = await requireAuth(ctx)
     const membership = await ctx.db
       .query('orgMemberships')
@@ -689,7 +731,8 @@ export const getLiveOverview = query({
         q.eq('userId', userId).eq('orgId', event.orgId),
       )
       .first()
-    if (membership?.role !== 'admin') throw new Error('Admin access required')
+    if (membership?.role !== 'admin')
+      throw new ConvexError('Admin access required')
 
     const active = await ctx.db
       .query('socialMeetings')

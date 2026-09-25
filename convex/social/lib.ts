@@ -182,6 +182,28 @@ export async function canViewSocialProfile(
   return false
 }
 
+/**
+ * A LinkedIn URL safe to render as a link: http(s) on linkedin.com only.
+ * Accepts "linkedin.com/in/x" without a scheme. Anything else is dropped, so
+ * a stored `javascript:` URL can't reach another person's browser.
+ */
+export function safeLinkedinUrl(raw: string | undefined | null): string | null {
+  const value = raw?.trim()
+  if (!value) return null
+  try {
+    const url = new URL(
+      /^[a-z][a-z0-9+.-]*:/i.test(value) ? value : `https://${value}`,
+    )
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+    const host = url.hostname.toLowerCase()
+    if (host !== 'linkedin.com' && !host.endsWith('.linkedin.com')) return null
+    url.protocol = 'https:'
+    return url.toString()
+  } catch {
+    return null
+  }
+}
+
 /** Public-facing slice of a profile shown to other attendees. */
 export function socialProfileView(
   profile: Doc<'profiles'> | null,
@@ -191,7 +213,7 @@ export function socialProfileView(
     name: profile?.name ?? fallbackName ?? 'Asistente',
     headline: profile?.headline ?? null,
     location: profile?.location ?? null,
-    linkedinUrl: profile?.linkedinUrl ?? null,
+    linkedinUrl: safeLinkedinUrl(profile?.linkedinUrl),
     seeking: profile?.seeking ?? null,
     canHelpWith: profile?.canHelpWith ?? null,
     careerGoals: profile?.careerGoals ?? null,

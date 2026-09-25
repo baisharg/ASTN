@@ -166,6 +166,7 @@ import type * as social_lib from "../social/lib.js";
 import type * as social_luma from "../social/luma.js";
 import type * as social_lumaSync from "../social/lumaSync.js";
 import type * as social_meetings from "../social/meetings.js";
+import type * as social_seed from "../social/seed.js";
 import type * as social_suggestions from "../social/suggestions.js";
 import type * as social_suggestionsAction from "../social/suggestionsAction.js";
 import type * as social_webhook from "../social/webhook.js";
@@ -339,6 +340,7 @@ declare const fullApi: ApiFromModules<{
   "social/luma": typeof social_luma;
   "social/lumaSync": typeof social_lumaSync;
   "social/meetings": typeof social_meetings;
+  "social/seed": typeof social_seed;
   "social/suggestions": typeof social_suggestions;
   "social/suggestionsAction": typeof social_suggestionsAction;
   "social/webhook": typeof social_webhook;

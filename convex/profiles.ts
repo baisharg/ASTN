@@ -1,8 +1,9 @@
-import { v } from 'convex/values'
+import { ConvexError, v } from 'convex/values'
 import { internal } from './_generated/api'
 import { internalMutation, mutation, query } from './_generated/server'
 import { getUserId } from './lib/auth'
 import { debouncedSchedule } from './lib/debouncer'
+import { safeLinkedinUrl } from './social/lib'
 
 // Section completeness rules
 const COMPLETENESS_SECTIONS = [
@@ -226,6 +227,7 @@ export const updateField = mutation({
       pronouns: v.optional(v.string()),
       location: v.optional(v.string()),
       headline: v.optional(v.string()),
+      linkedinUrl: v.optional(v.string()),
       education: v.optional(
         v.array(
           v.object({
@@ -322,7 +324,16 @@ export const updateField = mutation({
       ),
     }),
   },
-  handler: async (ctx, { profileId, updates }) => {
+  handler: async (ctx, { profileId, updates: rawUpdates }) => {
+    // Only store LinkedIn links that are safe to render as links.
+    const updates = { ...rawUpdates }
+    if (updates.linkedinUrl !== undefined) {
+      const safe = safeLinkedinUrl(updates.linkedinUrl)
+      if (updates.linkedinUrl.trim() && !safe) {
+        throw new ConvexError('That is not a LinkedIn profile URL')
+      }
+      updates.linkedinUrl = safe ?? undefined
+    }
     const userId = await getUserId(ctx)
     if (!userId) {
       throw new Error('Not authenticated')

@@ -1,4 +1,4 @@
-import { v } from 'convex/values'
+import { ConvexError, v } from 'convex/values'
 import { internal } from '../_generated/api'
 import { mutation, query } from '../_generated/server'
 import { getUserId, requireOrgAdmin } from '../lib/auth'
@@ -11,6 +11,7 @@ import {
   isOnAllowlist,
   normalizeEmail,
   profileMissingForMatching,
+  safeLinkedinUrl,
 } from './lib'
 import type { GuestStatus } from './lib'
 import type { Doc, Id } from '../_generated/dataModel'
@@ -81,7 +82,7 @@ async function uniqueEventSlug(
     if (!existing) return slug
     slug = `${base}-${n}`
   }
-  throw new Error('Could not generate a unique event slug')
+  throw new ConvexError('Could not generate a unique event slug')
 }
 
 async function isOrgAdmin(
@@ -118,7 +119,7 @@ async function requireEventAdmin(
   eventId: Id<'socialEvents'>,
 ): Promise<{ event: Doc<'socialEvents'>; userId: string }> {
   const event = await ctx.db.get('socialEvents', eventId)
-  if (!event) throw new Error('Event not found')
+  if (!event) throw new ConvexError('Event not found')
   const userId = await requireOrgAdmin(ctx, event.orgId)
   return { event, userId }
 }
@@ -249,19 +250,19 @@ export const register = mutation({
   }),
   handler: async (ctx, { eventId, linkedinUrl }) => {
     const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new Error('Not authenticated')
+    if (!identity) throw new ConvexError('Not authenticated')
     if (!identity.email) {
-      throw new Error('Your account has no email address')
+      throw new ConvexError('Your account has no email address')
     }
     const event = await ctx.db.get('socialEvents', eventId)
     if (!event || event.status !== 'published') {
-      throw new Error('Registration is not open for this event')
+      throw new ConvexError('Registration is not open for this event')
     }
 
     const userId = identity.subject
     const email = normalizeEmail(identity.email)
     const now = Date.now()
-    const cleanLinkedin = linkedinUrl?.trim() || undefined
+    const cleanLinkedin = safeLinkedinUrl(linkedinUrl) ?? undefined
 
     const profile = await getProfileByUser(ctx, userId)
     if (profile && cleanLinkedin && !profile.linkedinUrl) {
@@ -343,6 +344,7 @@ export const listEvents = query({
       slug: v.string(),
       title: v.string(),
       startAt: v.number(),
+      timezone: v.string(),
       status: v.union(
         v.literal('draft'),
         v.literal('published'),
@@ -366,6 +368,7 @@ export const listEvents = query({
         slug: e.slug,
         title: e.title,
         startAt: e.startAt,
+        timezone: e.timezone,
         status: e.status,
         lumaLinked: !!e.lumaEventId,
         approvedCount: await countGuestsWithStatus(ctx, e._id, 'approved'),
@@ -430,7 +433,7 @@ export const createEvent = mutation({
   handler: async (ctx, args) => {
     const userId = await requireOrgAdmin(ctx, args.orgId)
     const title = args.title.trim()
-    if (!title) throw new Error('Title is required')
+    if (!title) throw new ConvexError('Title is required')
     const slug = await uniqueEventSlug(ctx, args.orgId, slugify(title))
     const now = Date.now()
     const eventId = await ctx.db.insert('socialEvents', {
@@ -477,7 +480,7 @@ export const updateEvent = mutation({
     const patch: Partial<Doc<'socialEvents'>> = { updatedAt: Date.now() }
     if (fields.title !== undefined) {
       const title = fields.title.trim()
-      if (!title) throw new Error('Title is required')
+      if (!title) throw new ConvexError('Title is required')
       patch.title = title
     }
     if (fields.description !== undefined) {
@@ -501,7 +504,9 @@ export const updateEvent = mutation({
     }
     if (fields.meetingMinutes !== undefined) {
       if (fields.meetingMinutes < 5 || fields.meetingMinutes > 120) {
-        throw new Error('Meeting length must be between 5 and 120 minutes')
+        throw new ConvexError(
+          'Meeting length must be between 5 and 120 minutes',
+        )
       }
       patch.meetingMinutes = Math.round(fields.meetingMinutes)
     }
@@ -524,14 +529,16 @@ export const linkLumaEvent = mutation({
     await requireEventAdmin(ctx, eventId)
     const id = lumaEventId.trim()
     if (!/^evt-[A-Za-z0-9]+$/.test(id)) {
-      throw new Error('Luma event IDs look like evt-XXXXXXXX')
+      throw new ConvexError('Luma event IDs look like evt-XXXXXXXX')
     }
     const other = await ctx.db
       .query('socialEvents')
       .withIndex('by_lumaEventId', (q) => q.eq('lumaEventId', id))
       .first()
     if (other && other._id !== eventId) {
-      throw new Error('Another event is already linked to that Luma event')
+      throw new ConvexError(
+        'Another event is already linked to that Luma event',
+      )
     }
     await ctx.db.patch('socialEvents', eventId, {
       lumaEventId: id,
@@ -550,7 +557,8 @@ export const syncLumaNow = mutation({
   returns: v.null(),
   handler: async (ctx, { eventId }) => {
     const { event } = await requireEventAdmin(ctx, eventId)
-    if (!event.lumaEventId) throw new Error('This event is not linked to Luma')
+    if (!event.lumaEventId)
+      throw new ConvexError('This event is not linked to Luma')
     await ctx.scheduler.runAfter(0, internal.social.lumaSync.pullGuests, {
       eventId,
     })
@@ -596,7 +604,9 @@ export const listGuests = query({
           name: profile?.name ?? g.name ?? null,
           status: g.status,
           source: g.source,
-          linkedinUrl: g.linkedinUrl ?? profile?.linkedinUrl ?? null,
+          linkedinUrl:
+            safeLinkedinUrl(g.linkedinUrl) ??
+            safeLinkedinUrl(profile?.linkedinUrl),
           hasAccount: !!g.userId,
           profileReady:
             !!profile && profileMissingForMatching(profile).length === 0,
@@ -622,7 +632,7 @@ export const setGuestStatus = mutation({
   returns: v.null(),
   handler: async (ctx, { guestId, status }) => {
     const guest = await ctx.db.get('socialEventGuests', guestId)
-    if (!guest) throw new Error('Guest not found')
+    if (!guest) throw new ConvexError('Guest not found')
     const { event, userId } = await requireEventAdmin(ctx, guest.eventId)
     if (guest.status === status) return null
 
@@ -727,7 +737,8 @@ export const importAllowlist = mutation({
   }),
   handler: async (ctx, { orgId, rows, source }) => {
     const userId = await requireOrgAdmin(ctx, orgId)
-    if (rows.length > 2000) throw new Error('Import at most 2000 rows at once')
+    if (rows.length > 2000)
+      throw new ConvexError('Import at most 2000 rows at once')
 
     let added = 0
     let alreadyListed = 0
@@ -848,10 +859,10 @@ export const setSpots = mutation({
   returns: v.null(),
   handler: async (ctx, { eventId, spots }) => {
     await requireEventAdmin(ctx, eventId)
-    if (spots.length > 200) throw new Error('At most 200 spots')
+    if (spots.length > 200) throw new ConvexError('At most 200 spots')
     const numbers = new Set(spots.map((s) => s.number))
     if (numbers.size !== spots.length) {
-      throw new Error('Spot numbers must be unique')
+      throw new ConvexError('Spot numbers must be unique')
     }
     const active = await ctx.db
       .query('socialMeetings')
@@ -860,7 +871,7 @@ export const setSpots = mutation({
       )
       .first()
     if (active) {
-      throw new Error("Spots can't change while meetings are in progress")
+      throw new ConvexError("Spots can't change while meetings are in progress")
     }
 
     const existing = await ctx.db

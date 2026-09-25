@@ -1,4 +1,4 @@
-import { v } from 'convex/values'
+import { ConvexError, v } from 'convex/values'
 import { internal } from '../_generated/api'
 import {
   internalMutation,
@@ -188,7 +188,7 @@ export const generateAllSuggestions = mutation({
   returns: v.number(),
   handler: async (ctx, { eventId }) => {
     const event = await ctx.db.get('socialEvents', eventId)
-    if (!event) throw new Error('Event not found')
+    if (!event) throw new ConvexError('Event not found')
     await requireOrgAdmin(ctx, event.orgId)
     const guests = await ctx.db
       .query('socialEventGuests')

@@ -208,14 +208,8 @@ async function applyLumaGuest(
         guestId,
       })
     }
-    if (status === 'approved') {
-      await addToAllowlist(ctx, {
-        orgId: event.orgId,
-        email,
-        name: incoming.name ?? undefined,
-        source: 'approval',
-      })
-    }
+    // Arriving already approved (e.g. an event without approval) isn't an
+    // admin vouching for them, so they don't join the allowlist here.
     return 'inserted'
   }
 
@@ -231,7 +225,8 @@ async function applyLumaGuest(
   const localChangeInFlight = existing.lumaSync === 'pending'
   if (!localChangeInFlight && existing.status !== status) {
     patch.status = status
-    if (status === 'approved') {
+    // An admin approved them in Luma: remember them for future events.
+    if (status === 'approved' && existing.status === 'pending_approval') {
       await addToAllowlist(ctx, {
         orgId: event.orgId,
         email,
