@@ -57,11 +57,7 @@ function summarizeProfile(
 }
 
 export const getSuggestionContext = internalQuery({
-  args: {
-    eventId: v.id('socialEvents'),
-    userId: v.string(),
-    language: v.optional(suggestionLanguageValidator),
-  },
+  args: { eventId: v.id('socialEvents'), userId: v.string() },
   returns: v.union(
     v.null(),
     v.object({
@@ -74,12 +70,19 @@ export const getSuggestionContext = internalQuery({
       ),
     }),
   ),
-  handler: async (ctx, { eventId, userId, language }) => {
+  handler: async (ctx, { eventId, userId }) => {
     const event = await ctx.db.get('socialEvents', eventId)
     if (!event) return null
     const myGuest = await getGuestByUser(ctx, eventId, userId)
     if (myGuest?.status !== 'approved') return null
     const myProfile = await getProfileByUser(ctx, userId)
+    // The page's language, recorded when the attendee asked for suggestions.
+    const status = await ctx.db
+      .query('socialAttendeeStatus')
+      .withIndex('by_eventId_and_userId', (q) =>
+        q.eq('eventId', eventId).eq('userId', userId),
+      )
+      .first()
     if (!isProfileReadyForMatching(myProfile)) return null
 
     const guests = await approvedGuests(ctx, eventId)
@@ -108,7 +111,8 @@ export const getSuggestionContext = internalQuery({
       eventTitle: event.title,
       matchingPrompt: event.matchingPrompt ?? null,
       language:
-        language ?? (myProfile?.preferredLanguage === 'en' ? 'en' : 'es'),
+        status?.suggestionsLanguage ??
+        (myProfile?.preferredLanguage === 'en' ? 'en' : 'es'),
       me: summarizeProfile(myProfile, myGuest.name),
       candidates,
     }
@@ -153,9 +157,12 @@ export const saveSuggestions = internalMutation({
 })
 
 /**
- * Record that suggestions were requested and return the previous request
- * time. Kept on the attendee status row, not the guest row, so it doesn't
- * re-run every attendee's guest-list queries.
+ * Record a request for suggestions and decide when to generate them. At most
+ * one generation per REFRESH_INTERVAL_MS per person, whatever the language:
+ * a language switch inside the window saves the language and books one run
+ * for when the window ends (which reads the latest language then).
+ * Kept on the attendee status row so it doesn't touch the guest rows every
+ * attendee's queries read.
  */
 async function markSuggestionsRequested(
   ctx: MutationCtx,
@@ -163,7 +170,7 @@ async function markSuggestionsRequested(
   userId: string,
   now: number,
   language: SuggestionLanguage | undefined,
-): Promise<{ recent: boolean; language: SuggestionLanguage | undefined }> {
+): Promise<'now' | 'later' | 'recent'> {
   const row = await ctx.db
     .query('socialAttendeeStatus')
     .withIndex('by_eventId_and_userId', (q) =>
@@ -172,25 +179,44 @@ async function markSuggestionsRequested(
     .first()
   const lang = language ?? row?.suggestionsLanguage
   const last = row?.suggestionsRequestedAt
-  // A language switch regenerates straight away; otherwise throttle.
-  const recent =
-    last !== undefined &&
-    now - last < REFRESH_INTERVAL_MS &&
-    lang === row?.suggestionsLanguage
-  if (recent) return { recent, language: lang }
-  const fields = { suggestionsRequestedAt: now, suggestionsLanguage: lang }
-  if (row) {
-    await ctx.db.patch('socialAttendeeStatus', row._id, fields)
-  } else {
-    await ctx.db.insert('socialAttendeeStatus', {
-      eventId,
-      userId,
-      availability: 'available',
-      ...fields,
-      updatedAt: now,
-    })
+
+  if (last === undefined || now - last >= REFRESH_INTERVAL_MS) {
+    const fields = { suggestionsRequestedAt: now, suggestionsLanguage: lang }
+    if (row) {
+      await ctx.db.patch('socialAttendeeStatus', row._id, fields)
+    } else {
+      await ctx.db.insert('socialAttendeeStatus', {
+        eventId,
+        userId,
+        availability: 'available',
+        ...fields,
+        updatedAt: now,
+      })
+    }
+    return 'now'
   }
-  return { recent, language: lang }
+
+  // Inside the window (row exists here). Same language: nothing to do.
+  if (!row || lang === row.suggestionsLanguage) return 'recent'
+  // `last` in the future means a run is already booked; it will pick up the
+  // new language, so only store it.
+  if (last > now) {
+    await ctx.db.patch('socialAttendeeStatus', row._id, {
+      suggestionsLanguage: lang,
+    })
+    return 'recent'
+  }
+  const runAt = last + REFRESH_INTERVAL_MS
+  await ctx.db.patch('socialAttendeeStatus', row._id, {
+    suggestionsLanguage: lang,
+    suggestionsRequestedAt: runAt,
+  })
+  await ctx.scheduler.runAt(
+    runAt,
+    internal.social.suggestionsAction.generateForUser,
+    { eventId, userId },
+  )
+  return 'later'
 }
 
 /**
@@ -214,18 +240,18 @@ export const refreshMySuggestions = mutation({
     if (guest?.status !== 'approved') return 'not_attendee'
     const profile = await getProfileByUser(ctx, userId)
     if (!isProfileReadyForMatching(profile)) return 'profile_incomplete'
-    const marked = await markSuggestionsRequested(
+    const when = await markSuggestionsRequested(
       ctx,
       eventId,
       userId,
       Date.now(),
       language,
     )
-    if (marked.recent) return 'recent'
+    if (when !== 'now') return 'recent'
     await ctx.scheduler.runAfter(
       0,
       internal.social.suggestionsAction.generateForUser,
-      { eventId, userId, language: marked.language },
+      { eventId, userId },
     )
     return 'scheduled'
   },
@@ -244,18 +270,14 @@ export const generateAllSuggestions = mutation({
       if (!g.userId) continue
       const profile = await getProfileByUser(ctx, g.userId)
       if (!isProfileReadyForMatching(profile)) continue
-      const { language } = await markSuggestionsRequested(
-        ctx,
-        eventId,
-        g.userId,
-        now,
-        undefined,
-      )
+      // Admin-triggered: always runs, but still records the request time so
+      // attendees' own refreshes stay throttled.
+      await markSuggestionsRequested(ctx, eventId, g.userId, now, undefined)
       // Spread the calls out a little to stay clear of rate limits.
       await ctx.scheduler.runAfter(
         scheduled * 1500,
         internal.social.suggestionsAction.generateForUser,
-        { eventId, userId: g.userId, language },
+        { eventId, userId: g.userId },
       )
       scheduled++
     }

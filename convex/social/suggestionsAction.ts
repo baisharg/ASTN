@@ -7,7 +7,6 @@ import { internal } from '../_generated/api'
 import { internalAction } from '../_generated/server'
 import { buildUsageArgs } from '../lib/llmUsage'
 import { MODEL_QUALITY, MODEL_SOCIAL_SUGGESTIONS } from '../lib/models'
-import { suggestionLanguageValidator } from './validators'
 
 const MAX_SUGGESTIONS = 5
 
@@ -100,16 +99,12 @@ function buildPrompt(context: {
 }
 
 export const generateForUser = internalAction({
-  args: {
-    eventId: v.id('socialEvents'),
-    userId: v.string(),
-    language: v.optional(suggestionLanguageValidator),
-  },
+  args: { eventId: v.id('socialEvents'), userId: v.string() },
   returns: v.null(),
-  handler: async (ctx, { eventId, userId, language }) => {
+  handler: async (ctx, { eventId, userId }) => {
     const context = await ctx.runQuery(
       internal.social.suggestions.getSuggestionContext,
-      { eventId, userId, language },
+      { eventId, userId },
     )
     if (!context) return null
     const others = context.candidates.filter((c) => c.userId !== userId)
