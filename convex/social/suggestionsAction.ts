@@ -44,6 +44,7 @@ function buildPrompt(context: {
   const system = [
     `You help attendees of "${context.eventTitle}", an in-person AI safety community event, decide who to meet in short 1:1 conversations.`,
     'Pick the people with whom a conversation would be most useful to the attendee: someone who has what they are looking for, who could use what they can offer, or who shares a specific interest. Prefer concrete overlaps over generic ones, and do not suggest people just because their titles sound similar.',
+    "Give each suggestion its own angle: don't repeat the same reason or topic across suggestions (for example, the attendee's own project), and lead with what that specific person needs or offers. Refer to the other person by first name in the third person and address the attendee directly.",
     context.matchingPrompt
       ? `The organizers describe what they want people to get out of this event:\n<organizer_guidance>\n${context.matchingPrompt}\n</organizer_guidance>`
       : '',
