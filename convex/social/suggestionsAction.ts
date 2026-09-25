@@ -117,7 +117,7 @@ export const generateForUser = internalAction({
           },
         ],
         output: Output.object({ schema: outputSchema }),
-        providerOptions: { openai: { reasoningEffort: 'low' } },
+        providerOptions: { openai: { reasoningEffort: 'high' } },
       })
     } catch (error) {
       console.error('Suggestion generation failed', eventId, userId, error)
