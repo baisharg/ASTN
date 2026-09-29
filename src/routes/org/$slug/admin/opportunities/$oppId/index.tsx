@@ -55,7 +55,6 @@ import {
 } from '~/components/ui/card'
 import { Checkbox } from '~/components/ui/checkbox'
 import { Input } from '~/components/ui/input'
-import { Switch } from '~/components/ui/switch'
 import { Label } from '~/components/ui/label'
 import {
   Select,
@@ -574,6 +573,10 @@ function OpportunityEditPage() {
             </div>
           </div>
 
+          {membership?.role === 'admin' && (
+            <AutoAcceptedNotice opportunityId={opportunity._id} />
+          )}
+
           <Tabs defaultValue="details">
             <TabsList>
               <TabsTrigger value="details" className="gap-2">
@@ -748,6 +751,75 @@ function OpportunityEditPage() {
 
 // ─── Availability Tab ───
 
+/**
+ * One-time notice about people accepted automatically because they were
+ * marked Next edition in an earlier edition of this course. Shows only what
+ * this admin has not seen yet; dismissing it marks those as seen for them.
+ */
+function AutoAcceptedNotice({
+  opportunityId,
+}: {
+  opportunityId: Id<'orgOpportunities'>
+}) {
+  const unseen = useQuery(api.opportunityApplications.getUnseenAutoAccepted, {
+    opportunityId,
+  })
+  const markSeen = useMutation(api.opportunityApplications.markAutoAcceptedSeen)
+  const [dismissed, setDismissed] = useState(false)
+
+  if (!unseen || unseen.length === 0 || dismissed) return null
+
+  const byEdition = new Map<string, Array<string>>()
+  for (const person of unseen) {
+    byEdition.set(person.fromTitle, [
+      ...(byEdition.get(person.fromTitle) ?? []),
+      person.name,
+    ])
+  }
+
+  const close = () => {
+    setDismissed(true)
+    void markSeen({ applicationIds: unseen.map((p) => p.applicationId) })
+  }
+
+  return (
+    <AlertDialog open onOpenChange={(open) => !open && close()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {unseen.length === 1
+              ? '1 person was accepted automatically'
+              : `${unseen.length} people were accepted automatically`}
+          </AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-3 text-sm">
+              <p>
+                They were marked Next edition in an earlier edition of this
+                course, so they were accepted as soon as they applied or gave
+                their availability. Their accepted email is waiting in the
+                Outbox.
+              </p>
+              {[...byEdition].map(([edition, names]) => (
+                <div key={edition}>
+                  <p className="font-medium text-foreground">From {edition}</p>
+                  <ul className="list-disc pl-5">
+                    {names.map((name, i) => (
+                      <li key={`${name}-${i}`}>{name}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogAction onClick={close}>Got it</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
 function AvailabilityTab({
   opportunityId,
   slug,
@@ -896,18 +968,6 @@ function AvailabilityTab({
 
   return (
     <div className="space-y-6">
-      {/* Applicant emails (incl. the on-apply confirmation with this poll's
-          link) live in the Emails tab (issue #20). */}
-      <Card className="border-blue-200 bg-blue-50/50">
-        <CardContent className="py-3">
-          <p className="text-sm text-blue-900">
-            Applicant emails for this opportunity are managed in the{' '}
-            <span className="font-medium">Emails</span> tab (including the
-            on-apply confirmation with this poll&apos;s link).
-          </p>
-        </CardContent>
-      </Card>
-
       {/* Poll info card */}
       <Card>
         <CardHeader>
@@ -936,57 +996,30 @@ function AvailabilityTab({
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Open link: availability from people who never applied */}
-          <div className="space-y-2 rounded-md border p-3">
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-0.5">
-                <Label htmlFor="accepts-open-responses">
-                  Accept availability without an application
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Anyone with the open link can give their availability with
-                  just a name and an email. New people are added as accepted,
-                  marked as an incomplete application, and get a confirmation
-                  email with their personal link.
-                </p>
-              </div>
-              <Switch
-                id="accepts-open-responses"
-                checked={poll.acceptsOpenResponses === true}
-                onCheckedChange={async (checked) => {
-                  try {
-                    await updatePoll({
-                      pollId: poll._id,
-                      acceptsOpenResponses: checked,
-                    })
-                    toast.success(
-                      checked
-                        ? 'The open link now accepts availability'
-                        : 'The open link is off',
-                    )
-                  } catch (err) {
-                    console.error('Failed to update poll:', err)
-                    toast.error('Failed to update poll')
-                  }
+          {/* Generic link: anyone identifies with name + email */}
+          <div className="space-y-2">
+            <Label>Generic link</Label>
+            <div className="flex items-center gap-2">
+              <Input readOnly value={baseUrl} className="text-xs" />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  await navigator.clipboard.writeText(baseUrl)
+                  toast.success('Generic link copied')
                 }}
-              />
+              >
+                <ClipboardCopy className="size-4 mr-1" />
+                Copy
+              </Button>
             </div>
-            {poll.acceptsOpenResponses === true && (
-              <div className="flex items-center gap-2">
-                <Input readOnly value={baseUrl} className="text-xs" />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                    await navigator.clipboard.writeText(baseUrl)
-                    toast.success('Open link copied')
-                  }}
-                >
-                  <ClipboardCopy className="size-4 mr-1" />
-                  Copy
-                </Button>
-              </div>
-            )}
+            <p className="text-xs text-muted-foreground">
+              For people without a personal link: they give their name and email
+              (the email identifies them). Someone new appears in Applications
+              as an incomplete application to review; someone marked Next
+              edition in an earlier edition of this course is accepted
+              automatically.
+            </p>
           </div>
 
           {/* Per-applicant links */}

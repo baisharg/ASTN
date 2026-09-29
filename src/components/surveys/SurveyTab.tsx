@@ -47,18 +47,14 @@ import {
 import { Checkbox } from '~/components/ui/checkbox'
 import { Input } from '~/components/ui/input'
 import { Label } from '~/components/ui/label'
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '~/components/ui/tabs'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { Textarea } from '~/components/ui/textarea'
 
 const ALL_STATUSES = [
   { value: 'submitted', label: 'Submitted' },
   { value: 'under_review', label: 'Under Review' },
   { value: 'accepted', label: 'Accepted' },
+  { value: 'next_edition', label: 'Next edition' },
   { value: 'rejected', label: 'Rejected' },
   { value: 'waitlisted', label: 'Waitlisted' },
   { value: 'participated', label: 'Participated' },
@@ -273,9 +269,9 @@ function CreateSurveyForm({
                 ))}
               </div>
               <p className="text-xs text-muted-foreground">
-                These applicants get a personal survey link. Nothing is sent
-                now — the link goes out when you email them with the survey
-                link enabled.
+                These applicants get a personal survey link. Nothing is sent now
+                — the link goes out when you email them with the survey link
+                enabled.
               </p>
             </div>
           )}
@@ -462,7 +458,9 @@ function SurveyManagement({
       // the message names the questions and the count. Show it and keep the
       // editor open with a button that repeats the call meaning it.
       const message = err instanceof Error ? err.message : ''
-      const stranded = message.match(/Removing \d+ questions?[^]*?display them\./)
+      const stranded = message.match(
+        /Removing \d+ questions?[^]*?display them\./,
+      )
       if (stranded) setDiscardWarning(stranded[0])
       else toast.error('Failed to save questions')
     } finally {

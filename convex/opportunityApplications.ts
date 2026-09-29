@@ -1,13 +1,17 @@
 import { ConvexError, v } from 'convex/values'
 import { action, internalQuery, mutation, query } from './_generated/server'
-import { getUserId } from './lib/auth'
+import { getUserId, requireOrgAdmin } from './lib/auth'
 import { resolveApplicantContact } from './lib/applicantContact'
-import { resolveApplicantDisplayName } from './lib/applicantName'
+import {
+  resolveApplicantDisplayName,
+  resolveApplicantDisplayNameFromApplication,
+} from './lib/applicantName'
 import { rateLimiter } from './lib/rateLimiter'
 import { internal } from './_generated/api'
 import type { MutationCtx } from './_generated/server'
 import type { Id } from './_generated/dataModel'
 import { isOutboxActive, syncOutboxOnStatusChange } from './emails/outbox'
+import { maybeAutoAcceptFromNextEdition } from './lib/nextEdition'
 import {
   PROFILE_PREFILL_KEYS,
   sanitizeResponsesForForm,
@@ -162,6 +166,7 @@ export const submit = mutation({
       profileName: profile?.name,
       responses,
     })
+    await maybeAutoAcceptFromNextEdition(ctx, applicationId)
     if (isOutboxActive(opportunity)) {
       // On-apply confirmation (issue #20). All preconditions (kill switch,
       // template enabled, idempotency) are re-checked in the action.
@@ -227,6 +232,7 @@ export const submitGuest = mutation({
       applicationId,
       responses,
     })
+    await maybeAutoAcceptFromNextEdition(ctx, applicationId)
     if (isOutboxActive(opportunity)) {
       // On-apply confirmation (issue #20): see the authenticated path above.
       await ctx.scheduler.runAfter(
@@ -320,6 +326,7 @@ export const getMyApplication = query({
         v.literal('submitted'),
         v.literal('under_review'),
         v.literal('accepted'),
+        v.literal('next_edition'),
         v.literal('rejected'),
         v.literal('redirected'),
         v.literal('waitlisted'),
@@ -333,6 +340,9 @@ export const getMyApplication = query({
       reviewNotes: v.optional(v.string()),
       contactEmailOverride: v.optional(v.string()),
       availabilityOnly: v.optional(v.boolean()),
+      autoAcceptedFrom: v.optional(v.id('opportunityApplications')),
+      autoAcceptSeenBy: v.optional(v.array(v.string())),
+      nextEditionAcceptedIn: v.optional(v.id('orgOpportunities')),
     }),
     v.null(),
   ),
@@ -438,6 +448,119 @@ function isBlankAnswer(value: unknown): boolean {
   return false
 }
 
+// Admin: where each Next edition link in this opportunity points. For an
+// application accepted automatically, the edition it was promised in; for a
+// `next_edition` application already honoured, the edition that accepted it.
+export const getNextEditionLinks = query({
+  args: { opportunityId: v.id('orgOpportunities') },
+  returns: v.object({
+    autoAcceptedFrom: v.record(v.string(), v.string()),
+    acceptedIn: v.record(v.string(), v.string()),
+  }),
+  handler: async (ctx, { opportunityId }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) return { autoAcceptedFrom: {}, acceptedIn: {} }
+    await requireOrgAdmin(ctx, opportunity.orgId)
+
+    const applications = await ctx.db
+      .query('opportunityApplications')
+      .withIndex('by_opportunity_and_status', (q) =>
+        q.eq('opportunityId', opportunityId),
+      )
+      .collect()
+
+    const autoAcceptedFrom: Record<string, string> = {}
+    const acceptedIn: Record<string, string> = {}
+    for (const app of applications) {
+      if (app.autoAcceptedFrom) {
+        const promise = await ctx.db.get(
+          'opportunityApplications',
+          app.autoAcceptedFrom,
+        )
+        const edition = promise
+          ? await ctx.db.get('orgOpportunities', promise.opportunityId)
+          : null
+        if (edition) autoAcceptedFrom[app._id] = edition.title
+      }
+      if (app.nextEditionAcceptedIn) {
+        const edition = await ctx.db.get(
+          'orgOpportunities',
+          app.nextEditionAcceptedIn,
+        )
+        if (edition) acceptedIn[app._id] = edition.title
+      }
+    }
+    return { autoAcceptedFrom, acceptedIn }
+  },
+})
+
+// Admin: people accepted automatically (Next edition) that this admin has not
+// been told about yet. Drives the one-time notice on the opportunity page.
+export const getUnseenAutoAccepted = query({
+  args: { opportunityId: v.id('orgOpportunities') },
+  returns: v.array(
+    v.object({
+      applicationId: v.id('opportunityApplications'),
+      name: v.string(),
+      fromTitle: v.string(),
+    }),
+  ),
+  handler: async (ctx, { opportunityId }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) return []
+    const userId = await requireOrgAdmin(ctx, opportunity.orgId)
+
+    const accepted = await ctx.db
+      .query('opportunityApplications')
+      .withIndex('by_opportunity_and_status', (q) =>
+        q.eq('opportunityId', opportunityId).eq('status', 'accepted'),
+      )
+      .collect()
+
+    const unseen = []
+    for (const app of accepted) {
+      if (!app.autoAcceptedFrom) continue
+      if (app.autoAcceptSeenBy?.includes(userId)) continue
+      const promise = await ctx.db.get(
+        'opportunityApplications',
+        app.autoAcceptedFrom,
+      )
+      const edition = promise
+        ? await ctx.db.get('orgOpportunities', promise.opportunityId)
+        : null
+      unseen.push({
+        applicationId: app._id,
+        name: await resolveApplicantDisplayNameFromApplication(
+          ctx.db,
+          app,
+          'Applicant',
+        ),
+        fromTitle: edition?.title ?? 'an earlier edition',
+      })
+    }
+    return unseen
+  },
+})
+
+// Admin: dismiss the automatic-acceptance notice for these applications.
+export const markAutoAcceptedSeen = mutation({
+  args: { applicationIds: v.array(v.id('opportunityApplications')) },
+  returns: v.null(),
+  handler: async (ctx, { applicationIds }) => {
+    for (const id of applicationIds) {
+      const app = await ctx.db.get('opportunityApplications', id)
+      if (!app) continue
+      const userId = await requireOrgAdmin(ctx, app.orgId)
+      const seen = app.autoAcceptSeenBy ?? []
+      if (seen.includes(userId)) continue
+      await ctx.db.patch('opportunityApplications', id, {
+        autoAcceptSeenBy: [...seen, userId],
+      })
+    }
+    return null
+  },
+})
+
 // Admin: list all applications for an opportunity
 export const listByOpportunity = query({
   args: {
@@ -447,6 +570,7 @@ export const listByOpportunity = query({
         v.literal('submitted'),
         v.literal('under_review'),
         v.literal('accepted'),
+        v.literal('next_edition'),
         v.literal('rejected'),
         v.literal('redirected'),
         v.literal('waitlisted'),
@@ -467,6 +591,7 @@ export const listByOpportunity = query({
         v.literal('submitted'),
         v.literal('under_review'),
         v.literal('accepted'),
+        v.literal('next_edition'),
         v.literal('rejected'),
         v.literal('redirected'),
         v.literal('waitlisted'),
@@ -480,6 +605,9 @@ export const listByOpportunity = query({
       reviewNotes: v.optional(v.string()),
       contactEmailOverride: v.optional(v.string()),
       availabilityOnly: v.optional(v.boolean()),
+      autoAcceptedFrom: v.optional(v.id('opportunityApplications')),
+      autoAcceptSeenBy: v.optional(v.array(v.string())),
+      nextEditionAcceptedIn: v.optional(v.id('orgOpportunities')),
     }),
   ),
   handler: async (ctx, { opportunityId, statusFilter }) => {
@@ -533,6 +661,7 @@ export const listRecipientsByOpportunity = query({
         v.literal('submitted'),
         v.literal('under_review'),
         v.literal('accepted'),
+        v.literal('next_edition'),
         v.literal('rejected'),
         v.literal('redirected'),
         v.literal('waitlisted'),
@@ -686,6 +815,7 @@ export const updateStatus = mutation({
       v.literal('submitted'),
       v.literal('under_review'),
       v.literal('accepted'),
+      v.literal('next_edition'),
       v.literal('rejected'),
       v.literal('redirected'),
       v.literal('waitlisted'),
@@ -768,6 +898,7 @@ export const listForExport = internalQuery({
         v.literal('submitted'),
         v.literal('under_review'),
         v.literal('accepted'),
+        v.literal('next_edition'),
         v.literal('rejected'),
         v.literal('redirected'),
         v.literal('waitlisted'),
@@ -781,6 +912,9 @@ export const listForExport = internalQuery({
       reviewNotes: v.optional(v.string()),
       contactEmailOverride: v.optional(v.string()),
       availabilityOnly: v.optional(v.boolean()),
+      autoAcceptedFrom: v.optional(v.id('opportunityApplications')),
+      autoAcceptSeenBy: v.optional(v.array(v.string())),
+      nextEditionAcceptedIn: v.optional(v.id('orgOpportunities')),
     }),
   ),
   handler: async (ctx, { opportunityId }) => {

@@ -12,6 +12,7 @@ import { normalizeDays, weekdayShort } from './lib/availabilityWeek'
 import { resolveApplicantContact } from './lib/applicantContact'
 import { rateLimiter } from './lib/rateLimiter'
 import type { FormField } from './lib/formFields'
+import { maybeAutoAcceptFromNextEdition } from './lib/nextEdition'
 
 const slotValueValidator = v.union(v.literal('available'), v.literal('maybe'))
 
@@ -310,7 +311,6 @@ export const updatePoll = mutation({
     status: v.optional(
       v.union(v.literal('open'), v.literal('closed'), v.literal('finalized')),
     ),
-    acceptsOpenResponses: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, { pollId, ...updates }) => {
@@ -958,14 +958,16 @@ export const submitResponse = mutation({
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 /**
- * Availability given through a poll's shareable link by someone who never
- * applied. Only works while the admin has `acceptsOpenResponses` on.
+ * Availability given through a poll's generic link, identified only by name
+ * and email (the email is the identifier). Every poll takes these, next to
+ * the personal links applicants get by email.
  *
- * Someone new gets an application of their own, accepted and flagged
- * `availabilityOnly`, so they show up in the applicant list, the heatmap and
+ * Someone new gets an application of their own, flagged `availabilityOnly`
+ * and left to review, so they show up in the applicant list, the heatmap and
  * the cohort optimizer like everyone else. If the email already has an
  * application here, the availability joins that one instead of duplicating
- * the person.
+ * the person. Either way, someone promised a place in this course's next
+ * edition is accepted on the spot (see `lib/nextEdition`).
  *
  * The link asks for no login, so an email is only a claim. That is why an
  * availability that already exists is never overwritten from here: the
@@ -1004,10 +1006,6 @@ export const submitOpenResponse = mutation({
     if (!poll) throw new ConvexError('Poll not found')
     if (poll.status !== 'open')
       throw new ConvexError('This poll is no longer accepting responses')
-    if (!poll.acceptsOpenResponses)
-      throw new ConvexError(
-        'This poll only takes responses from personal links',
-      )
 
     const opportunity = await ctx.db.get('orgOpportunities', poll.opportunityId)
     if (!opportunity) throw new ConvexError('Poll not found')
@@ -1027,16 +1025,15 @@ export const submitOpenResponse = mutation({
         orgId: opportunity.orgId,
         userId: userId ?? undefined,
         guestEmail: email,
-        status: 'accepted',
+        status: 'submitted',
         responses: { firstName, lastName, email },
         submittedAt: now,
-        reviewedAt: now,
-        reviewedBy: 'system',
         availabilityOnly: true,
       })
       application = await ctx.db.get('opportunityApplications', applicationId)
       if (!application) throw new ConvexError('Could not save your response')
     }
+    await maybeAutoAcceptFromNextEdition(ctx, application._id)
 
     let respondent = await ctx.db
       .query('pollRespondents')

@@ -48,6 +48,7 @@ type ApplicationStatus =
   | 'submitted'
   | 'under_review'
   | 'accepted'
+  | 'next_edition'
   | 'rejected'
   | 'waitlisted'
   | 'participated'
@@ -59,6 +60,7 @@ const ALL_STATUSES: Array<{
   { value: 'submitted', label: 'Submitted' },
   { value: 'under_review', label: 'Under Review' },
   { value: 'accepted', label: 'Accepted' },
+  { value: 'next_edition', label: 'Next edition' },
   { value: 'rejected', label: 'Rejected' },
   { value: 'waitlisted', label: 'Waitlisted' },
   { value: 'participated', label: 'Participated' },

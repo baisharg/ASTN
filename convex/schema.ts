@@ -1422,6 +1422,7 @@ export default defineSchema({
       v.literal('submitted'),
       v.literal('under_review'),
       v.literal('accepted'),
+      v.literal('next_edition'),
       v.literal('rejected'),
       v.literal('redirected'), // "Fit for another course"
       v.literal('waitlisted'),
@@ -1441,6 +1442,14 @@ export default defineSchema({
     // without filling the application form, so `responses` only holds their
     // name. The admin sees it flagged as an incomplete application.
     availabilityOnly: v.optional(v.boolean()),
+    // Accepted automatically because this person had a pending Next edition
+    // promise in an earlier edition of the same course (that application).
+    autoAcceptedFrom: v.optional(v.id('opportunityApplications')),
+    // Admins who already saw the "accepted automatically" notice for it.
+    autoAcceptSeenBy: v.optional(v.array(v.string())),
+    // On a `next_edition` application: the edition where the promise was
+    // honoured. Set once, so the same promise never accepts anyone twice.
+    nextEditionAcceptedIn: v.optional(v.id('orgOpportunities')),
   })
     .index('by_opportunity_and_status', ['opportunityId', 'status'])
     .index('by_user_and_opportunity', ['userId', 'opportunityId'])
@@ -1521,9 +1530,8 @@ export default defineSchema({
     endMinutes: v.number(), // minutes from midnight (1080 = 6 PM)
     slotDurationMinutes: v.number(), // 15, 30, or 60
     accessToken: v.string(), // UUID for shareable link
-    // When on, the shareable link takes availability from anyone with a name
-    // and an email — no application needed — and enrolls them as accepted.
-    // Off by default so a circulating link never admits people by accident.
+    // Legacy (28-sep only): the generic link used to need switching on. It
+    // now always takes availability, so this is ignored.
     acceptsOpenResponses: v.optional(v.boolean()),
     status: v.union(
       v.literal('open'),
@@ -1598,6 +1606,7 @@ export default defineSchema({
     kind: v.union(
       v.literal('application_received'),
       v.literal('accepted'),
+      v.literal('next_edition'),
       v.literal('rejected'),
       v.literal('redirected'),
       v.literal('waitlisted'),
@@ -1620,6 +1629,7 @@ export default defineSchema({
     applicationId: v.id('opportunityApplications'),
     kind: v.union(
       v.literal('accepted'),
+      v.literal('next_edition'),
       v.literal('rejected'),
       v.literal('redirected'),
       v.literal('waitlisted'),

@@ -25,6 +25,7 @@ const FROM_ADDRESS = 'ASTN <notifications@safetytalent.org>'
 
 export const DECISION_KINDS = [
   'accepted',
+  'next_edition',
   'rejected',
   'redirected',
   'waitlisted',
@@ -33,6 +34,7 @@ export type DecisionKind = (typeof DECISION_KINDS)[number]
 
 export const decisionKindValidator = v.union(
   v.literal('accepted'),
+  v.literal('next_edition'),
   v.literal('rejected'),
   v.literal('redirected'),
   v.literal('waitlisted'),
@@ -43,6 +45,7 @@ const KIND_BY_STATUS: Record<string, DecisionKind | null> = {
   submitted: null,
   under_review: null,
   accepted: 'accepted',
+  next_edition: 'next_edition',
   rejected: 'rejected',
   redirected: 'redirected',
   waitlisted: 'waitlisted',
@@ -105,17 +108,6 @@ async function resolveTemplate(
     .first()
 }
 
-// Someone enrolled through a poll's open link was accepted by giving their
-// availability, and already got a confirmation for it. An "accepted" email
-// on top would welcome them to something they signed up for minutes ago.
-// Any other decision about them (rejected, waitlisted...) still gets drafted.
-function skipsAcceptedEmail(
-  application: Doc<'opportunityApplications'>,
-  kind: string,
-): boolean {
-  return application.availabilityOnly === true && kind === 'accepted'
-}
-
 /**
  * Keep the outbox in sync after an application status change. Callable from
  * any mutation (UI updateStatus, MCP astn_update). Replaces the application's
@@ -144,7 +136,6 @@ export async function syncOutboxOnStatusChange(
 
   const kind = KIND_BY_STATUS[status] ?? null
   if (!kind) return
-  if (skipsAcceptedEmail(application, kind)) return
   if (await hasSentKind(ctx, application._id, kind)) return
 
   const template = await resolveTemplate(ctx, opportunity, kind)
@@ -310,7 +301,6 @@ export async function enqueueMissingDraftsForKind(
 
     for (const application of applications) {
       if (!statuses.includes(application.status)) continue
-      if (skipsAcceptedEmail(application, decisionKind)) continue
       if (await hasSentKind(ctx, application._id, decisionKind)) continue
 
       // At most one pending draft per application is the standing invariant;

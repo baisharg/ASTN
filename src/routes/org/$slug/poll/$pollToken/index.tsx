@@ -29,13 +29,12 @@ export const Route = createFileRoute('/org/$slug/poll/$pollToken/')({
 type SlotStatus = 'available' | 'maybe'
 
 /**
- * The poll's shareable link. When the admin turned on "accept availability
- * without an application", anyone with the link can give their availability
- * with just a name and an email. Otherwise it points people to the personal
- * link they got by email, as it always did.
+ * The poll's generic link. Anyone with it can give their availability by
+ * identifying with a name and an email — applicants who got a personal link
+ * by email can still use that one instead.
  */
 function PollOpenLinkPage() {
-  const { pollToken, slug } = Route.useParams()
+  const { pollToken } = Route.useParams()
 
   const { data: pollData } = useSuspenseQuery(
     convexQuery(api.availabilityPolls.getPollByToken, {
@@ -60,17 +59,6 @@ function PollOpenLinkPage() {
         icon={<Lock className="size-8 text-slate-400 mx-auto mb-4" />}
         title="Poll Closed"
         body="This availability poll is no longer accepting responses."
-      />
-    )
-  }
-
-  if (!poll.acceptsOpenResponses) {
-    return (
-      <Notice
-        icon={<Clock className="size-8 text-slate-400 mx-auto mb-4" />}
-        title={poll.title}
-        body="This poll uses individual links. Please check your email for your personal poll link, or contact the organizer."
-        slug={slug}
       />
     )
   }
