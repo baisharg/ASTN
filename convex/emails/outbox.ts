@@ -105,6 +105,17 @@ async function resolveTemplate(
     .first()
 }
 
+// Someone enrolled through a poll's open link was accepted by giving their
+// availability, and already got a confirmation for it. An "accepted" email
+// on top would welcome them to something they signed up for minutes ago.
+// Any other decision about them (rejected, waitlisted...) still gets drafted.
+function skipsAcceptedEmail(
+  application: Doc<'opportunityApplications'>,
+  kind: string,
+): boolean {
+  return application.availabilityOnly === true && kind === 'accepted'
+}
+
 /**
  * Keep the outbox in sync after an application status change. Callable from
  * any mutation (UI updateStatus, MCP astn_update). Replaces the application's
@@ -133,6 +144,7 @@ export async function syncOutboxOnStatusChange(
 
   const kind = KIND_BY_STATUS[status] ?? null
   if (!kind) return
+  if (skipsAcceptedEmail(application, kind)) return
   if (await hasSentKind(ctx, application._id, kind)) return
 
   const template = await resolveTemplate(ctx, opportunity, kind)
@@ -197,9 +209,7 @@ export async function refreshPendingDraftsForTemplate(
       .query('orgOpportunities')
       .withIndex('by_org_and_status', (q) => q.eq('orgId', set.orgId))
       .collect()
-    opportunities.push(
-      ...linked.filter((o) => o.emailTemplateSetId === setId),
-    )
+    opportunities.push(...linked.filter((o) => o.emailTemplateSetId === setId))
   }
 
   let refreshed = 0
@@ -300,6 +310,7 @@ export async function enqueueMissingDraftsForKind(
 
     for (const application of applications) {
       if (!statuses.includes(application.status)) continue
+      if (skipsAcceptedEmail(application, decisionKind)) continue
       if (await hasSentKind(ctx, application._id, decisionKind)) continue
 
       // At most one pending draft per application is the standing invariant;
@@ -954,6 +965,44 @@ export const finalizeAutoSend = internalMutation({
       status: 'sent',
     })
     return 'sent'
+  },
+})
+
+// Availability emails from a poll's open link (confirmation, or the personal
+// link when the availability already existed). Not idempotent on purpose: the
+// person may ask for their link more than once, and the open-link rate limit
+// already caps how often that can happen.
+export const sendAvailabilityEmailNow = internalMutation({
+  args: {
+    applicationId: v.id('opportunityApplications'),
+    kind: v.string(),
+    to: v.string(),
+    recipientName: v.string(),
+    subject: v.string(),
+    html: v.string(),
+  },
+  returns: v.null(),
+  handler: async (
+    ctx,
+    { applicationId, kind, to, recipientName, subject, html },
+  ) => {
+    const app = await ctx.db.get('opportunityApplications', applicationId)
+    if (!app) return null
+    await resend.sendEmail(ctx, { from: FROM_ADDRESS, to, subject, html })
+    await ctx.db.insert('emailLog', {
+      orgId: app.orgId,
+      opportunityId: app.opportunityId,
+      applicationId,
+      recipientEmail: to,
+      recipientName,
+      kind,
+      source: 'auto',
+      subject,
+      sentAt: Date.now(),
+      sentBy: 'system',
+      status: 'sent',
+    })
+    return null
   },
 })
 

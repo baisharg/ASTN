@@ -55,6 +55,7 @@ import {
 } from '~/components/ui/card'
 import { Checkbox } from '~/components/ui/checkbox'
 import { Input } from '~/components/ui/input'
+import { Switch } from '~/components/ui/switch'
 import { Label } from '~/components/ui/label'
 import {
   Select,
@@ -84,12 +85,10 @@ type OpportunityStatus = 'active' | 'closed' | 'draft'
 function OpportunityDetailsForm({
   opportunity,
   redirectTargets,
-  sourceOptions,
   existingTags,
 }: {
   opportunity: Doc<'orgOpportunities'>
   redirectTargets: Array<Doc<'orgOpportunities'>>
-  sourceOptions: Array<Doc<'orgOpportunities'>>
   existingTags: Array<string>
 }) {
   const updateOpp = useMutation(api.orgOpportunities.update)
@@ -110,9 +109,6 @@ function OpportunityDetailsForm({
   const [redirectOpportunityId, setRedirectOpportunityId] = useState<
     string | null
   >(opportunity.redirectOpportunityId ?? null)
-  const [sourceOpportunityId, setSourceOpportunityId] = useState<string | null>(
-    opportunity.sourceOpportunityId ?? null,
-  )
   const [isSavingDetails, setIsSavingDetails] = useState(false)
 
   const canSaveDetails = title.trim() && description.trim()
@@ -136,9 +132,6 @@ function OpportunityDetailsForm({
         featured,
         redirectOpportunityId: redirectOpportunityId
           ? (redirectOpportunityId as Id<'orgOpportunities'>)
-          : null,
-        sourceOpportunityId: sourceOpportunityId
-          ? (sourceOpportunityId as Id<'orgOpportunities'>)
           : null,
       })
       toast.success('Opportunity details saved')
@@ -308,34 +301,11 @@ function OpportunityDetailsForm({
         </div>
       )}
 
-      <div className="space-y-1">
-        <Label>Pre-fill applicants from a previous opportunity</Label>
-        <Select
-          value={sourceOpportunityId ?? 'none'}
-          onValueChange={(v) =>
-            setSourceOpportunityId(!v || v === 'none' ? null : v)
-          }
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="No pre-fill source" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="none">No pre-fill source</SelectItem>
-            {sourceOptions.map((t) => (
-              <SelectItem key={t._id} value={t._id}>
-                {t.title}
-                {t.status !== 'active' ? ` (${t.status})` : ''}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <p className="text-xs text-muted-foreground">
-          Applicants who previously applied to the source will have matching
-          answers pre-filled here. They can review and edit before submitting.
-          Only fields with the same key carry over; identity fields (name,
-          email, location, LinkedIn) stay sourced from their ASTN profile.
-        </p>
-      </div>
+      <p className="text-xs text-muted-foreground">
+        Returning applicants see their answers from any earlier application in
+        this organization pre-filled, matched by question key. Identity fields
+        (name, email, location, LinkedIn) come from their ASTN profile.
+      </p>
 
       <Button type="submit" disabled={!canSaveDetails || isSavingDetails}>
         {isSavingDetails ? (
@@ -388,17 +358,12 @@ function OpportunityEditPage() {
     (o) => o._id !== opportunity?._id,
   )
 
-  // Source (pre-fill) options: all opportunities in this org (any status),
-  // excluding the current one. Usually the source is a closed prior edition.
+  // All opportunities in this org, for tag suggestions.
   // Gated on admin membership — listAllByOrg throws for non-admins.
   const allOpportunities = useQuery(
     api.orgOpportunities.listAllByOrg,
     org && membership?.role === 'admin' ? { orgId: org._id } : 'skip',
   )
-  const sourceOptions = (allOpportunities ?? []).filter(
-    (o) => o._id !== opportunity?._id,
-  )
-
   // Tags already used anywhere in this org, offered as suggestions in the form.
   const existingTags = Array.from(
     new Set((allOpportunities ?? []).flatMap((o) => o.tags ?? [])),
@@ -655,7 +620,6 @@ function OpportunityEditPage() {
                       key={opportunity._id}
                       opportunity={opportunity}
                       redirectTargets={redirectTargets}
-                      sourceOptions={sourceOptions}
                       existingTags={existingTags}
                     />
                   </CardContent>
@@ -972,6 +936,59 @@ function AvailabilityTab({
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Open link: availability from people who never applied */}
+          <div className="space-y-2 rounded-md border p-3">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-0.5">
+                <Label htmlFor="accepts-open-responses">
+                  Accept availability without an application
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Anyone with the open link can give their availability with
+                  just a name and an email. New people are added as accepted,
+                  marked as an incomplete application, and get a confirmation
+                  email with their personal link.
+                </p>
+              </div>
+              <Switch
+                id="accepts-open-responses"
+                checked={poll.acceptsOpenResponses === true}
+                onCheckedChange={async (checked) => {
+                  try {
+                    await updatePoll({
+                      pollId: poll._id,
+                      acceptsOpenResponses: checked,
+                    })
+                    toast.success(
+                      checked
+                        ? 'The open link now accepts availability'
+                        : 'The open link is off',
+                    )
+                  } catch (err) {
+                    console.error('Failed to update poll:', err)
+                    toast.error('Failed to update poll')
+                  }
+                }}
+              />
+            </div>
+            {poll.acceptsOpenResponses === true && (
+              <div className="flex items-center gap-2">
+                <Input readOnly value={baseUrl} className="text-xs" />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(baseUrl)
+                    toast.success('Open link copied')
+                  }}
+                >
+                  <ClipboardCopy className="size-4 mr-1" />
+                  Copy
+                </Button>
+              </div>
+            )}
+          </div>
+
           {/* Per-applicant links */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">

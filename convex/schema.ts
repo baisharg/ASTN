@@ -1437,6 +1437,10 @@ export default defineSchema({
     // over every automatic source: it exists precisely because the automatic
     // ones came up empty and the applicant silently got no email.
     contactEmailOverride: v.optional(v.string()),
+    // Created from a poll's open link: the person gave their availability
+    // without filling the application form, so `responses` only holds their
+    // name. The admin sees it flagged as an incomplete application.
+    availabilityOnly: v.optional(v.boolean()),
   })
     .index('by_opportunity_and_status', ['opportunityId', 'status'])
     .index('by_user_and_opportunity', ['userId', 'opportunityId'])
@@ -1517,6 +1521,10 @@ export default defineSchema({
     endMinutes: v.number(), // minutes from midnight (1080 = 6 PM)
     slotDurationMinutes: v.number(), // 15, 30, or 60
     accessToken: v.string(), // UUID for shareable link
+    // When on, the shareable link takes availability from anyone with a name
+    // and an email — no application needed — and enrolls them as accepted.
+    // Off by default so a circulating link never admits people by accident.
+    acceptsOpenResponses: v.optional(v.boolean()),
     status: v.union(
       v.literal('open'),
       v.literal('closed'),

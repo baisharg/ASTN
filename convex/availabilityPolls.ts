@@ -9,6 +9,9 @@ import {
   resolveApplicantDisplayNameFromApplication,
 } from './lib/applicantName'
 import { normalizeDays, weekdayShort } from './lib/availabilityWeek'
+import { resolveApplicantContact } from './lib/applicantContact'
+import { rateLimiter } from './lib/rateLimiter'
+import type { FormField } from './lib/formFields'
 
 const slotValueValidator = v.union(v.literal('available'), v.literal('maybe'))
 
@@ -25,6 +28,7 @@ const pollReturnValidator = v.object({
   endMinutes: v.number(),
   slotDurationMinutes: v.number(),
   accessToken: v.string(),
+  acceptsOpenResponses: v.optional(v.boolean()),
   status: v.union(
     v.literal('open'),
     v.literal('closed'),
@@ -306,6 +310,7 @@ export const updatePoll = mutation({
     status: v.optional(
       v.union(v.literal('open'), v.literal('closed'), v.literal('finalized')),
     ),
+    acceptsOpenResponses: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, { pollId, ...updates }) => {
@@ -945,5 +950,238 @@ export const submitResponse = mutation({
       slots,
       updatedAt: now,
     })
+  },
+})
+
+// ─── Open link (no application needed) ───
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+/**
+ * Availability given through a poll's shareable link by someone who never
+ * applied. Only works while the admin has `acceptsOpenResponses` on.
+ *
+ * Someone new gets an application of their own, accepted and flagged
+ * `availabilityOnly`, so they show up in the applicant list, the heatmap and
+ * the cohort optimizer like everyone else. If the email already has an
+ * application here, the availability joins that one instead of duplicating
+ * the person.
+ *
+ * The link asks for no login, so an email is only a claim. That is why an
+ * availability that already exists is never overwritten from here: the
+ * person gets their personal link by email and edits it from there, and
+ * nobody can rewrite someone else's week by typing their address. The
+ * personal token is never returned to the caller for the same reason.
+ */
+export const submitOpenResponse = mutation({
+  args: {
+    accessToken: v.string(),
+    firstName: v.string(),
+    lastName: v.string(),
+    email: v.string(),
+    slots: v.record(v.string(), slotValueValidator),
+  },
+  returns: v.union(v.literal('saved'), v.literal('emailed_link')),
+  handler: async (ctx, args) => {
+    const firstName = args.firstName.trim()
+    const lastName = args.lastName.trim()
+    const email = args.email.trim().toLowerCase()
+    if (!firstName || !lastName)
+      throw new ConvexError('Enter your first and last name')
+    if (!EMAIL_RE.test(email)) throw new ConvexError('Enter a valid email')
+    if (Object.keys(args.slots).length === 0)
+      throw new ConvexError('Mark at least one time you are available')
+
+    await rateLimiter.limit(ctx, 'openPollResponse', {
+      key: email,
+      throws: true,
+    })
+
+    const poll = await ctx.db
+      .query('availabilityPolls')
+      .withIndex('by_accessToken', (q) => q.eq('accessToken', args.accessToken))
+      .unique()
+    if (!poll) throw new ConvexError('Poll not found')
+    if (poll.status !== 'open')
+      throw new ConvexError('This poll is no longer accepting responses')
+    if (!poll.acceptsOpenResponses)
+      throw new ConvexError(
+        'This poll only takes responses from personal links',
+      )
+
+    const opportunity = await ctx.db.get('orgOpportunities', poll.opportunityId)
+    if (!opportunity) throw new ConvexError('Poll not found')
+
+    const userId = await getUserId(ctx)
+    let application = await findApplicationByEmail(ctx, {
+      opportunityId: opportunity._id,
+      formFields: opportunity.formFields as Array<FormField> | undefined,
+      email,
+      userId,
+    })
+
+    const now = Date.now()
+    if (!application) {
+      const applicationId = await ctx.db.insert('opportunityApplications', {
+        opportunityId: opportunity._id,
+        orgId: opportunity.orgId,
+        userId: userId ?? undefined,
+        guestEmail: email,
+        status: 'accepted',
+        responses: { firstName, lastName, email },
+        submittedAt: now,
+        reviewedAt: now,
+        reviewedBy: 'system',
+        availabilityOnly: true,
+      })
+      application = await ctx.db.get('opportunityApplications', applicationId)
+      if (!application) throw new ConvexError('Could not save your response')
+    }
+
+    let respondent = await ctx.db
+      .query('pollRespondents')
+      .withIndex('by_poll_and_application', (q) =>
+        q.eq('pollId', poll._id).eq('applicationId', application._id),
+      )
+      .first()
+    if (!respondent) {
+      const respondentId = await ctx.db.insert('pollRespondents', {
+        pollId: poll._id,
+        applicationId: application._id,
+        respondentToken: crypto.randomUUID(),
+        respondentName: `${firstName} ${lastName}`,
+      })
+      respondent = await ctx.db.get('pollRespondents', respondentId)
+      if (!respondent) throw new ConvexError('Could not save your response')
+    }
+
+    const existing = await ctx.db
+      .query('availabilityResponses')
+      .withIndex('by_poll_and_respondent', (q) =>
+        q.eq('pollId', poll._id).eq('respondentId', respondent._id),
+      )
+      .first()
+
+    if (existing) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.emails.outboxSend.sendAvailabilityEmail,
+        { respondentId: respondent._id, to: email, kind: 'availability_link' },
+      )
+      return 'emailed_link'
+    }
+
+    await ctx.db.insert('availabilityResponses', {
+      pollId: poll._id,
+      respondentId: respondent._id,
+      respondentName: await resolveApplicantDisplayNameFromApplication(
+        ctx.db,
+        application,
+        `${firstName} ${lastName}`,
+      ),
+      slots: args.slots,
+      updatedAt: now,
+    })
+    await ctx.scheduler.runAfter(
+      0,
+      internal.emails.outboxSend.sendAvailabilityEmail,
+      {
+        respondentId: respondent._id,
+        to: email,
+        kind: 'availability_received',
+      },
+    )
+    return 'saved'
+  },
+})
+
+// The application this email already has in the opportunity, if any: a guest
+// row with that address, the logged-in person's own row, or any row whose
+// resolved contact email matches (profile email, admin override, or the
+// address typed into the form).
+async function findApplicationByEmail(
+  ctx: MutationCtx,
+  opts: {
+    opportunityId: Id<'orgOpportunities'>
+    formFields: Array<FormField> | undefined
+    email: string
+    userId: string | null
+  },
+) {
+  const byGuestEmail = await ctx.db
+    .query('opportunityApplications')
+    .withIndex('by_guest_email_and_opportunity', (q) =>
+      q.eq('guestEmail', opts.email).eq('opportunityId', opts.opportunityId),
+    )
+    .first()
+  if (byGuestEmail) return byGuestEmail
+
+  if (opts.userId) {
+    const userId = opts.userId
+    const own = await ctx.db
+      .query('opportunityApplications')
+      .withIndex('by_user_and_opportunity', (q) =>
+        q.eq('userId', userId).eq('opportunityId', opts.opportunityId),
+      )
+      .order('desc')
+      .first()
+    if (own) return own
+  }
+
+  // A course gets tens of applications, so resolving each contact is cheap.
+  const all = await ctx.db
+    .query('opportunityApplications')
+    .withIndex('by_opportunity_and_status', (q) =>
+      q.eq('opportunityId', opts.opportunityId),
+    )
+    .collect()
+  for (const app of all) {
+    const { email } = await resolveApplicantContact(
+      ctx,
+      app,
+      opts.formFields,
+      '',
+    )
+    if (email.trim().toLowerCase() === opts.email) return app
+  }
+  return null
+}
+
+/** What the availability emails need: who, which poll, and the personal link. */
+export const getAvailabilityEmailPayload = internalQuery({
+  args: { respondentId: v.id('pollRespondents') },
+  returns: v.union(
+    v.null(),
+    v.object({
+      applicationId: v.id('opportunityApplications'),
+      recipientName: v.string(),
+      opportunityTitle: v.string(),
+      orgName: v.string(),
+      link: v.string(),
+    }),
+  ),
+  handler: async (ctx, { respondentId }) => {
+    const respondent = await ctx.db.get('pollRespondents', respondentId)
+    if (!respondent) return null
+    const poll = await ctx.db.get('availabilityPolls', respondent.pollId)
+    if (!poll) return null
+    const [opportunity, org, application] = await Promise.all([
+      ctx.db.get('orgOpportunities', poll.opportunityId),
+      ctx.db.get('organizations', poll.orgId),
+      ctx.db.get('opportunityApplications', respondent.applicationId),
+    ])
+    if (!opportunity || !org || !application) return null
+    const baseUrl = process.env.SITE_URL ?? 'https://safetytalent.org'
+    return {
+      applicationId: application._id,
+      recipientName: await resolveApplicantDisplayNameFromApplication(
+        ctx.db,
+        application,
+        respondent.respondentName,
+      ),
+      opportunityTitle: opportunity.title,
+      orgName: org.name,
+      link: `${baseUrl}/org/${org.slug}/poll/${poll.accessToken}/${respondent.respondentToken}`,
+    }
   },
 })

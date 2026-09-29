@@ -331,6 +331,8 @@ export const getMyApplication = query({
       reviewedAt: v.optional(v.number()),
       reviewedBy: v.optional(v.string()),
       reviewNotes: v.optional(v.string()),
+      contactEmailOverride: v.optional(v.string()),
+      availabilityOnly: v.optional(v.boolean()),
     }),
     v.null(),
   ),
@@ -347,15 +349,22 @@ export const getMyApplication = query({
   },
 })
 
-// Pre-fill the apply form from the user's previous application to this
-// opportunity's configured source opportunity. Returns null when there is
-// no source configured, no prior application, or nothing to carry over.
+// Pre-fill the apply form with what this person already answered anywhere in
+// the org. Answers belong to the person, not to one opportunity: someone who
+// filled TAIS and now opens Gobernanza sees every question the two forms share
+// already answered, without an admin having to point one form at the other.
+//
+// Every prior application in the org counts (DDIs included), newest first, so
+// when two forms asked the same key the most recent answer wins. Each one is
+// cleaned against the current form on its own, since the same key can carry a
+// different option list in an older edition. Returns null when nothing
+// carries over.
 export const getPreviousResponsesForOpportunity = query({
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.union(
     v.null(),
     v.object({
-      sourceOpportunityTitle: v.string(),
+      sourceTitles: v.array(v.string()),
       responses: v.any(),
     }),
   ),
@@ -377,40 +386,57 @@ export const getPreviousResponsesForOpportunity = query({
       if (!membership || membership.role !== 'admin') return null
     }
 
-    const sourceId = opportunity.sourceOpportunityId
-    if (!sourceId) return null
-
-    // Use the most-recent prior application: `by_user_and_opportunity` is
-    // non-unique because `claimGuestApplications` can attach a userId to an
-    // older guest row alongside a later authenticated submission.
-    const [source, prior] = await Promise.all([
-      ctx.db.get('orgOpportunities', sourceId),
-      ctx.db
-        .query('opportunityApplications')
-        .withIndex('by_user_and_opportunity', (q) =>
-          q.eq('userId', userId).eq('opportunityId', sourceId),
-        )
-        .order('desc')
-        .first(),
-    ])
-    if (!source || source.orgId !== opportunity.orgId) return null
-    if (!prior) return null
-
     const formFields =
       (opportunity.formFields as Array<FormField> | undefined) ?? []
-    const cleaned = sanitizeResponsesForForm(
-      formFields,
-      (prior.responses as Record<string, unknown>) ?? {},
-      PROFILE_PREFILL_KEYS,
-    )
-    if (Object.keys(cleaned).length === 0) return null
+    if (formFields.length === 0) return null
 
+    // A person applies to a handful of things, so reading all their rows and
+    // filtering by org is cheap. Their application to this same opportunity
+    // is left out: editing it is handled by the page from `getMyApplication`.
+    const mine = await ctx.db
+      .query('opportunityApplications')
+      .withIndex('by_user_and_opportunity', (q) => q.eq('userId', userId))
+      .collect()
+    const prior = mine
+      .filter(
+        (a) =>
+          a.orgId === opportunity.orgId && a.opportunityId !== opportunityId,
+      )
+      .sort((a, b) => b.submittedAt - a.submittedAt)
+
+    const responses: Record<string, unknown> = {}
+    const usedOpportunityIds = new Set<Id<'orgOpportunities'>>()
+    for (const application of prior) {
+      const cleaned = sanitizeResponsesForForm(
+        formFields,
+        (application.responses as Record<string, unknown>) ?? {},
+        PROFILE_PREFILL_KEYS,
+      )
+      for (const [key, value] of Object.entries(cleaned)) {
+        if (key in responses || isBlankAnswer(value)) continue
+        responses[key] = value
+        usedOpportunityIds.add(application.opportunityId)
+      }
+    }
+    if (Object.keys(responses).length === 0) return null
+
+    const sources = await Promise.all(
+      [...usedOpportunityIds].map((id) => ctx.db.get('orgOpportunities', id)),
+    )
     return {
-      sourceOpportunityTitle: source.title,
-      responses: cleaned,
+      sourceTitles: sources.flatMap((s) => (s ? [s.title] : [])),
+      responses,
     }
   },
 })
+
+// An empty answer in a newer form must not hide a real one in an older form.
+function isBlankAnswer(value: unknown): boolean {
+  if (value === undefined || value === null) return true
+  if (typeof value === 'string') return value.trim() === ''
+  if (Array.isArray(value)) return value.length === 0
+  return false
+}
 
 // Admin: list all applications for an opportunity
 export const listByOpportunity = query({
@@ -452,6 +478,8 @@ export const listByOpportunity = query({
       reviewedAt: v.optional(v.number()),
       reviewedBy: v.optional(v.string()),
       reviewNotes: v.optional(v.string()),
+      contactEmailOverride: v.optional(v.string()),
+      availabilityOnly: v.optional(v.boolean()),
     }),
   ),
   handler: async (ctx, { opportunityId, statusFilter }) => {
@@ -751,6 +779,8 @@ export const listForExport = internalQuery({
       reviewedAt: v.optional(v.number()),
       reviewedBy: v.optional(v.string()),
       reviewNotes: v.optional(v.string()),
+      contactEmailOverride: v.optional(v.string()),
+      availabilityOnly: v.optional(v.boolean()),
     }),
   ),
   handler: async (ctx, { opportunityId }) => {

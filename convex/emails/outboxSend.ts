@@ -5,6 +5,7 @@ import { marked } from 'marked'
 import { emojify } from 'node-emoji'
 import { internal } from '../_generated/api'
 import { action, internalAction } from '../_generated/server'
+import type { Id } from '../_generated/dataModel'
 import { renderAdminBroadcast } from './templates'
 
 async function renderBody(
@@ -112,6 +113,79 @@ export const sendApplicationReceivedEmail = internalAction({
         applicationId,
         kind: 'application_received',
         to: payload.to,
+        recipientName: payload.recipientName,
+        subject,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    return null
+  },
+})
+
+/**
+ * Email for someone who gave their availability through a poll's open link.
+ * `availability_received` confirms it; `availability_link` goes out instead
+ * when that email already had an availability, since the open link never
+ * overwrites one. Both carry the personal link, the only place to edit it.
+ */
+export const sendAvailabilityEmail = internalAction({
+  args: {
+    respondentId: v.id('pollRespondents'),
+    to: v.string(),
+    kind: v.union(
+      v.literal('availability_received'),
+      v.literal('availability_link'),
+    ),
+  },
+  returns: v.null(),
+  handler: async (ctx, { respondentId, to, kind }) => {
+    const payload: {
+      applicationId: Id<'opportunityApplications'>
+      recipientName: string
+      opportunityTitle: string
+      orgName: string
+      link: string
+    } | null = await ctx.runQuery(
+      internal.availabilityPolls.getAvailabilityEmailPayload,
+      { respondentId },
+    )
+    if (!payload) return null
+
+    const received = kind === 'availability_received'
+    const subject = received
+      ? `Recibimos tu disponibilidad para ${payload.opportunityTitle}`
+      : `Tu link de disponibilidad para ${payload.opportunityTitle}`
+    const markdown = [
+      `Hola ${payload.recipientName},`,
+      received
+        ? `¡Gracias! En ${payload.orgName} recibimos tu disponibilidad para **${payload.opportunityTitle}**.`
+        : `Ya habías cargado tu disponibilidad para **${payload.opportunityTitle}**, así que no la cambiamos. Si querés actualizarla, usá tu link personal.`,
+      `[:hourglass: ${received ? 'Ver o cambiar tu disponibilidad' : 'Actualizar tu disponibilidad'}](${payload.link})`,
+      received
+        ? 'Guardá este mail: el link es personal y es la forma de cambiar tu respuesta más adelante.'
+        : 'Si no pediste este link, podés ignorar este mail.',
+    ].join('\n\n')
+
+    try {
+      const bodyHtml: string = await marked(emojify(markdown), {
+        breaks: true,
+        gfm: true,
+      })
+      const html = await renderAdminBroadcast({ bodyHtml })
+      await ctx.runMutation(internal.emails.outbox.sendAvailabilityEmailNow, {
+        applicationId: payload.applicationId,
+        kind,
+        to,
+        recipientName: payload.recipientName,
+        subject,
+        html,
+      })
+    } catch (err) {
+      console.error(`Failed to send ${kind} email:`, err)
+      await ctx.runMutation(internal.emails.outbox.logAutoFailure, {
+        applicationId: payload.applicationId,
+        kind,
+        to,
         recipientName: payload.recipientName,
         subject,
         error: err instanceof Error ? err.message : String(err),

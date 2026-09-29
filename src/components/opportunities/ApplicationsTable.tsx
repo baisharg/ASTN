@@ -200,6 +200,14 @@ export function ApplicationsTable({
                     ))}
                     <span className="text-muted-foreground text-xs">
                       {new Date(app.submittedAt).toLocaleDateString()}
+                      {app.availabilityOnly && (
+                        <span
+                          className="block text-amber-700"
+                          title="Gave availability through the poll's open link without filling the application form"
+                        >
+                          Incomplete application
+                        </span>
+                      )}
                     </span>
                     <span>
                       <Badge
@@ -221,6 +229,14 @@ export function ApplicationsTable({
 
                 {isExpanded && (
                   <div className="border-t px-4 py-4">
+                    {app.availabilityOnly && (
+                      <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                        Incomplete application: this person gave their
+                        availability through the poll&apos;s open link and never
+                        filled the application form, so only their name and
+                        email are here.
+                      </p>
+                    )}
                     <ApplicationDetail
                       responses={r}
                       formFields={formFields}
