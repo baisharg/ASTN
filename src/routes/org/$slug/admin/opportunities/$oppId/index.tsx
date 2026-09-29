@@ -1000,18 +1000,46 @@ function AvailabilityTab({
           <div className="space-y-2">
             <Label>Generic link</Label>
             <div className="flex items-center gap-2">
-              <Input readOnly value={baseUrl} className="text-xs" />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={async () => {
-                  await navigator.clipboard.writeText(baseUrl)
-                  toast.success('Generic link copied')
-                }}
-              >
-                <ClipboardCopy className="size-4 mr-1" />
-                Copy
-              </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <ClipboardCopy className="size-4 mr-1" />
+                    Copy
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      Share this link with care
+                    </AlertDialogTitle>
+                    <AlertDialogDescription asChild>
+                      <div className="space-y-2 text-sm">
+                        <p>
+                          This link is meant for people we already plan to
+                          accept, or who were accepted in a past edition.
+                        </p>
+                        <p>
+                          Anyone who has it can join this opportunity&apos;s
+                          applicants with just a name and an email. Send it
+                          directly to the people it is for, and avoid posting it
+                          in groups or public channels.
+                        </p>
+                      </div>
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(baseUrl)
+                        toast.success('Generic link copied')
+                      }}
+                    >
+                      Copy link
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
             <p className="text-xs text-muted-foreground">
               For people without a personal link: they give their name and email
