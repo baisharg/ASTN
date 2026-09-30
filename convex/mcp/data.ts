@@ -4,6 +4,12 @@ import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc, Id } from '../_generated/dataModel'
 import { requireOrgAdminFor, requireOrgRecord } from '../lib/auth'
 import {
+  CORE_COLUMNS,
+  ensureBuiltinFieldDefs,
+  splitRecord,
+} from '../contacts/fields'
+import { setFieldOnRecord } from '../contacts/records'
+import {
   CONTACT_EDITABLE,
   OPPORTUNITY_EDITABLE,
   ORGANIZATION_EDITABLE,
@@ -105,6 +111,35 @@ async function resolveOrgForAdmin(
 
 // Split `fields` into a patch of allowlisted keys; throw on unknown keys so
 // the calling agent gets a corrective error instead of silent data loss.
+/**
+ * Contacts and organizations accept core columns plus any configurable field
+ * key (builtin or custom). Throws listing the valid keys on unknown ones.
+ */
+async function checkFieldKeys(
+  ctx: MutationCtx,
+  orgId: Id<'organizations'>,
+  collection: 'contacts' | 'organizations',
+  fields: unknown,
+): Promise<Record<string, unknown>> {
+  const f = (fields && typeof fields === 'object' ? fields : {}) as Record<
+    string,
+    unknown
+  >
+  const defs = await ensureBuiltinFieldDefs(ctx, orgId, collection)
+  const valid = new Set([
+    ...CORE_COLUMNS[collection],
+    ...defs.map((d) => d.key),
+  ])
+  const invalid = Object.keys(f).filter((k) => !valid.has(k))
+  if (invalid.length > 0) {
+    throw new Error(
+      `Unknown field(s) for ${collection}: ${invalid.join(', ')}. ` +
+        `Valid fields: ${[...valid].join(', ')}`,
+    )
+  }
+  return f
+}
+
 function buildPatch(
   collection: CollectionKey,
   fields: unknown,
@@ -242,6 +277,29 @@ export const createRecord = internalMutation({
   handler: async (ctx, args) => {
     const org = await resolveOrgForAdmin(ctx, args.userId, args.orgSlug)
     const meta = COLLECTIONS[args.collection]
+    if (args.collection === 'contacts' || args.collection === 'organizations') {
+      const f = await checkFieldKeys(ctx, org._id, args.collection, args.fields)
+      const { core, fields } = await splitRecord(
+        ctx,
+        org._id,
+        args.collection,
+        f,
+      )
+      const now = Date.now()
+      const id = await ctx.db.insert(meta.table, {
+        orgId: org._id,
+        ...core,
+        name: core.name ?? 'No name',
+        ...(args.collection === 'contacts' && core.email
+          ? { email: core.email.toLowerCase() }
+          : {}),
+        fields,
+        createdAt: now,
+        updatedAt: now,
+      } as any)
+      await bumpCount(ctx, org._id, meta.countField, 1)
+      return { id, collection: args.collection, created: true }
+    }
     const doc = buildPatch(args.collection, args.fields, {
       skipKeys: ['data'],
     })
@@ -290,6 +348,37 @@ export const updateRecord = internalMutation({
     const id = ctx.db.normalizeId(meta.table, args.id)
     if (!id) throw new Error('Record not found')
     await requireOrgRecord(ctx, id as Id<any>, org._id, 'Record not found')
+
+    if (args.collection === 'contacts' || args.collection === 'organizations') {
+      const collection = args.collection
+      const f = await checkFieldKeys(ctx, org._id, collection, args.fields)
+      const keys = Object.keys(f)
+      if (keys.length === 0) throw new Error('No fields to update')
+      const core: Record<string, unknown> = {}
+      for (const key of keys) {
+        if (!CORE_COLUMNS[collection].includes(key)) continue
+        core[key] =
+          key === 'email' && typeof f[key] === 'string'
+            ? (f[key] as string).trim().toLowerCase()
+            : f[key]
+      }
+      if (Object.keys(core).length > 0) {
+        await ctx.db.patch(id, { ...core, updatedAt: Date.now() } as any)
+      }
+      for (const key of keys) {
+        if (CORE_COLUMNS[collection].includes(key)) continue
+        const record = (await ctx.db.get(id)) as any
+        await setFieldOnRecord(ctx, {
+          orgId: org._id,
+          collection,
+          record,
+          key,
+          value: f[key],
+          lenient: true,
+        })
+      }
+      return { id, collection: args.collection, updated: keys }
+    }
 
     const patch = buildPatch(args.collection, args.fields)
     if (Object.keys(patch).length === 0) {

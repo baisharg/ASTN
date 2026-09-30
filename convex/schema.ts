@@ -10,6 +10,17 @@ import {
   socialVisibilityValidator,
   suggestionLanguageValidator,
 } from './social/validators'
+import {
+  crmActivityKindValidator,
+  crmActivitySourceValidator,
+  crmCollectionValidator,
+  crmFieldOptionValidator,
+  crmFieldSourceValidator,
+  crmFieldTypeValidator,
+  crmFieldValueValidator,
+  crmViewFilterValidator,
+  crmViewSortValidator,
+} from './contacts/validators'
 
 // Legacy auth tables (from @convex-dev/auth) — kept temporarily for user ID migration.
 // Remove after all users have migrated to Clerk IDs.
@@ -1948,11 +1959,18 @@ export default defineSchema({
     associatedOrganizations: v.optional(v.string()),
     participatedIn: v.optional(v.string()),
     notes: v.optional(v.string()),
+    // Configurable fields (crmFieldDefs); see docs/crm-consolidation.md
+    fields: v.optional(v.record(v.string(), crmFieldValueValidator)),
+    otherEmails: v.optional(v.array(v.string())), // lowercased
+    userId: v.optional(v.string()), // linked app account
+    airtableId: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_orgId', ['orgId'])
     .index('by_orgId_and_email', ['orgId', 'email'])
+    .index('by_orgId_and_userId', ['orgId', 'userId'])
+    .index('by_orgId_and_airtableId', ['orgId', 'airtableId'])
     .searchIndex('search_name', {
       searchField: 'name',
       filterFields: ['orgId'],
@@ -1969,10 +1987,13 @@ export default defineSchema({
     mainTopic: v.optional(v.string()),
     notes: v.optional(v.string()),
     autoSummary: v.optional(v.string()),
+    fields: v.optional(v.record(v.string(), crmFieldValueValidator)),
+    airtableId: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_orgId', ['orgId'])
+    .index('by_orgId_and_airtableId', ['orgId', 'airtableId'])
     .searchIndex('search_name', {
       searchField: 'name',
       filterFields: ['orgId'],
@@ -2010,6 +2031,58 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index('by_orgId', ['orgId']),
+
+  // Configurable CRM fields per org and collection (Airtable-style).
+  crmFieldDefs: defineTable({
+    orgId: v.id('organizations'),
+    collection: crmCollectionValidator,
+    key: v.string(), // stable; ASCII, starts with a letter
+    label: v.string(),
+    type: crmFieldTypeValidator,
+    options: v.optional(v.array(crmFieldOptionValidator)),
+    order: v.number(),
+    hidden: v.optional(v.boolean()),
+    source: crmFieldSourceValidator,
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_orgId_and_collection_and_order', [
+      'orgId',
+      'collection',
+      'order',
+    ])
+    .index('by_orgId_and_collection_and_key', ['orgId', 'collection', 'key']),
+
+  // A person's history that has no richer home in ASTN (imported programs,
+  // session attendance, forms, Luma events, notes).
+  crmActivities: defineTable({
+    orgId: v.id('organizations'),
+    contactId: v.id('crmContacts'),
+    kind: crmActivityKindValidator,
+    title: v.string(),
+    occurredAt: v.optional(v.number()),
+    status: v.optional(v.string()),
+    source: crmActivitySourceValidator,
+    externalId: v.optional(v.string()), // idempotent imports
+    data: v.optional(v.record(v.string(), v.any())),
+    createdAt: v.number(),
+  })
+    .index('by_contactId_and_occurredAt', ['contactId', 'occurredAt'])
+    .index('by_orgId_and_externalId', ['orgId', 'externalId']),
+
+  // Saved, shared CRM views.
+  crmViews: defineTable({
+    orgId: v.id('organizations'),
+    collection: crmCollectionValidator,
+    name: v.string(),
+    filters: v.array(crmViewFilterValidator),
+    sort: v.array(crmViewSortValidator),
+    columns: v.optional(v.array(v.string())),
+    groupBy: v.optional(v.string()),
+    createdBy: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_orgId_and_collection', ['orgId', 'collection']),
 
   // CRM Counts — O(1) per-org per-collection size aggregate. Each insert/
   // delete bumps the matching field; the dashboard reads one row per org

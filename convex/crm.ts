@@ -7,6 +7,9 @@ import {
 } from './_generated/server'
 import type { Doc, Id } from './_generated/dataModel'
 import { requireOrgAdmin, requireOrgRecord } from './lib/auth'
+import { CORE_COLUMNS, splitRecord } from './contacts/fields'
+import { setFieldOnRecord } from './contacts/records'
+import type { CrmCollection } from './contacts/validators'
 
 type CrmCountField =
   | 'contacts'
@@ -114,40 +117,8 @@ export async function bumpCount(
 // Patching `orgId` via updateX mutations would move a record into another
 // org and escape the source-org admin check — so the update mutations accept
 // only fields in these allowlists.
-export const CONTACT_EDITABLE = new Set<string>([
-  'name',
-  'email',
-  'phone',
-  'linkedin',
-  'website',
-  'relationship',
-  'role',
-  'title',
-  'professionalField',
-  'careerStage',
-  'aiSafetyExperience',
-  'skills',
-  'interests',
-  'availability',
-  'location',
-  'inBuenosAires',
-  'contactSource',
-  'contactPerson',
-  'firstContact',
-  'associatedOrganizations',
-  'participatedIn',
-  'notes',
-])
-export const ORGANIZATION_EDITABLE = new Set<string>([
-  'name',
-  'description',
-  'keyPeople',
-  'type',
-  'aiStance',
-  'mainTopic',
-  'notes',
-  'autoSummary',
-])
+export const CONTACT_EDITABLE = new Set<string>(CORE_COLUMNS.contacts)
+export const ORGANIZATION_EDITABLE = new Set<string>(CORE_COLUMNS.organizations)
 export const OPPORTUNITY_EDITABLE = new Set<string>([
   'title',
   'organization',
@@ -320,44 +291,28 @@ export const insertContacts = mutation({
   returns: v.number(),
   handler: async (ctx, args) => {
     await requireOrgAdmin(ctx, args.orgId)
-
     const now = Date.now()
-    // Fan out the inserts inside the same transaction so a 50-row batch
-    // doesn't serialize 50 round-trips. Convex handles internal ordering.
-    await Promise.all(
-      args.records.map((record) =>
-        ctx.db.insert('crmContacts', {
-          orgId: args.orgId,
-          // Records arrive pre-mapped to canonical schema keys by the import
-          // dialog's column-mapping step (convex/lib/crmFields.ts), so each
-          // field is read directly — no header-alias guessing here.
-          name: record.name ?? 'No name',
-          email: record.email ?? undefined,
-          phone: record.phone ?? undefined,
-          linkedin: record.linkedin ?? undefined,
-          website: record.website ?? undefined,
-          relationship: record.relationship ?? undefined,
-          role: record.role ?? undefined,
-          title: record.title ?? undefined,
-          professionalField: record.professionalField ?? undefined,
-          careerStage: record.careerStage ?? undefined,
-          aiSafetyExperience: record.aiSafetyExperience ?? undefined,
-          skills: record.skills ?? undefined,
-          interests: record.interests ?? undefined,
-          availability: record.availability ?? undefined,
-          location: record.location ?? undefined,
-          inBuenosAires: parseBoolish(record.inBuenosAires),
-          contactSource: record.contactSource ?? undefined,
-          contactPerson: record.contactPerson ?? undefined,
-          firstContact: record.firstContact ?? undefined,
-          associatedOrganizations: record.associatedOrganizations ?? undefined,
-          participatedIn: record.participatedIn ?? undefined,
-          notes: record.notes ?? undefined,
-          createdAt: now,
-          updatedAt: now,
-        }),
-      ),
-    )
+    // Records arrive pre-mapped to canonical keys by the import dialog
+    // (convex/lib/crmFields.ts). Core columns stay on the record; builtin
+    // and custom field keys go into `fields` (convex/contacts/fields.ts).
+    // Sequential so new select options are added once, not raced.
+    for (const record of args.records) {
+      const { core, fields } = await splitRecord(
+        ctx,
+        args.orgId,
+        'contacts',
+        record ?? {},
+      )
+      await ctx.db.insert('crmContacts', {
+        orgId: args.orgId,
+        ...core,
+        name: core.name ?? 'No name',
+        email: core.email?.toLowerCase(),
+        fields,
+        createdAt: now,
+        updatedAt: now,
+      })
+    }
     await bumpCount(ctx, args.orgId, 'contacts', args.records.length)
     return args.records.length
   },
@@ -371,25 +326,23 @@ export const insertOrganizations = mutation({
   returns: v.number(),
   handler: async (ctx, args) => {
     await requireOrgAdmin(ctx, args.orgId)
-
     const now = Date.now()
-    await Promise.all(
-      args.records.map((record) =>
-        ctx.db.insert('crmOrganizations', {
-          orgId: args.orgId,
-          name: record.name ?? 'No name',
-          description: record.description ?? undefined,
-          keyPeople: record.keyPeople ?? undefined,
-          type: record.type ?? undefined,
-          aiStance: record.aiStance ?? undefined,
-          mainTopic: record.mainTopic ?? undefined,
-          notes: record.notes ?? undefined,
-          autoSummary: record.autoSummary ?? undefined,
-          createdAt: now,
-          updatedAt: now,
-        }),
-      ),
-    )
+    for (const record of args.records) {
+      const { core, fields } = await splitRecord(
+        ctx,
+        args.orgId,
+        'organizations',
+        record ?? {},
+      )
+      await ctx.db.insert('crmOrganizations', {
+        orgId: args.orgId,
+        ...core,
+        name: core.name ?? 'No name',
+        fields,
+        createdAt: now,
+        updatedAt: now,
+      })
+    }
     await bumpCount(ctx, args.orgId, 'organizations', args.records.length)
     return args.records.length
   },
@@ -544,31 +497,18 @@ export const createContactWithFields = mutation({
   handler: async (ctx, args) => {
     await requireOrgAdmin(ctx, args.orgId)
     const now = Date.now()
-    const f = args.fields || {}
+    const { core, fields } = await splitRecord(
+      ctx,
+      args.orgId,
+      'contacts',
+      args.fields ?? {},
+    )
     const id = await ctx.db.insert('crmContacts', {
       orgId: args.orgId,
-      name: f.name ?? 'No name',
-      email: f.email,
-      phone: f.phone,
-      linkedin: f.linkedin,
-      website: f.website,
-      relationship: f.relationship,
-      role: f.role,
-      title: f.title,
-      professionalField: f.professionalField,
-      careerStage: f.careerStage,
-      aiSafetyExperience: f.aiSafetyExperience,
-      skills: f.skills,
-      interests: f.interests,
-      availability: f.availability,
-      location: f.location,
-      inBuenosAires: parseBoolish(f.inBuenosAires),
-      contactSource: f.contactSource,
-      contactPerson: f.contactPerson,
-      firstContact: f.firstContact,
-      associatedOrganizations: f.associatedOrganizations,
-      participatedIn: f.participatedIn,
-      notes: f.notes,
+      ...core,
+      name: core.name ?? 'No name',
+      email: core.email?.toLowerCase(),
+      fields,
       createdAt: now,
       updatedAt: now,
     })
@@ -586,17 +526,17 @@ export const createOrganizationWithFields = mutation({
   handler: async (ctx, args) => {
     await requireOrgAdmin(ctx, args.orgId)
     const now = Date.now()
-    const f = args.fields || {}
+    const { core, fields } = await splitRecord(
+      ctx,
+      args.orgId,
+      'organizations',
+      args.fields ?? {},
+    )
     const id = await ctx.db.insert('crmOrganizations', {
       orgId: args.orgId,
-      name: f.name ?? 'No name',
-      description: f.description,
-      keyPeople: f.keyPeople,
-      type: f.type,
-      aiStance: f.aiStance,
-      mainTopic: f.mainTopic,
-      notes: f.notes,
-      autoSummary: f.autoSummary,
+      ...core,
+      name: core.name ?? 'No name',
+      fields,
       createdAt: now,
       updatedAt: now,
     })
@@ -644,6 +584,7 @@ function defineUpdateMutation<T extends OrgScopedCrmTable>(
   table: T,
   editable: Set<string>,
   notFoundMsg: string,
+  collection?: CrmCollection,
 ) {
   return mutation({
     args: {
@@ -655,16 +596,40 @@ function defineUpdateMutation<T extends OrgScopedCrmTable>(
     returns: v.null(),
     handler: async (ctx, args) => {
       await requireOrgAdmin(ctx, args.orgId)
-      await requireOrgRecord(ctx, args.id, args.orgId, notFoundMsg)
+      const record = await requireOrgRecord(
+        ctx,
+        args.id,
+        args.orgId,
+        notFoundMsg,
+      )
+      // Contacts and organizations keep only core columns flat; any other
+      // key is a configurable field (builtin or custom) in `fields`.
+      if (collection && !editable.has(args.field)) {
+        await setFieldOnRecord(ctx, {
+          orgId: args.orgId,
+          collection,
+          record: record as unknown as
+            | Doc<'crmContacts'>
+            | Doc<'crmOrganizations'>,
+          key: args.field,
+          value: args.value,
+          lenient: true,
+        })
+        return null
+      }
       if (!editable.has(args.field)) {
         throw new Error(`Field '${args.field}' is not editable`)
       }
+      const value =
+        args.field === 'email' && typeof args.value === 'string'
+          ? args.value.trim().toLowerCase()
+          : args.value
       // Cast needed because `T` is a union over four tables; the inferred
       // patch shape is the intersection of all four schemas, which the
       // dynamic `[args.field]` can't satisfy. The runtime allowlist above
       // gates `args.field` to the table's editable fields.
       await ctx.db.patch(args.id, {
-        [args.field]: args.value,
+        [args.field]: value,
         updatedAt: Date.now(),
       } as unknown as Partial<Doc<T>>)
       return null
@@ -694,11 +659,13 @@ export const updateContact = defineUpdateMutation(
   'crmContacts',
   CONTACT_EDITABLE,
   'Contact not found',
+  'contacts',
 )
 export const updateOrganization = defineUpdateMutation(
   'crmOrganizations',
   ORGANIZATION_EDITABLE,
   'Organization not found',
+  'organizations',
 )
 export const updateOpportunity = defineUpdateMutation(
   'crmOpportunities',

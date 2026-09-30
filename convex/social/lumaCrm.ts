@@ -3,7 +3,13 @@ import { internal } from '../_generated/api'
 import { action, internalMutation, internalQuery } from '../_generated/server'
 import { bumpCount } from '../crm'
 import { requireOrgAdmin } from '../lib/auth'
+import {
+  addMissingOptions,
+  ensureBuiltinFieldDefs,
+  normalizeValue,
+} from '../contacts/fields'
 import { addToAllowlist, normalizeEmail } from './lib'
+import type { FieldValue } from '../contacts/fields'
 import { hasLumaApiKey, listAllLumaContacts } from './luma'
 
 /**
@@ -11,8 +17,6 @@ import { hasLumaApiKey, listAllLumaContacts } from './luma'
  * to its calendar) into the CRM, and optionally pre-approve everyone Luma
  * says was approved for a past event.
  */
-
-const LUMA_LINE_PREFIX = 'Luma:'
 
 const contactValidator = v.object({
   email: v.string(),
@@ -28,19 +32,6 @@ const resultValidator = v.object({
   updated: v.number(),
   allowlisted: v.number(),
 })
-
-function lumaLine(approved: number, checkedIn: number): string {
-  return `${LUMA_LINE_PREFIX} aprobado en ${approved} evento${approved === 1 ? '' : 's'}, check-in en ${checkedIn}`
-}
-
-/** Replace a previous Luma line in `participatedIn`, or append one. */
-function withLumaLine(existing: string | undefined, line: string): string {
-  const parts = (existing ?? '')
-    .split(' · ')
-    .map((p) => p.trim())
-    .filter((p) => p && !p.startsWith(LUMA_LINE_PREFIX))
-  return [...parts, line].join(' · ')
-}
 
 export const assertOrgAdmin = internalQuery({
   args: { orgId: v.id('organizations') },
@@ -63,9 +54,39 @@ export const upsertContacts = internalMutation({
     let updated = 0
     let allowlisted = 0
     const now = Date.now()
+    const defs = new Map(
+      (await ensureBuiltinFieldDefs(ctx, orgId, 'contacts')).map((d) => [
+        d.key,
+        d,
+      ]),
+    )
+    // Normalize a value for a builtin field, adding unseen select options.
+    const value = async (key: string, raw: unknown) => {
+      const def = defs.get(key)
+      if (!def) return undefined
+      const normalized = normalizeValue(def.type, raw)
+      if (normalized !== undefined) {
+        defs.set(key, await addMissingOptions(ctx, def, normalized))
+      }
+      return normalized
+    }
+
     for (const c of contacts) {
       const email = normalizeEmail(c.email)
-      const line = lumaLine(c.approved, c.checkedIn)
+      // Attendance is Luma's to report, so it is always refreshed.
+      const fromLuma: Record<string, FieldValue> = {
+        lumaApproved: c.approved,
+        lumaCheckedIn: c.checkedIn,
+      }
+      const tags = await value('lumaTags', c.tags)
+      if (tags !== undefined) fromLuma.lumaTags = tags
+      // These only fill gaps; never overwrite what someone wrote in the CRM.
+      const gaps: Record<string, FieldValue> = {}
+      const source = await value('contactSource', 'Luma')
+      if (source !== undefined) gaps.contactSource = source
+      const firstSeen = await value('firstContact', c.firstSeen)
+      if (firstSeen !== undefined) gaps.firstContact = firstSeen
+
       const existing = await ctx.db
         .query('crmContacts')
         .withIndex('by_orgId_and_email', (q) =>
@@ -73,20 +94,16 @@ export const upsertContacts = internalMutation({
         )
         .first()
       if (existing) {
-        // Never overwrite what someone wrote in the CRM; only fill gaps and
-        // keep the Luma attendance line current.
-        const participatedIn = withLumaLine(existing.participatedIn, line)
-        const patch: Record<string, string | number> = {}
-        if (participatedIn !== existing.participatedIn) {
-          patch.participatedIn = participatedIn
+        const current = existing.fields ?? {}
+        const fields = { ...gaps, ...current, ...fromLuma }
+        for (const key of Object.keys(gaps)) {
+          if (current[key] !== undefined && current[key] !== null) {
+            fields[key] = current[key]
+          }
         }
-        if (!existing.firstContact && c.firstSeen) {
-          patch.firstContact = c.firstSeen
-        }
-        if (!existing.contactSource) patch.contactSource = 'Luma'
-        if (Object.keys(patch).length > 0) {
+        if (JSON.stringify(fields) !== JSON.stringify(current)) {
           await ctx.db.patch('crmContacts', existing._id, {
-            ...patch,
+            fields,
             updatedAt: now,
           })
           updated++
@@ -96,12 +113,7 @@ export const upsertContacts = internalMutation({
           orgId,
           name: c.name,
           email,
-          contactSource: 'Luma',
-          firstContact: c.firstSeen,
-          participatedIn: line,
-          notes: c.tags.length
-            ? `Etiquetas en Luma: ${c.tags.join(', ')}`
-            : undefined,
+          fields: { ...gaps, ...fromLuma },
           createdAt: now,
           updatedAt: now,
         })
