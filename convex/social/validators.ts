@@ -33,6 +33,8 @@ export const allowlistSourceValidator = v.union(
   v.literal('csv'),
   v.literal('approval'),
   v.literal('manual'),
+  // Approved for a past event on the org's Luma calendar
+  v.literal('luma'),
 )
 
 export const availabilityValidator = v.union(

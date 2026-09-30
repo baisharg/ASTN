@@ -166,6 +166,7 @@ import type * as social_constants from "../social/constants.js";
 import type * as social_events from "../social/events.js";
 import type * as social_lib from "../social/lib.js";
 import type * as social_luma from "../social/luma.js";
+import type * as social_lumaCrm from "../social/lumaCrm.js";
 import type * as social_lumaSync from "../social/lumaSync.js";
 import type * as social_meetings from "../social/meetings.js";
 import type * as social_seed from "../social/seed.js";
@@ -343,6 +344,7 @@ declare const fullApi: ApiFromModules<{
   "social/events": typeof social_events;
   "social/lib": typeof social_lib;
   "social/luma": typeof social_luma;
+  "social/lumaCrm": typeof social_lumaCrm;
   "social/lumaSync": typeof social_lumaSync;
   "social/meetings": typeof social_meetings;
   "social/seed": typeof social_seed;

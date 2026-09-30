@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from 'convex/react'
+import { useAction, useMutation, useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
 import { FileUp, Loader2, Plus, Search, Trash2, Upload } from 'lucide-react'
 import { useRef, useState } from 'react'
@@ -15,6 +15,7 @@ import {
   CardTitle,
 } from '~/components/ui/card'
 import { Input } from '~/components/ui/input'
+import { Checkbox } from '~/components/ui/checkbox'
 import { Label } from '~/components/ui/label'
 import { Spinner } from '~/components/ui/spinner'
 import { errorText } from '~/lib/convex-error'
@@ -28,6 +29,7 @@ const SOURCE_LABELS = {
   csv: 'CSV',
   approval: 'Aprobado',
   manual: 'A mano',
+  luma: 'Luma',
 } as const
 
 type ImportResult = FunctionReturnType<typeof api.social.events.importAllowlist>
@@ -182,6 +184,7 @@ export function AllowlistTab({ orgId }: { orgId: Id<'organizations'> }) {
 
   return (
     <div className="space-y-6">
+      <LumaContactsCard orgId={orgId} />
       <Card>
         <CardHeader>
           <CardTitle>Lista de preaprobados</CardTitle>
@@ -403,5 +406,61 @@ export function AllowlistTab({ orgId }: { orgId: Id<'organizations'> }) {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+/** Pull the org's Luma contacts into the CRM, optionally pre-approving them. */
+function LumaContactsCard({ orgId }: { orgId: Id<'organizations'> }) {
+  const importLumaContacts = useAction(api.social.lumaCrm.importLumaContacts)
+  const { busy, run } = useBusyAction<'luma'>()
+  const [allowlistApproved, setAllowlistApproved] = useState(true)
+
+  const onImport = async () => {
+    const result = await run(
+      'luma',
+      () => importLumaContacts({ orgId, allowlistApproved }),
+      toastError('No pudimos importar los contactos de Luma'),
+    )
+    if (!result) return
+    const parts = [
+      `${result.total} contactos en Luma`,
+      `${result.created} nuevos en el CRM`,
+      `${result.updated} actualizados`,
+    ]
+    if (allowlistApproved) parts.push(`${result.allowlisted} preaprobados`)
+    toast.success(parts.join(' · '))
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Contactos de Luma</CardTitle>
+        <CardDescription>
+          Trae a todas las personas del calendario de Luma al CRM, con cuántos
+          eventos les aprobaron y a cuántos hicieron check-in. No pisa datos que
+          ya estén en el CRM. Podés repetirlo cuando quieras.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-start gap-2">
+          <Checkbox
+            id="luma-allowlist"
+            checked={allowlistApproved}
+            onCheckedChange={(v) => setAllowlistApproved(v === true)}
+          />
+          <Label htmlFor="luma-allowlist" className="font-normal leading-snug">
+            Preaprobar a quienes ya fueron aprobados en algún evento de Luma
+          </Label>
+        </div>
+        <Button onClick={onImport} disabled={busy !== null}>
+          {busy ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Upload className="size-4" />
+          )}
+          Importar desde Luma
+        </Button>
+      </CardContent>
+    </Card>
   )
 }

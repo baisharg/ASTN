@@ -1952,6 +1952,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_orgId', ['orgId'])
+    .index('by_orgId_and_email', ['orgId', 'email'])
     .searchIndex('search_name', {
       searchField: 'name',
       filterFields: ['orgId'],

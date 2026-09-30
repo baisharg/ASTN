@@ -177,6 +177,37 @@ export async function listAllLumaGuests(
   return guests
 }
 
+export type LumaContact = {
+  email: string
+  name: string | null
+  first_name: string | null
+  last_name: string | null
+  created_at: string
+  event_approved_count: number
+  event_checked_in_count: number
+  tags: Array<{ id: string; name: string }>
+}
+
+/** Everyone on the calendar's contact list, following pagination. */
+export async function listAllLumaContacts(): Promise<Array<LumaContact>> {
+  const contacts: Array<LumaContact> = []
+  let cursor: string | undefined
+  for (let page = 0; page < 100; page++) {
+    const data = await lumaRequest<{
+      entries: Array<LumaContact>
+      has_more: boolean
+      next_cursor?: string
+    }>('/v1/calendars/contacts/list', {
+      method: 'GET',
+      query: { pagination_limit: '100', pagination_cursor: cursor },
+    })
+    contacts.push(...data.entries)
+    if (!data.has_more || !data.next_cursor) break
+    cursor = data.next_cursor
+  }
+  return contacts
+}
+
 export function lumaCheckedInAt(guest: LumaGuest): number | undefined {
   const times = (guest.event_tickets ?? [])
     .map((t) => t.checked_in_at)
