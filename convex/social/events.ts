@@ -546,6 +546,38 @@ export const linkLumaEvent = mutation({
   },
 })
 
+/**
+ * Remove the event's Luma link, e.g. after the Luma event was deleted.
+ * Guests stay; their Luma mirror state resets, so linking a new Luma event
+ * pushes them again.
+ */
+export const unlinkLumaEvent = mutation({
+  args: { eventId: v.id('socialEvents') },
+  returns: v.null(),
+  handler: async (ctx, { eventId }) => {
+    await requireEventAdmin(ctx, eventId)
+    await ctx.db.patch('socialEvents', eventId, {
+      lumaEventId: undefined,
+      lumaUrl: undefined,
+      lumaLastSyncedAt: undefined,
+      lumaLastSyncError: undefined,
+      updatedAt: Date.now(),
+    })
+    const guests = await ctx.db
+      .query('socialEventGuests')
+      .withIndex('by_eventId_and_email', (q) => q.eq('eventId', eventId))
+      .take(2000)
+    for (const guest of guests) {
+      await ctx.db.patch('socialEventGuests', guest._id, {
+        lumaGuestId: undefined,
+        lumaSync: 'not_linked',
+        lumaSyncError: undefined,
+      })
+    }
+    return null
+  },
+})
+
 export const syncLumaNow = mutation({
   args: { eventId: v.id('socialEvents') },
   returns: v.null(),
