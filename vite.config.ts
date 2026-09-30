@@ -68,6 +68,14 @@ export default defineConfig({
   },
   build: {
     sourcemap: 'hidden',
+    rolldownOptions: {
+      checks: {
+        // On slower machines (Vercel) rolldown emits a plugin-timings log that
+        // a plugin's log handler mishandles, failing the build. It's only a
+        // performance hint.
+        pluginTimings: false,
+      },
+    },
   },
   resolve: {
     tsconfigPaths: true,
