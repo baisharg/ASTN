@@ -1,5 +1,5 @@
 import { useMutation } from 'convex/react'
-import { ChevronDown, Pencil, Trash2, X } from 'lucide-react'
+import { ChevronDown, GitMerge, Pencil, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
@@ -8,6 +8,7 @@ import type { CrmCollection, CrmColumn, FieldValue } from './fieldValues'
 import { isEmptyValue } from './fieldValues'
 import { TagPicker, ValueDisplay } from './CrmFieldControls'
 import { useCrmActions } from './useCrmActions'
+import { CrmMergeDialog, MAX_MERGE_SELECTION } from './CrmMerge'
 import { toastError } from '~/components/social-admin/shared'
 import {
   AlertDialog,
@@ -53,12 +54,14 @@ const plural = (n: number, one: string, many: string) =>
 
 export function CrmBulkBar({
   orgId,
+  orgSlug,
   collection,
   ids,
   columns,
   onClear,
 }: {
   orgId: Id<'organizations'>
+  orgSlug: string
   collection: CrmCollection
   ids: Array<string>
   columns: Array<CrmColumn>
@@ -66,6 +69,9 @@ export function CrmBulkBar({
 }) {
   const [editOpen, setEditOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [mergeOpen, setMergeOpen] = useState(false)
+  const mergeable = collection === 'contacts' && ids.length >= 2
+  const canMerge = mergeable && ids.length <= MAX_MERGE_SELECTION
   const deleteRecords = useMutation(api.contacts.bulk.deleteRecords)
   const { busy, run } = useBusyAction<'delete'>()
   const noun =
@@ -101,6 +107,17 @@ export function CrmBulkBar({
         <Pencil className="size-4" />
         Editar campo…
       </Button>
+      {mergeable && (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!canMerge}
+          onClick={() => setMergeOpen(true)}
+        >
+          <GitMerge className="size-4" />
+          {canMerge ? 'Fusionar' : `Fusionar (hasta ${MAX_MERGE_SELECTION})`}
+        </Button>
+      )}
       <Button
         size="sm"
         variant="outline"
@@ -123,6 +140,17 @@ export function CrmBulkBar({
         ids={ids}
         columns={columns}
       />
+
+      {canMerge && (
+        <CrmMergeDialog
+          open={mergeOpen}
+          onOpenChange={setMergeOpen}
+          orgId={orgId}
+          orgSlug={orgSlug}
+          ids={ids as Array<Id<'crmContacts'>>}
+          onMerged={onClear}
+        />
+      )}
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>

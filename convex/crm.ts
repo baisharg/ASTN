@@ -10,6 +10,7 @@ import { requireOrgAdmin, requireOrgRecord } from './lib/auth'
 import { CORE_COLUMNS, splitRecord } from './contacts/fields'
 import { setFieldOnRecord } from './contacts/records'
 import type { CrmCollection } from './contacts/validators'
+import { deleteDismissalsFor } from './contacts/dismissals'
 
 type CrmCountField =
   | 'contacts'
@@ -651,6 +652,8 @@ function defineDeleteMutation<T extends OrgScopedCrmTable>(
       await requireOrgRecord(ctx, args.id, args.orgId, notFoundMsg)
       await ctx.db.delete(args.id)
       await bumpCount(ctx, args.orgId, countField, -1)
+      const contactId = ctx.db.normalizeId('crmContacts', args.id)
+      if (contactId) await deleteDismissalsFor(ctx, args.orgId, contactId)
       return null
     },
   })

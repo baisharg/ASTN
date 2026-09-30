@@ -50,6 +50,7 @@ import {
   ViewsMenu,
 } from './CrmViewControls'
 import { CrmBulkBar } from './CrmBulkBar'
+import { CrmDuplicatesButton } from './CrmMerge'
 import { CrmFieldManager } from './CrmFieldManager'
 import { useCrmActions } from './useCrmActions'
 import { toastError } from '~/components/social-admin/shared'
@@ -563,6 +564,9 @@ export function CrmRecordsTable({
           <Settings2 className="size-4" />
           Campos
         </Button>
+        {collection === 'contacts' && (
+          <CrmDuplicatesButton orgId={orgId} orgSlug={orgSlug} />
+        )}
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" aria-label="Más acciones">
@@ -598,6 +602,7 @@ export function CrmRecordsTable({
       {selectedIds.length > 0 && (
         <CrmBulkBar
           orgId={orgId}
+          orgSlug={orgSlug}
           collection={collection}
           ids={selectedIds}
           columns={columns}

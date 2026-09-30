@@ -9,6 +9,7 @@ import {
   CalendarDays,
   ClipboardList,
   FileText,
+  GitMerge,
   GraduationCap,
   Link2,
   Pencil,
@@ -35,6 +36,7 @@ import {
   readValue,
 } from '~/components/crm/fieldValues'
 import { FieldInput } from '~/components/crm/CrmFieldControls'
+import { MergeWithDialog } from '~/components/crm/CrmMerge'
 import { useCrmActions } from '~/components/crm/useCrmActions'
 import {
   GUEST_STATUS_LABELS,
@@ -225,7 +227,7 @@ function PersonPage({
   const person = useQuery(api.contacts.people.getPerson, {
     orgId: org._id,
     contactId,
-  }) as Person | undefined
+  }) as Person | null | undefined
   const defs = useQuery(api.contacts.records.listFields, {
     orgId: org._id,
     collection: 'contacts',
@@ -235,6 +237,23 @@ function PersonPage({
     return (
       <PageShell>
         <Spinner className="size-8 mx-auto" />
+      </PageShell>
+    )
+  }
+
+  if (person === null) {
+    return (
+      <PageShell>
+        <div className="max-w-lg mx-auto py-12 text-center space-y-4">
+          <p className="text-lg font-medium">
+            Este contacto ya no existe (puede haber sido fusionado)
+          </p>
+          <Button asChild variant="outline">
+            <Link to="/org/$slug/admin/crm" params={{ slug }}>
+              Volver al CRM
+            </Link>
+          </Button>
+        </div>
       </PageShell>
     )
   }
@@ -311,6 +330,7 @@ function PersonHeader({
   const [editingName, setEditingName] = useState(false)
   const [newEmail, setNewEmail] = useState('')
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [mergeOpen, setMergeOpen] = useState(false)
 
   const core = useMemo(() => coreColumns('contacts'), [])
   const column = (key: string) => core.find((c) => c.key === key) as CrmColumn
@@ -438,16 +458,42 @@ function PersonHeader({
             )}
           </div>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="text-destructive hover:text-destructive"
-          onClick={() => setDeleteOpen(true)}
-        >
-          <Trash2 className="size-4" />
-          Eliminar
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setMergeOpen(true)}
+          >
+            <GitMerge className="size-4" />
+            Fusionar con…
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            onClick={() => setDeleteOpen(true)}
+          >
+            <Trash2 className="size-4" />
+            Eliminar
+          </Button>
+        </div>
       </div>
+      <MergeWithDialog
+        open={mergeOpen}
+        onOpenChange={setMergeOpen}
+        orgId={org._id}
+        orgSlug={slug}
+        contactId={contact._id}
+        onMerged={(keepId) => {
+          // This contact was merged into another: go to the one kept.
+          if (keepId !== contact._id) {
+            void navigate({
+              to: '/org/$slug/admin/crm/people/$contactId',
+              params: { slug, contactId: keepId },
+            })
+          }
+        }}
+      />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <div className="space-y-1.5">

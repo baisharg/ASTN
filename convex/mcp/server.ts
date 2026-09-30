@@ -1,5 +1,6 @@
 import { httpAction } from '../_generated/server'
 import { verifyClerkOAuthToken } from './jwt'
+import { classifyToolError } from './errors'
 import { TOOL_DEFS, callTool } from './tools'
 
 // MCP server over Streamable HTTP (single POST endpoint, JSON responses —
@@ -103,7 +104,10 @@ export const mcpHandler = httpAction(async (ctx, request) => {
           'event_attendance, survey_results and availability_heatmap return ' +
           'joined or aggregated data. All access is scoped to orgs where the ' +
           'signed-in user is an admin. Reads cover the whole org; writes are ' +
-          'limited to reversible changes. Application status can be set via ' +
+          'limited to reversible changes, with one exception: ' +
+          'crm_merge_contacts merges duplicate contacts (find them with ' +
+          'crm_duplicates) and deletes the merged ones, so confirm each merge ' +
+          'with the user first. Application status can be set via ' +
           'astn_update — it records the decision in ASTN without emailing the ' +
           'applicant. Sending emails/broadcasts, any Luma write, membership ' +
           'changes and publishing/finalizing are not exposed.',
@@ -134,15 +138,17 @@ export const mcpHandler = httpAction(async (ctx, request) => {
           isError: false,
         })
       } catch (err) {
-        // Tool-level failures (bad args, not found, not admin) travel as
-        // isError results so the calling model can read and correct them.
+        // Failures the calling model can act on (not found, not admin, a
+        // refused merge) are isError results; unknown tools, invalid
+        // arguments and unexpected failures are JSON-RPC errors. Messages
+        // only, never the stack or Convex's wrapper (see ./errors).
+        console.warn(`MCP tool ${name} failed`, err)
+        const failure = classifyToolError(err)
+        if (failure.kind === 'rpc') {
+          return jsonRpcError(id, failure.code, failure.message)
+        }
         return jsonRpcResult(id, {
-          content: [
-            {
-              type: 'text',
-              text: err instanceof Error ? err.message : String(err),
-            },
-          ],
+          content: [{ type: 'text', text: failure.text }],
           isError: true,
         })
       }

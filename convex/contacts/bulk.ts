@@ -3,6 +3,7 @@ import { internal } from '../_generated/api'
 import { internalMutation, mutation } from '../_generated/server'
 import { requireOrgAdmin } from '../lib/auth'
 import { bumpCount } from '../crm'
+import { deleteDismissalsFor } from './dismissals'
 import { crmCollectionValidator } from './validators'
 
 const TABLE = {
@@ -42,6 +43,7 @@ export const deleteRecords = mutation({
           ? ctx.db.normalizeId('crmContacts', raw)
           : null
       if (contactId) {
+        await deleteDismissalsFor(ctx, orgId, contactId)
         await ctx.scheduler.runAfter(
           0,
           internal.contacts.bulk.deleteContactActivities,

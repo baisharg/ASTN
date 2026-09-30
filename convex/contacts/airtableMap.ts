@@ -167,6 +167,8 @@ export type ContactSnap = {
   email?: string
   otherEmails?: Array<string>
   airtableId?: string
+  // Airtable ids of contacts merged into this one (convex/contacts/merge.ts)
+  mergedAirtableIds?: Array<string>
   phone?: string
   linkedin?: string
   website?: string
@@ -557,6 +559,23 @@ export function addEmails<T extends Emailed>(
   }
 }
 
+/**
+ * Airtable ids of contacts that were merged away → the contact they were
+ * merged into. Checked after the `airtableId` match, so a contact's own
+ * id wins.
+ */
+export function indexByMergedAirtableId<
+  T extends { mergedAirtableIds?: Array<string> },
+>(contacts: Array<T>): Map<string, T> {
+  const map = new Map<string, T>()
+  for (const c of contacts) {
+    for (const id of c.mergedAirtableIds ?? []) {
+      if (!map.has(id)) map.set(id, c)
+    }
+  }
+  return map
+}
+
 export function orgNameKey(name: string): string {
   return name.trim().toLowerCase()
 }
@@ -840,6 +859,9 @@ export function planImport(data: AirtableData, state: State): Plan {
   const byAirtableId = new Map<string, ContactSnap>()
   for (const c of state.contacts) {
     if (c.airtableId) byAirtableId.set(c.airtableId, c)
+  }
+  for (const [id, c] of indexByMergedAirtableId(state.contacts)) {
+    if (!byAirtableId.has(id)) byAirtableId.set(id, c)
   }
   const byEmail = indexByEmail(state.contacts)
 

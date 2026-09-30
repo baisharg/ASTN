@@ -23,6 +23,7 @@ import type { FilterColumn, FilterOp, ViewFilter } from '../contacts/filters'
 import { findContactByEmail } from '../contacts/people'
 import { crmCollectionValidator } from '../contacts/validators'
 import type { CrmCollection, CrmFieldType } from '../contacts/validators'
+import { deleteDismissalsFor } from '../contacts/dismissals'
 import {
   CONTACT_EDITABLE,
   OPPORTUNITY_EDITABLE,
@@ -856,6 +857,7 @@ export const deleteRecord = internalMutation({
         ? ctx.db.normalizeId('crmContacts', args.id)
         : null
     if (contactId) {
+      await deleteDismissalsFor(ctx, org._id, contactId)
       await ctx.scheduler.runAfter(
         0,
         internal.contacts.bulk.deleteContactActivities,
