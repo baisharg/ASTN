@@ -33,26 +33,28 @@ jobs:
       - name: Add Vite+ to PATH
         run: echo "$HOME/.vite-plus/bin" >> $GITHUB_PATH
 
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint && pnpm run lint:convex
+
+      - name: Typecheck Convex backend
+        run: pnpm exec tsc -p convex/tsconfig.json --noEmit
+
+      - name: Build
+        run: pnpm run build
+
+      # The existing tests are written for Bun's test runner.
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Lint
-        run: bun run lint && bun run lint:convex
-
-      - name: Typecheck Convex backend
-        run: bun x tsc -p convex/tsconfig.json --noEmit
-
-      - name: Build
-        run: bun run build
-
       - name: Test
-        run: |
-          TEST_FILES=$(find src convex -name "*.test.ts" -o -name "*.spec.ts" 2>/dev/null || true)
-          if [ -n "$TEST_FILES" ]; then
-            bun test
-          else
-            echo "No test files found in src/ or convex/, skipping tests"
-          fi
+        run: bun test src convex

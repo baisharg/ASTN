@@ -7,6 +7,7 @@ export type PageContextType =
   | 'viewing_match'
   | 'browsing_opportunities'
   | 'viewing_opportunity'
+  | 'event_profile'
 
 export interface AgentPageContext {
   type: PageContextType
@@ -20,6 +21,14 @@ export function useAgentPageContext(): AgentPageContext | undefined {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
 
   if (pathname === '/') return { type: 'viewing_home' }
+  // In-person event profile page: /org/<org>/e/<event>/profile
+  const eventMatch = pathname.match(/^\/org\/([^/]+)\/e\/([^/]+)\/profile\/?$/)
+  if (eventMatch) {
+    return {
+      type: 'event_profile',
+      entityId: `${eventMatch[1]}/${eventMatch[2]}`,
+    }
+  }
   if (pathname === '/profile' || pathname === '/profile/')
     return { type: 'editing_profile' }
   if (pathname === '/matches' || pathname === '/matches/')

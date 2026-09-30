@@ -56,6 +56,7 @@ export const sendMessage = mutation({
         v.literal('viewing_match'),
         v.literal('browsing_opportunities'),
         v.literal('viewing_opportunity'),
+        v.literal('event_profile'),
       ),
     ),
     pageContextEntityId: v.optional(v.string()),

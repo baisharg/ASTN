@@ -1,6 +1,7 @@
 import { httpRouter } from 'convex/server'
 import { corsHandler, streamChat } from './enrichment/streaming'
 import { unsubscribeHandler } from './emails/unsubscribe'
+import { lumaWebhookHandler } from './social/webhook'
 import {
   mcpHandler,
   mcpMethodNotAllowed,
@@ -51,6 +52,13 @@ http.route({
   path: '/unsubscribe',
   method: 'GET',
   handler: unsubscribeHandler,
+})
+
+// Luma guest webhooks (registrations and approval changes)
+http.route({
+  path: '/luma-webhook',
+  method: 'POST',
+  handler: lumaWebhookHandler,
 })
 
 export default http

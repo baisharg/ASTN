@@ -2,6 +2,9 @@
 @import 'tw-animate-css';
 @import '@fontsource-variable/plus-jakarta-sans';
 @import '@fontsource-variable/space-grotesk';
+/* Event pages (BAISH look) */
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/source-serif-4';
 
 @custom-variant dark (&:is(.dark, .dark *));
 
@@ -819,4 +822,44 @@ html {
 .tap-feedback:active {
   transform: scale(0.97);
   opacity: 0.9;
+}
+
+/* ==========================================================================
+   BAISH theme for in-person event pages (matches baish.com.ar). Applied by
+   the event layout route on its subtree only.
+   ========================================================================== */
+.baish-theme {
+  --background: #fbfaff;
+  --foreground: #2a2444;
+  --card: #ffffff;
+  --card-foreground: #2a2444;
+  --popover: #ffffff;
+  --popover-foreground: #2a2444;
+  --primary: #6d5bf5;
+  --primary-foreground: #ffffff;
+  --secondary: #f4f2ff;
+  --secondary-foreground: #3f2fb8;
+  --muted: #f4f2ff;
+  --muted-foreground: #6b6580;
+  --accent: #f4f2ff;
+  --accent-foreground: #3f2fb8;
+  --border: #e8e5f5;
+  --input: #d8d2ff;
+  --ring: #9388ff;
+  --baish-strong: #171129;
+  --baish-brand-text: #5443d6;
+  --baish-ok: #0b6b4b;
+  --baish-ok-bg: #e7f6ef;
+  --baish-ok-dot: #12a574;
+  --baish-warn: #7a5200;
+  --baish-warn-bg: #fff4db;
+  --baish-warn-dot: #f2b233;
+  font-family: 'Geist Variable', system-ui, sans-serif;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.baish-theme .font-display,
+.baish-theme .baish-serif {
+  font-family: 'Source Serif 4 Variable', Georgia, serif;
 }

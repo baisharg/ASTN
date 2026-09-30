@@ -19,6 +19,8 @@ import {
 interface TimezoneSelectorProps {
   value: string
   onChange: (timezone: string) => void
+  /** For a `<Label htmlFor>` pointing at the trigger button. */
+  id?: string
 }
 
 // Get UTC offset for a timezone
@@ -46,7 +48,11 @@ function getBrowserTimezone(): string {
   }
 }
 
-export function TimezoneSelector({ value, onChange }: TimezoneSelectorProps) {
+export function TimezoneSelector({
+  value,
+  onChange,
+  id,
+}: TimezoneSelectorProps) {
   const [open, setOpen] = useState(false)
 
   // Get all IANA timezones
@@ -90,6 +96,7 @@ export function TimezoneSelector({ value, onChange }: TimezoneSelectorProps) {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
+          id={id}
           variant="outline"
           role="combobox"
           aria-expanded={open}

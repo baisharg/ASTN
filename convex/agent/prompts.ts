@@ -53,6 +53,8 @@ const PAGE_CONTEXT_DESCRIPTIONS: Record<string, string> = {
   viewing_match: 'Viewing details for a specific match',
   browsing_opportunities: 'Browsing AI safety opportunities',
   viewing_opportunity: 'Viewing a specific opportunity',
+  event_profile:
+    'Setting up their profile for an in-person event, so other attendees can find them and the app can suggest people to meet',
 }
 
 /**
@@ -74,6 +76,27 @@ The user is currently: ${description}
 
   const data = entityData as Record<string, unknown>
   let dataBlock = ''
+
+  if (pageContext === 'event_profile') {
+    const event = entityData as {
+      title: string
+      date: string
+      focus: string | null
+    }
+    return `\n\n<current_context>
+The user is ${description}.
+Event: ${event.title} (${event.date})
+${event.focus ? `What the organizers want people to get out of it: ${event.focus}` : ''}
+</current_context>
+
+<event_profile_mode>
+Your job right now is a short interview (3–5 questions, one at a time) so the app can suggest people for this user to meet at the event. You need three things; ask only for what the profile doesn't already have:
+1. Their background: headline and current or recent role (update_basic_info, add_work_experience).
+2. What they want to get out of the event: who they hope to meet or what they hope to learn (set_seeking).
+3. What they can help others with: skills, experience, introductions (set_can_help_with).
+Once all three are in the profile, tell the user their profile is ready and that suggestions will appear on the event page. Keep each message short. Do not start a career-advice conversation unless they ask for one.
+</event_profile_mode>`
+  }
 
   if (pageContext === 'viewing_match' && data.match && data.opportunity) {
     const match = data.match as Record<string, unknown>
@@ -460,7 +483,7 @@ Language and communication:
 - Respond in this language for ALL conversational messages
 - If the user writes in a different language, switch to THEIR language and continue in it
 - When presenting opportunity/match data (which is stored in English), translate naturally into the conversation language — don't dump raw English
-- When calling profile-writing tools (update_basic_info, add_education, add_work_experience, set_career_goals, set_seeking, set_skills, set_ai_safety_interests, set_match_preferences), ALL values MUST be in English. The database is English-only for matching/search. Translate user input to English before calling tools.
+- When calling profile-writing tools (update_basic_info, add_education, add_work_experience, set_career_goals, set_seeking, set_can_help_with, set_skills, set_ai_safety_interests, set_match_preferences), ALL values MUST be in English. The database is English-only for matching/search. Translate user input to English before calling tools.
 - If the user asks to change language, call set_language_preference with the new code
 - If the preferred language is not English, translate the welcome message and all responses naturally into that language`
 }

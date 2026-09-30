@@ -54,18 +54,27 @@ import { Route as OrgSlugAdminSettingsRouteImport } from './routes/org/$slug/adm
 import { Route as OrgSlugAdminGuestsRouteImport } from './routes/org/$slug/admin/guests'
 import { Route as OrgSlugAdminBookingsRouteImport } from './routes/org/$slug/admin/bookings'
 import { Route as AdminOpportunitiesIdEditRouteImport } from './routes/admin/opportunities/$id/edit'
+import { Route as OrgSlugEEventSlugRouteRouteImport } from './routes/org/$slug/e/$eventSlug/route'
 import { Route as OrgSlugSurveySurveyTokenIndexRouteImport } from './routes/org/$slug/survey/$surveyToken/index'
 import { Route as OrgSlugPollPollTokenIndexRouteImport } from './routes/org/$slug/poll/$pollToken/index'
+import { Route as OrgSlugEEventSlugIndexRouteImport } from './routes/org/$slug/e/$eventSlug/index'
 import { Route as OrgSlugAdminProgramsIndexRouteImport } from './routes/org/$slug/admin/programs/index'
 import { Route as OrgSlugAdminOpportunitiesIndexRouteImport } from './routes/org/$slug/admin/opportunities/index'
 import { Route as OrgSlugAdminMembersIndexRouteImport } from './routes/org/$slug/admin/members/index'
+import { Route as OrgSlugAdminEventsIndexRouteImport } from './routes/org/$slug/admin/events/index'
 import { Route as OrgSlugAdminCrmIndexRouteImport } from './routes/org/$slug/admin/crm/index'
 import { Route as OrgSlugAdminApplicationsIndexRouteImport } from './routes/org/$slug/admin/applications/index'
 import { Route as OrgSlugSurveySurveyTokenRespondentTokenRouteImport } from './routes/org/$slug/survey/$surveyToken/$respondentToken'
 import { Route as OrgSlugPollPollTokenRespondentTokenRouteImport } from './routes/org/$slug/poll/$pollToken/$respondentToken'
+import { Route as OrgSlugEEventSlugRequestsRouteImport } from './routes/org/$slug/e/$eventSlug/requests'
+import { Route as OrgSlugEEventSlugProfileRouteImport } from './routes/org/$slug/e/$eventSlug/profile'
+import { Route as OrgSlugEEventSlugMeetingRouteImport } from './routes/org/$slug/e/$eventSlug/meeting'
 import { Route as OrgSlugAdminMembersUserIdRouteImport } from './routes/org/$slug/admin/members/$userId'
+import { Route as OrgSlugAdminEventsEventIdRouteImport } from './routes/org/$slug/admin/events/$eventId'
+import { Route as OrgSlugEEventSlugPeopleIndexRouteImport } from './routes/org/$slug/e/$eventSlug/people/index'
 import { Route as OrgSlugAdminProgramsProgramIdIndexRouteImport } from './routes/org/$slug/admin/programs/$programId/index'
 import { Route as OrgSlugAdminOpportunitiesOppIdIndexRouteImport } from './routes/org/$slug/admin/opportunities/$oppId/index'
+import { Route as OrgSlugEEventSlugPeopleUserIdRouteImport } from './routes/org/$slug/e/$eventSlug/people/$userId'
 import { Route as OrgSlugAdminProgramsProgramIdSessionRunnerRouteImport } from './routes/org/$slug/admin/programs/$programId/session-runner'
 import { Route as OrgSlugAdminOpportunitiesOppIdEmailRouteImport } from './routes/org/$slug/admin/opportunities/$oppId/email'
 
@@ -297,6 +306,11 @@ const AdminOpportunitiesIdEditRoute =
     path: '/opportunities/$id/edit',
     getParentRoute: () => AdminRouteRoute,
   } as any)
+const OrgSlugEEventSlugRouteRoute = OrgSlugEEventSlugRouteRouteImport.update({
+  id: '/org/$slug/e/$eventSlug',
+  path: '/org/$slug/e/$eventSlug',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OrgSlugSurveySurveyTokenIndexRoute =
   OrgSlugSurveySurveyTokenIndexRouteImport.update({
     id: '/org/$slug/survey/$surveyToken/',
@@ -309,6 +323,11 @@ const OrgSlugPollPollTokenIndexRoute =
     path: '/org/$slug/poll/$pollToken/',
     getParentRoute: () => rootRouteImport,
   } as any)
+const OrgSlugEEventSlugIndexRoute = OrgSlugEEventSlugIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => OrgSlugEEventSlugRouteRoute,
+} as any)
 const OrgSlugAdminProgramsIndexRoute =
   OrgSlugAdminProgramsIndexRouteImport.update({
     id: '/programs/',
@@ -327,6 +346,11 @@ const OrgSlugAdminMembersIndexRoute =
     path: '/members/',
     getParentRoute: () => OrgSlugAdminRouteRoute,
   } as any)
+const OrgSlugAdminEventsIndexRoute = OrgSlugAdminEventsIndexRouteImport.update({
+  id: '/events/',
+  path: '/events/',
+  getParentRoute: () => OrgSlugAdminRouteRoute,
+} as any)
 const OrgSlugAdminCrmIndexRoute = OrgSlugAdminCrmIndexRouteImport.update({
   id: '/crm/',
   path: '/crm/',
@@ -350,11 +374,41 @@ const OrgSlugPollPollTokenRespondentTokenRoute =
     path: '/org/$slug/poll/$pollToken/$respondentToken',
     getParentRoute: () => rootRouteImport,
   } as any)
+const OrgSlugEEventSlugRequestsRoute =
+  OrgSlugEEventSlugRequestsRouteImport.update({
+    id: '/requests',
+    path: '/requests',
+    getParentRoute: () => OrgSlugEEventSlugRouteRoute,
+  } as any)
+const OrgSlugEEventSlugProfileRoute =
+  OrgSlugEEventSlugProfileRouteImport.update({
+    id: '/profile',
+    path: '/profile',
+    getParentRoute: () => OrgSlugEEventSlugRouteRoute,
+  } as any)
+const OrgSlugEEventSlugMeetingRoute =
+  OrgSlugEEventSlugMeetingRouteImport.update({
+    id: '/meeting',
+    path: '/meeting',
+    getParentRoute: () => OrgSlugEEventSlugRouteRoute,
+  } as any)
 const OrgSlugAdminMembersUserIdRoute =
   OrgSlugAdminMembersUserIdRouteImport.update({
     id: '/members/$userId',
     path: '/members/$userId',
     getParentRoute: () => OrgSlugAdminRouteRoute,
+  } as any)
+const OrgSlugAdminEventsEventIdRoute =
+  OrgSlugAdminEventsEventIdRouteImport.update({
+    id: '/events/$eventId',
+    path: '/events/$eventId',
+    getParentRoute: () => OrgSlugAdminRouteRoute,
+  } as any)
+const OrgSlugEEventSlugPeopleIndexRoute =
+  OrgSlugEEventSlugPeopleIndexRouteImport.update({
+    id: '/people/',
+    path: '/people/',
+    getParentRoute: () => OrgSlugEEventSlugRouteRoute,
   } as any)
 const OrgSlugAdminProgramsProgramIdIndexRoute =
   OrgSlugAdminProgramsProgramIdIndexRouteImport.update({
@@ -367,6 +421,12 @@ const OrgSlugAdminOpportunitiesOppIdIndexRoute =
     id: '/opportunities/$oppId/',
     path: '/opportunities/$oppId/',
     getParentRoute: () => OrgSlugAdminRouteRoute,
+  } as any)
+const OrgSlugEEventSlugPeopleUserIdRoute =
+  OrgSlugEEventSlugPeopleUserIdRouteImport.update({
+    id: '/people/$userId',
+    path: '/people/$userId',
+    getParentRoute: () => OrgSlugEEventSlugRouteRoute,
   } as any)
 const OrgSlugAdminProgramsProgramIdSessionRunnerRoute =
   OrgSlugAdminProgramsProgramIdSessionRunnerRouteImport.update({
@@ -416,6 +476,7 @@ export interface FileRoutesByFullPath {
   '/admin/opportunities/': typeof AdminOpportunitiesIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/org/$slug/': typeof OrgSlugIndexRoute
+  '/org/$slug/e/$eventSlug': typeof OrgSlugEEventSlugRouteRouteWithChildren
   '/admin/opportunities/$id/edit': typeof AdminOpportunitiesIdEditRoute
   '/org/$slug/admin/bookings': typeof OrgSlugAdminBookingsRoute
   '/org/$slug/admin/guests': typeof OrgSlugAdminGuestsRoute
@@ -427,20 +488,28 @@ export interface FileRoutesByFullPath {
   '/org/$slug/space/bookings': typeof OrgSlugSpaceBookingsRoute
   '/org/$slug/admin/': typeof OrgSlugAdminIndexRoute
   '/org/$slug/space/': typeof OrgSlugSpaceIndexRoute
+  '/org/$slug/admin/events/$eventId': typeof OrgSlugAdminEventsEventIdRoute
   '/org/$slug/admin/members/$userId': typeof OrgSlugAdminMembersUserIdRoute
+  '/org/$slug/e/$eventSlug/meeting': typeof OrgSlugEEventSlugMeetingRoute
+  '/org/$slug/e/$eventSlug/profile': typeof OrgSlugEEventSlugProfileRoute
+  '/org/$slug/e/$eventSlug/requests': typeof OrgSlugEEventSlugRequestsRoute
   '/org/$slug/poll/$pollToken/$respondentToken': typeof OrgSlugPollPollTokenRespondentTokenRoute
   '/org/$slug/survey/$surveyToken/$respondentToken': typeof OrgSlugSurveySurveyTokenRespondentTokenRoute
   '/org/$slug/admin/applications/': typeof OrgSlugAdminApplicationsIndexRoute
   '/org/$slug/admin/crm/': typeof OrgSlugAdminCrmIndexRoute
+  '/org/$slug/admin/events/': typeof OrgSlugAdminEventsIndexRoute
   '/org/$slug/admin/members/': typeof OrgSlugAdminMembersIndexRoute
   '/org/$slug/admin/opportunities/': typeof OrgSlugAdminOpportunitiesIndexRoute
   '/org/$slug/admin/programs/': typeof OrgSlugAdminProgramsIndexRoute
+  '/org/$slug/e/$eventSlug/': typeof OrgSlugEEventSlugIndexRoute
   '/org/$slug/poll/$pollToken/': typeof OrgSlugPollPollTokenIndexRoute
   '/org/$slug/survey/$surveyToken/': typeof OrgSlugSurveySurveyTokenIndexRoute
   '/org/$slug/admin/opportunities/$oppId/email': typeof OrgSlugAdminOpportunitiesOppIdEmailRoute
   '/org/$slug/admin/programs/$programId/session-runner': typeof OrgSlugAdminProgramsProgramIdSessionRunnerRoute
+  '/org/$slug/e/$eventSlug/people/$userId': typeof OrgSlugEEventSlugPeopleUserIdRoute
   '/org/$slug/admin/opportunities/$oppId/': typeof OrgSlugAdminOpportunitiesOppIdIndexRoute
   '/org/$slug/admin/programs/$programId/': typeof OrgSlugAdminProgramsProgramIdIndexRoute
+  '/org/$slug/e/$eventSlug/people/': typeof OrgSlugEEventSlugPeopleIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -482,20 +551,28 @@ export interface FileRoutesByTo {
   '/org/$slug/space/bookings': typeof OrgSlugSpaceBookingsRoute
   '/org/$slug/admin': typeof OrgSlugAdminIndexRoute
   '/org/$slug/space': typeof OrgSlugSpaceIndexRoute
+  '/org/$slug/admin/events/$eventId': typeof OrgSlugAdminEventsEventIdRoute
   '/org/$slug/admin/members/$userId': typeof OrgSlugAdminMembersUserIdRoute
+  '/org/$slug/e/$eventSlug/meeting': typeof OrgSlugEEventSlugMeetingRoute
+  '/org/$slug/e/$eventSlug/profile': typeof OrgSlugEEventSlugProfileRoute
+  '/org/$slug/e/$eventSlug/requests': typeof OrgSlugEEventSlugRequestsRoute
   '/org/$slug/poll/$pollToken/$respondentToken': typeof OrgSlugPollPollTokenRespondentTokenRoute
   '/org/$slug/survey/$surveyToken/$respondentToken': typeof OrgSlugSurveySurveyTokenRespondentTokenRoute
   '/org/$slug/admin/applications': typeof OrgSlugAdminApplicationsIndexRoute
   '/org/$slug/admin/crm': typeof OrgSlugAdminCrmIndexRoute
+  '/org/$slug/admin/events': typeof OrgSlugAdminEventsIndexRoute
   '/org/$slug/admin/members': typeof OrgSlugAdminMembersIndexRoute
   '/org/$slug/admin/opportunities': typeof OrgSlugAdminOpportunitiesIndexRoute
   '/org/$slug/admin/programs': typeof OrgSlugAdminProgramsIndexRoute
+  '/org/$slug/e/$eventSlug': typeof OrgSlugEEventSlugIndexRoute
   '/org/$slug/poll/$pollToken': typeof OrgSlugPollPollTokenIndexRoute
   '/org/$slug/survey/$surveyToken': typeof OrgSlugSurveySurveyTokenIndexRoute
   '/org/$slug/admin/opportunities/$oppId/email': typeof OrgSlugAdminOpportunitiesOppIdEmailRoute
   '/org/$slug/admin/programs/$programId/session-runner': typeof OrgSlugAdminProgramsProgramIdSessionRunnerRoute
+  '/org/$slug/e/$eventSlug/people/$userId': typeof OrgSlugEEventSlugPeopleUserIdRoute
   '/org/$slug/admin/opportunities/$oppId': typeof OrgSlugAdminOpportunitiesOppIdIndexRoute
   '/org/$slug/admin/programs/$programId': typeof OrgSlugAdminProgramsProgramIdIndexRoute
+  '/org/$slug/e/$eventSlug/people': typeof OrgSlugEEventSlugPeopleIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -533,6 +610,7 @@ export interface FileRoutesById {
   '/admin/opportunities/': typeof AdminOpportunitiesIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/org/$slug/': typeof OrgSlugIndexRoute
+  '/org/$slug/e/$eventSlug': typeof OrgSlugEEventSlugRouteRouteWithChildren
   '/admin/opportunities/$id/edit': typeof AdminOpportunitiesIdEditRoute
   '/org/$slug/admin/bookings': typeof OrgSlugAdminBookingsRoute
   '/org/$slug/admin/guests': typeof OrgSlugAdminGuestsRoute
@@ -544,20 +622,28 @@ export interface FileRoutesById {
   '/org/$slug/space/bookings': typeof OrgSlugSpaceBookingsRoute
   '/org/$slug/admin/': typeof OrgSlugAdminIndexRoute
   '/org/$slug/space/': typeof OrgSlugSpaceIndexRoute
+  '/org/$slug/admin/events/$eventId': typeof OrgSlugAdminEventsEventIdRoute
   '/org/$slug/admin/members/$userId': typeof OrgSlugAdminMembersUserIdRoute
+  '/org/$slug/e/$eventSlug/meeting': typeof OrgSlugEEventSlugMeetingRoute
+  '/org/$slug/e/$eventSlug/profile': typeof OrgSlugEEventSlugProfileRoute
+  '/org/$slug/e/$eventSlug/requests': typeof OrgSlugEEventSlugRequestsRoute
   '/org/$slug/poll/$pollToken/$respondentToken': typeof OrgSlugPollPollTokenRespondentTokenRoute
   '/org/$slug/survey/$surveyToken/$respondentToken': typeof OrgSlugSurveySurveyTokenRespondentTokenRoute
   '/org/$slug/admin/applications/': typeof OrgSlugAdminApplicationsIndexRoute
   '/org/$slug/admin/crm/': typeof OrgSlugAdminCrmIndexRoute
+  '/org/$slug/admin/events/': typeof OrgSlugAdminEventsIndexRoute
   '/org/$slug/admin/members/': typeof OrgSlugAdminMembersIndexRoute
   '/org/$slug/admin/opportunities/': typeof OrgSlugAdminOpportunitiesIndexRoute
   '/org/$slug/admin/programs/': typeof OrgSlugAdminProgramsIndexRoute
+  '/org/$slug/e/$eventSlug/': typeof OrgSlugEEventSlugIndexRoute
   '/org/$slug/poll/$pollToken/': typeof OrgSlugPollPollTokenIndexRoute
   '/org/$slug/survey/$surveyToken/': typeof OrgSlugSurveySurveyTokenIndexRoute
   '/org/$slug/admin/opportunities/$oppId/email': typeof OrgSlugAdminOpportunitiesOppIdEmailRoute
   '/org/$slug/admin/programs/$programId/session-runner': typeof OrgSlugAdminProgramsProgramIdSessionRunnerRoute
+  '/org/$slug/e/$eventSlug/people/$userId': typeof OrgSlugEEventSlugPeopleUserIdRoute
   '/org/$slug/admin/opportunities/$oppId/': typeof OrgSlugAdminOpportunitiesOppIdIndexRoute
   '/org/$slug/admin/programs/$programId/': typeof OrgSlugAdminProgramsProgramIdIndexRoute
+  '/org/$slug/e/$eventSlug/people/': typeof OrgSlugEEventSlugPeopleIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -596,6 +682,7 @@ export interface FileRouteTypes {
     | '/admin/opportunities/'
     | '/admin/users/'
     | '/org/$slug/'
+    | '/org/$slug/e/$eventSlug'
     | '/admin/opportunities/$id/edit'
     | '/org/$slug/admin/bookings'
     | '/org/$slug/admin/guests'
@@ -607,20 +694,28 @@ export interface FileRouteTypes {
     | '/org/$slug/space/bookings'
     | '/org/$slug/admin/'
     | '/org/$slug/space/'
+    | '/org/$slug/admin/events/$eventId'
     | '/org/$slug/admin/members/$userId'
+    | '/org/$slug/e/$eventSlug/meeting'
+    | '/org/$slug/e/$eventSlug/profile'
+    | '/org/$slug/e/$eventSlug/requests'
     | '/org/$slug/poll/$pollToken/$respondentToken'
     | '/org/$slug/survey/$surveyToken/$respondentToken'
     | '/org/$slug/admin/applications/'
     | '/org/$slug/admin/crm/'
+    | '/org/$slug/admin/events/'
     | '/org/$slug/admin/members/'
     | '/org/$slug/admin/opportunities/'
     | '/org/$slug/admin/programs/'
+    | '/org/$slug/e/$eventSlug/'
     | '/org/$slug/poll/$pollToken/'
     | '/org/$slug/survey/$surveyToken/'
     | '/org/$slug/admin/opportunities/$oppId/email'
     | '/org/$slug/admin/programs/$programId/session-runner'
+    | '/org/$slug/e/$eventSlug/people/$userId'
     | '/org/$slug/admin/opportunities/$oppId/'
     | '/org/$slug/admin/programs/$programId/'
+    | '/org/$slug/e/$eventSlug/people/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -662,20 +757,28 @@ export interface FileRouteTypes {
     | '/org/$slug/space/bookings'
     | '/org/$slug/admin'
     | '/org/$slug/space'
+    | '/org/$slug/admin/events/$eventId'
     | '/org/$slug/admin/members/$userId'
+    | '/org/$slug/e/$eventSlug/meeting'
+    | '/org/$slug/e/$eventSlug/profile'
+    | '/org/$slug/e/$eventSlug/requests'
     | '/org/$slug/poll/$pollToken/$respondentToken'
     | '/org/$slug/survey/$surveyToken/$respondentToken'
     | '/org/$slug/admin/applications'
     | '/org/$slug/admin/crm'
+    | '/org/$slug/admin/events'
     | '/org/$slug/admin/members'
     | '/org/$slug/admin/opportunities'
     | '/org/$slug/admin/programs'
+    | '/org/$slug/e/$eventSlug'
     | '/org/$slug/poll/$pollToken'
     | '/org/$slug/survey/$surveyToken'
     | '/org/$slug/admin/opportunities/$oppId/email'
     | '/org/$slug/admin/programs/$programId/session-runner'
+    | '/org/$slug/e/$eventSlug/people/$userId'
     | '/org/$slug/admin/opportunities/$oppId'
     | '/org/$slug/admin/programs/$programId'
+    | '/org/$slug/e/$eventSlug/people'
   id:
     | '__root__'
     | '/'
@@ -712,6 +815,7 @@ export interface FileRouteTypes {
     | '/admin/opportunities/'
     | '/admin/users/'
     | '/org/$slug/'
+    | '/org/$slug/e/$eventSlug'
     | '/admin/opportunities/$id/edit'
     | '/org/$slug/admin/bookings'
     | '/org/$slug/admin/guests'
@@ -723,20 +827,28 @@ export interface FileRouteTypes {
     | '/org/$slug/space/bookings'
     | '/org/$slug/admin/'
     | '/org/$slug/space/'
+    | '/org/$slug/admin/events/$eventId'
     | '/org/$slug/admin/members/$userId'
+    | '/org/$slug/e/$eventSlug/meeting'
+    | '/org/$slug/e/$eventSlug/profile'
+    | '/org/$slug/e/$eventSlug/requests'
     | '/org/$slug/poll/$pollToken/$respondentToken'
     | '/org/$slug/survey/$surveyToken/$respondentToken'
     | '/org/$slug/admin/applications/'
     | '/org/$slug/admin/crm/'
+    | '/org/$slug/admin/events/'
     | '/org/$slug/admin/members/'
     | '/org/$slug/admin/opportunities/'
     | '/org/$slug/admin/programs/'
+    | '/org/$slug/e/$eventSlug/'
     | '/org/$slug/poll/$pollToken/'
     | '/org/$slug/survey/$surveyToken/'
     | '/org/$slug/admin/opportunities/$oppId/email'
     | '/org/$slug/admin/programs/$programId/session-runner'
+    | '/org/$slug/e/$eventSlug/people/$userId'
     | '/org/$slug/admin/opportunities/$oppId/'
     | '/org/$slug/admin/programs/$programId/'
+    | '/org/$slug/e/$eventSlug/people/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -762,6 +874,7 @@ export interface RootRouteChildren {
   OrgSlugProgramsRoute: typeof OrgSlugProgramsRoute
   OrgSlugVisitRoute: typeof OrgSlugVisitRoute
   OrgSlugIndexRoute: typeof OrgSlugIndexRoute
+  OrgSlugEEventSlugRouteRoute: typeof OrgSlugEEventSlugRouteRouteWithChildren
   OrgSlugApplyOpportunityIdRoute: typeof OrgSlugApplyOpportunityIdRoute
   OrgSlugProgramProgramSlugRoute: typeof OrgSlugProgramProgramSlugRoute
   OrgSlugSpaceBookingsRoute: typeof OrgSlugSpaceBookingsRoute
@@ -1089,6 +1202,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminOpportunitiesIdEditRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/org/$slug/e/$eventSlug': {
+      id: '/org/$slug/e/$eventSlug'
+      path: '/org/$slug/e/$eventSlug'
+      fullPath: '/org/$slug/e/$eventSlug'
+      preLoaderRoute: typeof OrgSlugEEventSlugRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/org/$slug/survey/$surveyToken/': {
       id: '/org/$slug/survey/$surveyToken/'
       path: '/org/$slug/survey/$surveyToken'
@@ -1102,6 +1222,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/org/$slug/poll/$pollToken/'
       preLoaderRoute: typeof OrgSlugPollPollTokenIndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/org/$slug/e/$eventSlug/': {
+      id: '/org/$slug/e/$eventSlug/'
+      path: '/'
+      fullPath: '/org/$slug/e/$eventSlug/'
+      preLoaderRoute: typeof OrgSlugEEventSlugIndexRouteImport
+      parentRoute: typeof OrgSlugEEventSlugRouteRoute
     }
     '/org/$slug/admin/programs/': {
       id: '/org/$slug/admin/programs/'
@@ -1122,6 +1249,13 @@ declare module '@tanstack/react-router' {
       path: '/members'
       fullPath: '/org/$slug/admin/members/'
       preLoaderRoute: typeof OrgSlugAdminMembersIndexRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/admin/events/': {
+      id: '/org/$slug/admin/events/'
+      path: '/events'
+      fullPath: '/org/$slug/admin/events/'
+      preLoaderRoute: typeof OrgSlugAdminEventsIndexRouteImport
       parentRoute: typeof OrgSlugAdminRouteRoute
     }
     '/org/$slug/admin/crm/': {
@@ -1152,12 +1286,47 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrgSlugPollPollTokenRespondentTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/org/$slug/e/$eventSlug/requests': {
+      id: '/org/$slug/e/$eventSlug/requests'
+      path: '/requests'
+      fullPath: '/org/$slug/e/$eventSlug/requests'
+      preLoaderRoute: typeof OrgSlugEEventSlugRequestsRouteImport
+      parentRoute: typeof OrgSlugEEventSlugRouteRoute
+    }
+    '/org/$slug/e/$eventSlug/profile': {
+      id: '/org/$slug/e/$eventSlug/profile'
+      path: '/profile'
+      fullPath: '/org/$slug/e/$eventSlug/profile'
+      preLoaderRoute: typeof OrgSlugEEventSlugProfileRouteImport
+      parentRoute: typeof OrgSlugEEventSlugRouteRoute
+    }
+    '/org/$slug/e/$eventSlug/meeting': {
+      id: '/org/$slug/e/$eventSlug/meeting'
+      path: '/meeting'
+      fullPath: '/org/$slug/e/$eventSlug/meeting'
+      preLoaderRoute: typeof OrgSlugEEventSlugMeetingRouteImport
+      parentRoute: typeof OrgSlugEEventSlugRouteRoute
+    }
     '/org/$slug/admin/members/$userId': {
       id: '/org/$slug/admin/members/$userId'
       path: '/members/$userId'
       fullPath: '/org/$slug/admin/members/$userId'
       preLoaderRoute: typeof OrgSlugAdminMembersUserIdRouteImport
       parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/admin/events/$eventId': {
+      id: '/org/$slug/admin/events/$eventId'
+      path: '/events/$eventId'
+      fullPath: '/org/$slug/admin/events/$eventId'
+      preLoaderRoute: typeof OrgSlugAdminEventsEventIdRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/e/$eventSlug/people/': {
+      id: '/org/$slug/e/$eventSlug/people/'
+      path: '/people'
+      fullPath: '/org/$slug/e/$eventSlug/people/'
+      preLoaderRoute: typeof OrgSlugEEventSlugPeopleIndexRouteImport
+      parentRoute: typeof OrgSlugEEventSlugRouteRoute
     }
     '/org/$slug/admin/programs/$programId/': {
       id: '/org/$slug/admin/programs/$programId/'
@@ -1172,6 +1341,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/org/$slug/admin/opportunities/$oppId/'
       preLoaderRoute: typeof OrgSlugAdminOpportunitiesOppIdIndexRouteImport
       parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/e/$eventSlug/people/$userId': {
+      id: '/org/$slug/e/$eventSlug/people/$userId'
+      path: '/people/$userId'
+      fullPath: '/org/$slug/e/$eventSlug/people/$userId'
+      preLoaderRoute: typeof OrgSlugEEventSlugPeopleUserIdRouteImport
+      parentRoute: typeof OrgSlugEEventSlugRouteRoute
     }
     '/org/$slug/admin/programs/$programId/session-runner': {
       id: '/org/$slug/admin/programs/$programId/session-runner'
@@ -1275,9 +1451,11 @@ interface OrgSlugAdminRouteRouteChildren {
   OrgSlugAdminSetupRoute: typeof OrgSlugAdminSetupRoute
   OrgSlugAdminSpaceRoute: typeof OrgSlugAdminSpaceRoute
   OrgSlugAdminIndexRoute: typeof OrgSlugAdminIndexRoute
+  OrgSlugAdminEventsEventIdRoute: typeof OrgSlugAdminEventsEventIdRoute
   OrgSlugAdminMembersUserIdRoute: typeof OrgSlugAdminMembersUserIdRoute
   OrgSlugAdminApplicationsIndexRoute: typeof OrgSlugAdminApplicationsIndexRoute
   OrgSlugAdminCrmIndexRoute: typeof OrgSlugAdminCrmIndexRoute
+  OrgSlugAdminEventsIndexRoute: typeof OrgSlugAdminEventsIndexRoute
   OrgSlugAdminMembersIndexRoute: typeof OrgSlugAdminMembersIndexRoute
   OrgSlugAdminOpportunitiesIndexRoute: typeof OrgSlugAdminOpportunitiesIndexRoute
   OrgSlugAdminProgramsIndexRoute: typeof OrgSlugAdminProgramsIndexRoute
@@ -1294,9 +1472,11 @@ const OrgSlugAdminRouteRouteChildren: OrgSlugAdminRouteRouteChildren = {
   OrgSlugAdminSetupRoute: OrgSlugAdminSetupRoute,
   OrgSlugAdminSpaceRoute: OrgSlugAdminSpaceRoute,
   OrgSlugAdminIndexRoute: OrgSlugAdminIndexRoute,
+  OrgSlugAdminEventsEventIdRoute: OrgSlugAdminEventsEventIdRoute,
   OrgSlugAdminMembersUserIdRoute: OrgSlugAdminMembersUserIdRoute,
   OrgSlugAdminApplicationsIndexRoute: OrgSlugAdminApplicationsIndexRoute,
   OrgSlugAdminCrmIndexRoute: OrgSlugAdminCrmIndexRoute,
+  OrgSlugAdminEventsIndexRoute: OrgSlugAdminEventsIndexRoute,
   OrgSlugAdminMembersIndexRoute: OrgSlugAdminMembersIndexRoute,
   OrgSlugAdminOpportunitiesIndexRoute: OrgSlugAdminOpportunitiesIndexRoute,
   OrgSlugAdminProgramsIndexRoute: OrgSlugAdminProgramsIndexRoute,
@@ -1312,6 +1492,30 @@ const OrgSlugAdminRouteRouteChildren: OrgSlugAdminRouteRouteChildren = {
 
 const OrgSlugAdminRouteRouteWithChildren =
   OrgSlugAdminRouteRoute._addFileChildren(OrgSlugAdminRouteRouteChildren)
+
+interface OrgSlugEEventSlugRouteRouteChildren {
+  OrgSlugEEventSlugMeetingRoute: typeof OrgSlugEEventSlugMeetingRoute
+  OrgSlugEEventSlugProfileRoute: typeof OrgSlugEEventSlugProfileRoute
+  OrgSlugEEventSlugRequestsRoute: typeof OrgSlugEEventSlugRequestsRoute
+  OrgSlugEEventSlugIndexRoute: typeof OrgSlugEEventSlugIndexRoute
+  OrgSlugEEventSlugPeopleUserIdRoute: typeof OrgSlugEEventSlugPeopleUserIdRoute
+  OrgSlugEEventSlugPeopleIndexRoute: typeof OrgSlugEEventSlugPeopleIndexRoute
+}
+
+const OrgSlugEEventSlugRouteRouteChildren: OrgSlugEEventSlugRouteRouteChildren =
+  {
+    OrgSlugEEventSlugMeetingRoute: OrgSlugEEventSlugMeetingRoute,
+    OrgSlugEEventSlugProfileRoute: OrgSlugEEventSlugProfileRoute,
+    OrgSlugEEventSlugRequestsRoute: OrgSlugEEventSlugRequestsRoute,
+    OrgSlugEEventSlugIndexRoute: OrgSlugEEventSlugIndexRoute,
+    OrgSlugEEventSlugPeopleUserIdRoute: OrgSlugEEventSlugPeopleUserIdRoute,
+    OrgSlugEEventSlugPeopleIndexRoute: OrgSlugEEventSlugPeopleIndexRoute,
+  }
+
+const OrgSlugEEventSlugRouteRouteWithChildren =
+  OrgSlugEEventSlugRouteRoute._addFileChildren(
+    OrgSlugEEventSlugRouteRouteChildren,
+  )
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -1336,6 +1540,7 @@ const rootRouteChildren: RootRouteChildren = {
   OrgSlugProgramsRoute: OrgSlugProgramsRoute,
   OrgSlugVisitRoute: OrgSlugVisitRoute,
   OrgSlugIndexRoute: OrgSlugIndexRoute,
+  OrgSlugEEventSlugRouteRoute: OrgSlugEEventSlugRouteRouteWithChildren,
   OrgSlugApplyOpportunityIdRoute: OrgSlugApplyOpportunityIdRoute,
   OrgSlugProgramProgramSlugRoute: OrgSlugProgramProgramSlugRoute,
   OrgSlugSpaceBookingsRoute: OrgSlugSpaceBookingsRoute,

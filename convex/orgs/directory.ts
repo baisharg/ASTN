@@ -1,5 +1,6 @@
 import { v } from 'convex/values'
 import { query } from '../_generated/server'
+import { getUserId } from '../lib/auth'
 
 // Get organization by slug
 export const getOrgBySlug = query({
@@ -19,15 +20,28 @@ export const getOrgBySlug = query({
       if (url) logoUrl = url
     }
 
-    return { ...org, logoUrl }
+    // Never send the stored Luma key to the client.
+    const { lumaApiKey: _lumaApiKey, ...publicOrg } = org
+    return { ...publicOrg, logoUrl }
   },
 })
 
-// Get visible members for an organization's public directory
+// Get visible members for an organization's directory. Only members of the
+// org can see it; everyone else gets an empty list.
 export const getVisibleMembers = query({
   args: { orgId: v.id('organizations') },
   returns: v.any(),
   handler: async (ctx, { orgId }) => {
+    const viewerId = await getUserId(ctx)
+    if (!viewerId) return []
+    const viewerMembership = await ctx.db
+      .query('orgMemberships')
+      .withIndex('by_user_and_org', (q) =>
+        q.eq('userId', viewerId).eq('orgId', orgId),
+      )
+      .first()
+    if (!viewerMembership) return []
+
     // Get all memberships with visible directory visibility
     const memberships = await ctx.db
       .query('orgMemberships')

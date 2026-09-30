@@ -87,6 +87,7 @@ export interface ProfileData {
   workHistory?: Array<{ title: string; organization: string }>
   education?: Array<{ degree?: string; field?: string; institution: string }>
   seeking?: string
+  canHelpWith?: string
   enrichmentSummary?: string
   matchPreferences?: {
     remotePreference?: string
@@ -141,6 +142,8 @@ export function buildProfileContext(profile: ProfileData): string {
     contextParts.push(`Education: ${eduSummary}`)
   }
   if (profile.seeking) contextParts.push(`Seeking: ${profile.seeking}`)
+  if (profile.canHelpWith)
+    contextParts.push(`Can help others with: ${profile.canHelpWith}`)
   if (profile.matchPreferences) {
     const prefs = profile.matchPreferences
     const prefParts: Array<string> = []
