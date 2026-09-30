@@ -68,7 +68,8 @@ export async function liveCount(
   }
 }
 
-// Increment or decrement the per-org CRM count aggregate. `.collect()`
+// Increment or decrement the per-org CRM count aggregate. Call it after the
+// insert or delete it records (see the seeding branch). `.collect()`
 // (instead of `.unique()`) tolerates OCC races on the first-ever write —
 // two concurrent inserts may both see no existing row and each create one;
 // the next call collapses any duplicates into the first. Math.max(0, …)
@@ -84,12 +85,12 @@ export async function bumpCount(
     .withIndex('by_orgId', (q) => q.eq('orgId', orgId))
     .collect()
   if (rows.length === 0) {
-    // Seed the row from a live count of all four tables before applying the
-    // delta — without this, a pre-backfill org with existing data would land
-    // at `{contacts: 1, organizations: 0, …}` after the first write and
-    // silently report wrong totals until the manual backfill runs.
+    // Seed the row from a live count of all four tables — without this, a
+    // pre-backfill org with existing data would land at `{contacts: 1,
+    // organizations: 0, …}` after the first write. Every caller bumps after
+    // its insert or delete, and the live count reads this transaction's own
+    // writes, so the change is already counted: don't apply the delta again.
     const seed = await liveCount(ctx, orgId)
-    seed[field] = Math.max(0, seed[field] + delta)
     await ctx.db.insert('crmCounts', { orgId, ...seed })
     return
   }

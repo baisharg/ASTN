@@ -87,23 +87,26 @@ export const mcpHandler = httpAction(async (ctx, request) => {
         serverInfo: {
           name: 'astn',
           title: 'ASTN',
-          version: '0.4.0',
+          version: '0.5.0',
         },
         instructions:
           'Manage an ASTN organization: members, opportunities, applications, ' +
           'programs (modules/sessions/participants), feedback surveys, ' +
-          'availability polls, co-working spaces/bookings, events, member ' +
-          'engagement, and the CRM (contacts/organizations/opportunities/' +
-          'submissions). Start with list_my_orgs for your org slug, ' +
-          'astn_resources to discover the data model, and astn_stats for an ' +
-          'overview. Generic verbs astn_list/get/create/update/delete take a ' +
-          '`resource`; survey_results and availability_heatmap return ' +
-          'aggregated data. All access is scoped to orgs where the signed-in ' +
-          'user is an admin. Reads cover the whole org; writes are limited to ' +
-          'safe changes. Application status (accepted/rejected/waitlisted/…) ' +
-          'can be set via astn_update — it records the decision in ASTN without ' +
-          'emailing the applicant. Sending emails/broadcasts, membership ' +
-          'changes and publishing/finalizing are not exposed yet.',
+          'availability polls, co-working spaces/bookings, member engagement, ' +
+          'the CRM (contacts/organizations with per-org configurable fields, ' +
+          "opportunities, submissions), each person's history " +
+          '(crm_activities, crm_person) and the Luma events mirror with ' +
+          'attendance (events, event_attendance). Start with list_my_orgs for ' +
+          'your org slug, astn_resources to discover the data model (pass org ' +
+          'for CRM fields), and astn_stats for an overview. Generic verbs ' +
+          'astn_list/get/create/update/delete take a `resource`; crm_person, ' +
+          'event_attendance, survey_results and availability_heatmap return ' +
+          'joined or aggregated data. All access is scoped to orgs where the ' +
+          'signed-in user is an admin. Reads cover the whole org; writes are ' +
+          'limited to reversible changes. Application status can be set via ' +
+          'astn_update — it records the decision in ASTN without emailing the ' +
+          'applicant. Sending emails/broadcasts, any Luma write, membership ' +
+          'changes and publishing/finalizing are not exposed.',
       })
     }
     case 'ping':
