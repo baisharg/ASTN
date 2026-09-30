@@ -88,8 +88,13 @@ export default defineConfig({
     }),
     sentryTanstackStart({
       org: 'baish',
-      project: 'javascript-tanstackstart-react',
+      // The project's slug (its display name is javascript-tanstackstart-react)
+      project: 'safetytalentorg',
       authToken: process.env.SENTRY_AUTH_TOKEN,
+      // A Sentry problem (outage, expired token) must not block a deploy.
+      errorHandler: (error) => {
+        console.warn('[sentry] source map upload failed:', error.message)
+      },
       telemetry: false,
       sourcemaps: {
         filesToDeleteAfterUpload: ['**/*.map'],
