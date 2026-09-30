@@ -19,10 +19,16 @@ export type LumaGuest = {
   id: string
   user_email: string
   user_name: string | null
+  user_first_name?: string | null
+  user_last_name?: string | null
   approval_status: LumaApprovalStatus
   registered_at: string | null
+  // What the guest's Luma ticket QR encodes (a luma.com/check-in/... URL).
+  check_in_qr_code?: string
   event_tickets?: Array<{ checked_in_at: string | null }>
 }
+
+export type LumaVisibility = 'public' | 'members-only' | 'private'
 
 export type LumaEvent = {
   id: string
@@ -31,8 +37,25 @@ export type LumaEvent = {
   start_at: string
   end_at: string | null
   timezone: string
+  calendar_id?: string
   description?: string
-  geo_address_json?: { address?: string; full_address?: string | null } | null
+  description_md?: string
+  cover_url?: string | null
+  visibility?: LumaVisibility
+  location_type?: string
+  meeting_url?: string | null
+  require_approval?: boolean
+  max_capacity?: number | null
+  registration_open?: boolean
+  platform?: 'luma' | 'external'
+  // "manage" for events the calendar runs, "view" for events only listed
+  // on it (their guests and settings aren't ours).
+  access?: 'manage' | 'view'
+  geo_address_json?: {
+    address?: string
+    full_address?: string | null
+    city?: string | null
+  } | null
 }
 
 export class LumaApiError extends Error {
@@ -52,7 +75,7 @@ async function lumaRequest<T>(
   path: string,
   init: {
     method: 'GET' | 'POST'
-    query?: Record<string, string | undefined>
+    query?: Record<string, string | Array<string> | undefined>
     body?: unknown
   },
 ): Promise<T> {
@@ -61,7 +84,11 @@ async function lumaRequest<T>(
 
   const url = new URL(path, LUMA_API_BASE)
   for (const [key, value] of Object.entries(init.query ?? {})) {
-    if (value !== undefined) url.searchParams.set(key, value)
+    if (Array.isArray(value)) {
+      for (const item of value) url.searchParams.append(key, item)
+    } else if (value !== undefined) {
+      url.searchParams.set(key, value)
+    }
   }
 
   const response = await fetch(url, {
@@ -82,6 +109,199 @@ async function lumaRequest<T>(
     )
   }
   return (await response.json()) as T
+}
+
+export function isLumaRateLimited(error: unknown): boolean {
+  return error instanceof LumaApiError && error.status === 429
+}
+
+export type LumaCalendar = { id: string; slug: string | null; name: string }
+
+/** The calendar the API key belongs to. */
+export async function getLumaCalendar(): Promise<LumaCalendar> {
+  const data = await lumaRequest<{
+    id?: string
+    api_id?: string
+    slug?: string | null
+    name?: string
+    calendar?: { id?: string; api_id?: string; slug?: string; name?: string }
+  }>('/v1/calendars/get', { method: 'GET' })
+  const cal = data.calendar ?? data
+  const id = cal.id ?? cal.api_id
+  if (!id) throw new LumaApiError('Luma returned no calendar id', 0)
+  return { id, slug: cal.slug ?? null, name: cal.name ?? '' }
+}
+
+/**
+ * Every event the calendar manages, oldest first, following pagination.
+ * `after` limits it to events starting after that time.
+ */
+export async function listLumaCalendarEvents(options?: {
+  after?: number
+}): Promise<Array<LumaEvent>> {
+  const events: Array<LumaEvent> = []
+  let cursor: string | undefined
+  for (let page = 0; page < 100; page++) {
+    const data = await lumaRequest<{
+      entries: Array<LumaEvent & { event?: LumaEvent }>
+      has_more: boolean
+      next_cursor?: string
+    }>('/v1/calendars/events/list', {
+      method: 'GET',
+      query: {
+        pagination_limit: '50',
+        pagination_cursor: cursor,
+        sort_column: 'start_at',
+        sort_direction: 'asc',
+        access: ['manage', 'view'],
+        platforms: ['luma', 'external'],
+        after:
+          options?.after !== undefined
+            ? new Date(options.after).toISOString()
+            : undefined,
+      },
+    })
+    // Older API versions wrapped each entry in `event`.
+    events.push(...data.entries.map((e) => e.event ?? e))
+    if (!data.has_more || !data.next_cursor) return events
+    cursor = data.next_cursor
+  }
+  throw new LumaApiError('Luma event list did not end after 100 pages', 0)
+}
+
+export type LumaEventInput = {
+  name?: string
+  start_at?: string
+  end_at?: string
+  timezone?: string
+  description_md?: string
+  geo_address_json?: { type: 'manual'; address: string }
+  visibility?: LumaVisibility
+  max_capacity?: number | null
+}
+
+/** Create an event on the calendar. Returns its id. */
+export async function createLumaEvent(
+  input: LumaEventInput & {
+    name: string
+    start_at: string
+    timezone: string
+    requireApproval: boolean
+  },
+): Promise<string> {
+  const { requireApproval, ...body } = input
+  const data = await lumaRequest<{ id?: string; api_id?: string }>(
+    '/v1/events/create',
+    {
+      method: 'POST',
+      body: {
+        ...body,
+        // Approval is a ticket setting; replace the default ticket with a
+        // free one that has it on.
+        ...(requireApproval
+          ? {
+              ticket_types: [
+                { name: 'General', type: 'free', require_approval: true },
+              ],
+            }
+          : {}),
+      },
+    },
+  )
+  const id = data.id ?? data.api_id
+  if (!id) throw new LumaApiError('Luma returned no event id', 0)
+  return id
+}
+
+export async function updateLumaEvent(
+  eventId: string,
+  input: LumaEventInput & { suppress_email?: boolean },
+): Promise<void> {
+  await lumaRequest('/v1/events/update', {
+    method: 'POST',
+    body: { event_id: eventId, ...input },
+  })
+}
+
+/** Turn approval on or off for every visible ticket type of an event. */
+export async function setLumaRequireApproval(
+  eventId: string,
+  requireApproval: boolean,
+): Promise<void> {
+  const data = await lumaRequest<{
+    entries: Array<{
+      id: string
+      is_hidden?: boolean
+      require_approval?: boolean
+    }>
+  }>('/v1/events/ticket-types/list', {
+    method: 'GET',
+    query: { event_id: eventId },
+  })
+  for (const ticket of data.entries) {
+    if (ticket.is_hidden) continue
+    if ((ticket.require_approval ?? false) === requireApproval) continue
+    await lumaRequest('/v1/events/ticket-types/update', {
+      method: 'POST',
+      body: {
+        event_ticket_type_id: ticket.id,
+        require_approval: requireApproval,
+      },
+    })
+  }
+}
+
+export type LumaBlastRecipientStatus =
+  | 'approved'
+  | 'checked_in'
+  | 'pending_approval'
+  | 'waitlist'
+  | 'invited'
+
+export type LumaBlast = {
+  id: string
+  subject: string | null
+  content_md: string
+  status: 'scheduled' | 'sent' | 'quarantined'
+  scheduled_for: string | null
+  sent_at: string | null
+  recipient_groups: Array<{ status: string }>
+  recipient_count: number
+  email_open_count: number
+  sender?: { type: string; name: string | null } | null
+}
+
+export async function listLumaBlasts(
+  eventId: string,
+): Promise<Array<LumaBlast>> {
+  const data = await lumaRequest<{ entries: Array<LumaBlast> }>(
+    '/v1/events/blasts/list',
+    { method: 'GET', query: { event_id: eventId } },
+  )
+  return data.entries
+}
+
+/** Email the event's guests, now or at `scheduledFor`. Can't be recalled. */
+export async function createLumaBlast(args: {
+  eventId: string
+  subject?: string
+  contentMd: string
+  recipients: Array<LumaBlastRecipientStatus>
+  scheduledFor?: number
+}): Promise<LumaBlast> {
+  return await lumaRequest<LumaBlast>('/v1/events/blasts/create', {
+    method: 'POST',
+    body: {
+      event_id: args.eventId,
+      subject: args.subject || undefined,
+      content_md: args.contentMd,
+      recipient_groups: args.recipients.map((status) => ({ status })),
+      scheduled_for:
+        args.scheduledFor !== undefined
+          ? new Date(args.scheduledFor).toISOString()
+          : undefined,
+    },
+  })
 }
 
 export async function getLumaEvent(eventId: string): Promise<LumaEvent> {
@@ -171,10 +391,14 @@ export async function listAllLumaGuests(
       },
     })
     guests.push(...data.entries)
-    if (!data.has_more || !data.next_cursor) break
+    if (!data.has_more || !data.next_cursor) return guests
     cursor = data.next_cursor
   }
-  return guests
+  // Treating a cut-off list as complete would drop the rest of the guests.
+  throw new LumaApiError(
+    `Luma guest list for ${eventId} has more than 50 pages; not read`,
+    0,
+  )
 }
 
 export type LumaContact = {

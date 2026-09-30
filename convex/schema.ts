@@ -758,10 +758,40 @@ export default defineSchema({
 
     // Metadata
     syncedAt: v.number(),
+
+    // ── Luma: official API mirror (convex/luma/) ──
+    // "public" | "members-only" | "private". Missing on rows from the old
+    // public-endpoint sync, which only ever saw public events.
+    visibility: v.optional(v.string()),
+    // "manage": the calendar runs it (guests, edits, blasts). "view": only
+    // listed on the calendar, run by someone else.
+    lumaAccess: v.optional(v.string()),
+    canceled: v.optional(v.boolean()), // canceled or deleted in Luma
+    requireApproval: v.optional(v.boolean()),
+    maxCapacity: v.optional(v.number()),
+    // Guest counts from the last guest sync (approved includes checked in).
+    guestCount: v.optional(v.number()),
+    approvedCount: v.optional(v.number()),
+    pendingCount: v.optional(v.number()),
+    checkedInCount: v.optional(v.number()),
+    // The attendance sync picks up rows with guestSyncNeeded set.
+    guestSyncNeeded: v.optional(v.boolean()),
+    lastGuestSyncAt: v.optional(v.number()),
+    guestSyncError: v.optional(v.string()),
   })
     .index('by_org', ['orgId'])
     .index('by_org_start', ['orgId', 'startAt'])
-    .index('by_luma_id', ['lumaEventId']),
+    .index('by_luma_id', ['lumaEventId'])
+    // Luma: one mirror row per org and Luma event.
+    .index('by_orgId_and_lumaEventId', ['orgId', 'lumaEventId'])
+    // Cross-org time windows (attendance prompts, dashboard).
+    .index('by_startAt', ['startAt'])
+    .index('by_endAt', ['endAt'])
+    .index('by_org_and_guestSyncNeeded_and_startAt', [
+      'orgId',
+      'guestSyncNeeded',
+      'startAt',
+    ]),
 
   // Platform admins (super-admins who can approve/reject org applications)
   platformAdmins: defineTable({
@@ -2172,13 +2202,23 @@ export default defineSchema({
     checkedInAt: v.optional(v.number()),
     registeredAt: v.number(),
     updatedAt: v.number(),
+
+    // ── Luma: door check-in ──
+    // The guest's Luma ticket QR payload (check_in_qr_code).
+    lumaCheckInCode: v.optional(v.string()),
+    // Who set checkedInAt: Luma's own app, or the ASTN door page (which
+    // Luma never sees).
+    checkInSource: v.optional(v.union(v.literal('luma'), v.literal('astn'))),
+    checkedInBy: v.optional(v.string()),
   })
     .index('by_eventId_and_email', ['eventId', 'email'])
     .index('by_eventId_and_status', ['eventId', 'status'])
     .index('by_eventId_and_userId', ['eventId', 'userId'])
     .index('by_eventId_and_lumaSync', ['eventId', 'lumaSync'])
     .index('by_email', ['email'])
-    .index('by_userId', ['userId']),
+    .index('by_userId', ['userId'])
+    // Luma
+    .index('by_eventId_and_lumaCheckInCode', ['eventId', 'lumaCheckInCode']),
 
   // Whether an attendee is taking 1:1 requests right now. Kept apart from
   // the guest row because it changes often during the event.
@@ -2244,4 +2284,38 @@ export default defineSchema({
     topics: v.array(v.string()),
     generatedAt: v.number(),
   }).index('by_eventId_and_userId_and_rank', ['eventId', 'userId', 'rank']),
+
+  // ── Luma: official API mirror state, one row per org (convex/luma/) ──
+  lumaSyncState: defineTable({
+    orgId: v.id('organizations'),
+    calendarId: v.optional(v.string()), // "cal-..."
+    // Set once every calendar event has been listed and queued for its
+    // guest sync; after that the frequent sync only lists recent events.
+    historyDoneAt: v.optional(v.number()),
+    lastEventsSyncAt: v.optional(v.number()),
+    lastEventsSyncError: v.optional(v.string()),
+    // One guest-sync chain per org at a time. Stale after this time.
+    chainLockedUntil: v.optional(v.number()),
+    lastChainFinishedAt: v.optional(v.number()),
+    lastChainError: v.optional(v.string()),
+    // Running totals across all runs (for reporting).
+    totals: v.object({
+      eventsUpserted: v.number(),
+      eventsGuestSynced: v.number(),
+      guestsProcessed: v.number(),
+      contactsCreated: v.number(),
+      activitiesInserted: v.number(),
+      activitiesUpdated: v.number(),
+      activitiesDeleted: v.optional(v.number()),
+    }),
+    updatedAt: v.number(),
+  }).index('by_orgId', ['orgId']),
+
+  // ── Luma: which calendar LUMA_API_KEY belongs to (a single row, cached;
+  // refreshed by the sync). Only the org bound to it may use the key. ──
+  lumaApiCalendar: defineTable({
+    calendarId: v.string(),
+    slug: v.optional(v.string()),
+    checkedAt: v.number(),
+  }),
 })

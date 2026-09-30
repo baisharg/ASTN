@@ -88,9 +88,13 @@ export function TimezoneSelector({
   }, [])
 
   const selectedTimezone = timezones.find((tz) => tz.value === value)
+  // A stored zone may be an alias the browser doesn't list (Luma sends
+  // America/Buenos_Aires); show it as is rather than as empty.
   const displayValue = selectedTimezone
     ? `${selectedTimezone.label} (${selectedTimezone.offset})`
-    : 'Select timezone...'
+    : value
+      ? `${value.replace(/_/g, ' ')} (${getTimezoneOffset(value)})`
+      : 'Select timezone...'
 
   return (
     <Popover open={open} onOpenChange={setOpen}>

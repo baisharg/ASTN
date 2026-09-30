@@ -73,15 +73,18 @@ export const upsertContacts = internalMutation({
 
     for (const c of contacts) {
       const email = normalizeEmail(c.email)
-      // Attendance is Luma's to report, so it is always refreshed.
-      const fromLuma: Record<string, FieldValue> = {
-        lumaApproved: c.approved,
-        lumaCheckedIn: c.checkedIn,
-      }
+      // Tags are Luma's to report, so they are always refreshed.
+      const fromLuma: Record<string, FieldValue> = {}
       const tags = await value('lumaTags', c.tags)
       if (tags !== undefined) fromLuma.lumaTags = tags
       // These only fill gaps; never overwrite what someone wrote in the CRM.
-      const gaps: Record<string, FieldValue> = {}
+      // Attendance counts are kept by the per-event attendance sync
+      // (convex/luma/), which recomputes them from each person's history;
+      // Luma's contact totals only seed contacts it hasn't reached yet.
+      const gaps: Record<string, FieldValue> = {
+        lumaApproved: c.approved,
+        lumaCheckedIn: c.checkedIn,
+      }
       const source = await value('contactSource', 'Luma')
       if (source !== undefined) gaps.contactSource = source
       const firstSeen = await value('firstContact', c.firstSeen)

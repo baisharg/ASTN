@@ -1,11 +1,12 @@
-import { useConvex } from 'convex/react'
+import { useConvex, useQuery } from 'convex/react'
 import { Download, Loader2 } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
 import type { CrmCollection } from '../../../convex/lib/crmFields'
-import { CRM_FIELDS } from '../../../convex/lib/crmFields'
+import { CRM_FIELDS, withFieldDefs } from '../../../convex/lib/crmFields'
+import { neutralizeCsvFormula } from './fieldValues'
 import { Button } from '~/components/ui/button'
 import {
   DropdownMenu,
@@ -17,10 +18,10 @@ import {
 } from '~/components/ui/dropdown-menu'
 
 const COLLECTION_LABELS: Record<CrmCollection, string> = {
-  contacts: 'Contacts',
-  organizations: 'Organizations',
-  opportunities: 'Opportunities',
-  submissions: 'Submissions',
+  contacts: 'Contactos',
+  organizations: 'Organizaciones',
+  opportunities: 'Oportunidades',
+  submissions: 'Formularios',
 }
 
 const SHEET_NAMES: Record<CrmCollection, string> = {
@@ -31,6 +32,18 @@ const SHEET_NAMES: Record<CrmCollection, string> = {
 }
 
 type ExportData = Record<CrmCollection, Array<Record<string, any>>>
+type FieldDefs = Partial<
+  Record<CrmCollection, ReadonlyArray<{ key: string; label: string }>>
+>
+
+// Contacts and organizations keep configurable values in `fields`; lists
+// become comma-separated text and checkboxes Sí/No.
+function exportValue(row: Record<string, any>, key: string): unknown {
+  const value = row[key] ?? row.fields?.[key]
+  if (Array.isArray(value)) return value.join(', ')
+  if (typeof value === 'boolean') return value ? 'Sí' : 'No'
+  return value ?? ''
+}
 
 // Turn raw CRM rows into export objects keyed by human labels, so the file is
 // readable and round-trips back through the import dialog's alias matching.
@@ -39,8 +52,9 @@ type ExportData = Record<CrmCollection, Array<Record<string, any>>>
 function toExportRows(
   collection: CrmCollection,
   rows: Array<Record<string, any>>,
+  defs: FieldDefs,
 ): Array<Record<string, any>> {
-  const fields = CRM_FIELDS[collection]
+  const fields = withFieldDefs(CRM_FIELDS[collection], defs[collection] ?? [])
 
   if (collection === 'submissions') {
     return rows.map((row) => {
@@ -54,7 +68,22 @@ function toExportRows(
 
   return rows.map((row) => {
     const out: Record<string, any> = {}
-    for (const f of fields) out[f.label] = row[f.key] ?? ''
+    for (const f of fields) out[f.label] = exportValue(row, f.key)
+    return out
+  })
+}
+
+// CSV only: headers and text cells can't start a formula. (In .xlsx, text
+// cells stay text, so the workbook export doesn't need this.)
+function csvSafeRows(
+  rows: Array<Record<string, any>>,
+): Array<Record<string, any>> {
+  return rows.map((row) => {
+    const out: Record<string, any> = {}
+    for (const [key, value] of Object.entries(row)) {
+      out[neutralizeCsvFormula(key)] =
+        typeof value === 'string' ? neutralizeCsvFormula(value) : value
+    }
     return out
   })
 }
@@ -83,6 +112,21 @@ export function CrmExportMenu({
 }: CrmExportMenuProps) {
   const convex = useConvex()
   const [busy, setBusy] = useState(false)
+  const contactDefs = useQuery(api.contacts.records.listFields, {
+    orgId,
+    collection: 'contacts',
+  })
+  const organizationDefs = useQuery(api.contacts.records.listFields, {
+    orgId,
+    collection: 'organizations',
+  })
+  const defs = useMemo<FieldDefs>(
+    () => ({
+      contacts: contactDefs ?? [],
+      organizations: organizationDefs ?? [],
+    }),
+    [contactDefs, organizationDefs],
+  )
 
   const fetchAll = useCallback(
     () => convex.query(api.crm.exportAll, { orgId }) as Promise<ExportData>,
@@ -93,8 +137,12 @@ export function CrmExportMenu({
     setBusy(true)
     try {
       const all = await fetchAll()
-      const rows = toExportRows(activeCollection, all[activeCollection] ?? [])
-      const ws = XLSX.utils.json_to_sheet(rows)
+      const rows = toExportRows(
+        activeCollection,
+        all[activeCollection] ?? [],
+        defs,
+      )
+      const ws = XLSX.utils.json_to_sheet(csvSafeRows(rows))
       const csv = XLSX.utils.sheet_to_csv(ws)
       // Prepend a BOM so Excel opens accented UTF-8 columns correctly.
       const blob = new Blob(['﻿' + csv], {
@@ -104,7 +152,7 @@ export function CrmExportMenu({
     } finally {
       setBusy(false)
     }
-  }, [fetchAll, activeCollection, orgSlug])
+  }, [fetchAll, activeCollection, orgSlug, defs])
 
   const exportXlsx = useCallback(async () => {
     setBusy(true)
@@ -114,7 +162,7 @@ export function CrmExportMenu({
       for (const collection of Object.keys(
         SHEET_NAMES,
       ) as Array<CrmCollection>) {
-        const rows = toExportRows(collection, all[collection] ?? [])
+        const rows = toExportRows(collection, all[collection] ?? [], defs)
         const ws = XLSX.utils.json_to_sheet(rows)
         XLSX.utils.book_append_sheet(wb, ws, SHEET_NAMES[collection])
       }
@@ -126,7 +174,7 @@ export function CrmExportMenu({
     } finally {
       setBusy(false)
     }
-  }, [fetchAll, orgSlug])
+  }, [fetchAll, orgSlug, defs])
 
   return (
     <DropdownMenu>
@@ -137,17 +185,17 @@ export function CrmExportMenu({
           ) : (
             <Download className="size-4 mr-2" />
           )}
-          Export
+          Exportar
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuLabel>Download</DropdownMenuLabel>
+        <DropdownMenuLabel>Descargar</DropdownMenuLabel>
         <DropdownMenuItem onClick={exportCsv}>
-          {COLLECTION_LABELS[activeCollection]} as CSV
+          {COLLECTION_LABELS[activeCollection]} (todos, CSV)
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={exportXlsx}>
-          All collections as Excel (.xlsx)
+          Todo el CRM en Excel (.xlsx)
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

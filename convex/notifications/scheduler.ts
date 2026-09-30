@@ -1,6 +1,7 @@
 import { v } from 'convex/values'
 import { internal } from '../_generated/api'
 import { internalMutation } from '../_generated/server'
+import { isPublicEvent } from '../events/queries'
 
 const ONE_WEEK = 7 * 24 * 60 * 60 * 1000
 const ONE_DAY = 24 * 60 * 60 * 1000
@@ -14,7 +15,7 @@ export const scheduleRemindersForViewInternal = internalMutation({
   args: { eventId: v.id('events'), userId: v.string() },
   handler: async (ctx, { eventId, userId }) => {
     const event = await ctx.db.get('events', eventId)
-    if (!event) return
+    if (!event || !isPublicEvent(event)) return
 
     const profile = await ctx.db
       .query('profiles')
@@ -94,6 +95,19 @@ export const sendReminder = internalMutation({
   handler: async (ctx, { eventId, userId, timing }) => {
     const event = await ctx.db.get('events', eventId)
     if (!event) return // Event deleted
+
+    // Canceled or made private in Luma since the reminder was scheduled.
+    if (!isPublicEvent(event)) {
+      const stale = await ctx.db
+        .query('scheduledReminders')
+        .withIndex('by_user_event', (q) =>
+          q.eq('userId', userId).eq('eventId', eventId),
+        )
+        .filter((q) => q.eq(q.field('timing'), timing))
+        .first()
+      if (stale) await ctx.db.delete('scheduledReminders', stale._id)
+      return
+    }
 
     const org = await ctx.db.get('organizations', event.orgId)
 

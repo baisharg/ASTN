@@ -10,6 +10,7 @@ import {
   EventDetailsFields,
   useEventDetailsForm,
 } from '~/components/social-admin/EventDetailsFields'
+import { LumaCalendarSection } from '~/components/social-admin/LumaCalendarSection'
 import {
   EventStatusBadge,
   OrgAdminGate,
@@ -158,6 +159,8 @@ function AdminEventsPage({
             ))}
           </ul>
         )}
+
+        <LumaCalendarSection orgId={org._id} slug={slug} />
 
         <CreateEventDialog
           open={dialogOpen}

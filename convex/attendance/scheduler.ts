@@ -77,16 +77,27 @@ export const schedulePostEventPrompts = internalMutation({
     const windowStart = now - 20 * 60 * 1000 // 20 minutes ago
     const windowEnd = now - TEN_MINUTES // 10 minutes ago
 
-    // Get all events to check (we need to filter by endAt)
-    // Since we don't have an index on endAt, query by org and filter
-    const allEvents = await ctx.db.query('events').collect()
-
-    // Filter to events that ended in our window
-    const endedEvents = allEvents.filter((event) => {
-      // Default to startAt + 2 hours if endAt is missing
-      const endAt = event.endAt ?? event.startAt + 2 * ONE_HOUR
-      return endAt >= windowStart && endAt < windowEnd
-    })
+    // Events that ended in the window: by endAt, and (for events without
+    // one) by startAt + 2h. Both through indexes, bounded.
+    const withEnd = await ctx.db
+      .query('events')
+      .withIndex('by_endAt', (q) =>
+        q.gte('endAt', windowStart).lt('endAt', windowEnd),
+      )
+      .take(200)
+    const withoutEnd = (
+      await ctx.db
+        .query('events')
+        .withIndex('by_startAt', (q) =>
+          q
+            .gte('startAt', windowStart - 2 * ONE_HOUR)
+            .lt('startAt', windowEnd - 2 * ONE_HOUR),
+        )
+        .take(200)
+    ).filter((event) => event.endAt === undefined)
+    const endedEvents = [...withEnd, ...withoutEnd].filter(
+      (event) => !event.canceled,
+    )
 
     for (const event of endedEvents) {
       // Get users who viewed this event

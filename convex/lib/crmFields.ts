@@ -247,3 +247,26 @@ export function suggestFieldKey(
   }
   return null
 }
+
+/**
+ * Add an org's configurable field definitions (crmFieldDefs) to the static
+ * registry as import targets. Known keys gain the definition's label as an
+ * alias; custom and Airtable fields are appended. The insert mutations route
+ * any non-core key into the record's `fields` bag.
+ */
+export function withFieldDefs(
+  base: Array<CrmFieldDef>,
+  defs: ReadonlyArray<{ key: string; label: string }>,
+): Array<CrmFieldDef> {
+  const byKey = new Map(base.map((f) => [f.key, f]))
+  const extra: Array<CrmFieldDef> = []
+  for (const def of defs) {
+    const known = byKey.get(def.key)
+    if (known) {
+      byKey.set(def.key, { ...known, aliases: [...known.aliases, def.label] })
+    } else {
+      extra.push({ key: def.key, label: def.label, aliases: [def.label] })
+    }
+  }
+  return [...base.map((f) => byKey.get(f.key) ?? f), ...extra]
+}

@@ -77,6 +77,9 @@ import { Route as OrgSlugAdminOpportunitiesOppIdIndexRouteImport } from './route
 import { Route as OrgSlugEEventSlugPeopleUserIdRouteImport } from './routes/org/$slug/e/$eventSlug/people/$userId'
 import { Route as OrgSlugAdminProgramsProgramIdSessionRunnerRouteImport } from './routes/org/$slug/admin/programs/$programId/session-runner'
 import { Route as OrgSlugAdminOpportunitiesOppIdEmailRouteImport } from './routes/org/$slug/admin/opportunities/$oppId/email'
+import { Route as OrgSlugAdminEventsLumaLumaEventIdRouteImport } from './routes/org/$slug/admin/events/luma.$lumaEventId'
+import { Route as OrgSlugAdminEventsEventIdCheckinRouteImport } from './routes/org/$slug/admin/events/$eventId_.checkin'
+import { Route as OrgSlugAdminCrmPeopleContactIdRouteImport } from './routes/org/$slug/admin/crm/people/$contactId'
 
 const TermsRoute = TermsRouteImport.update({
   id: '/terms',
@@ -440,6 +443,24 @@ const OrgSlugAdminOpportunitiesOppIdEmailRoute =
     path: '/opportunities/$oppId/email',
     getParentRoute: () => OrgSlugAdminRouteRoute,
   } as any)
+const OrgSlugAdminEventsLumaLumaEventIdRoute =
+  OrgSlugAdminEventsLumaLumaEventIdRouteImport.update({
+    id: '/events/luma/$lumaEventId',
+    path: '/events/luma/$lumaEventId',
+    getParentRoute: () => OrgSlugAdminRouteRoute,
+  } as any)
+const OrgSlugAdminEventsEventIdCheckinRoute =
+  OrgSlugAdminEventsEventIdCheckinRouteImport.update({
+    id: '/events/$eventId_/checkin',
+    path: '/events/$eventId/checkin',
+    getParentRoute: () => OrgSlugAdminRouteRoute,
+  } as any)
+const OrgSlugAdminCrmPeopleContactIdRoute =
+  OrgSlugAdminCrmPeopleContactIdRouteImport.update({
+    id: '/crm/people/$contactId',
+    path: '/crm/people/$contactId',
+    getParentRoute: () => OrgSlugAdminRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -504,6 +525,9 @@ export interface FileRoutesByFullPath {
   '/org/$slug/e/$eventSlug/': typeof OrgSlugEEventSlugIndexRoute
   '/org/$slug/poll/$pollToken/': typeof OrgSlugPollPollTokenIndexRoute
   '/org/$slug/survey/$surveyToken/': typeof OrgSlugSurveySurveyTokenIndexRoute
+  '/org/$slug/admin/crm/people/$contactId': typeof OrgSlugAdminCrmPeopleContactIdRoute
+  '/org/$slug/admin/events/$eventId/checkin': typeof OrgSlugAdminEventsEventIdCheckinRoute
+  '/org/$slug/admin/events/luma/$lumaEventId': typeof OrgSlugAdminEventsLumaLumaEventIdRoute
   '/org/$slug/admin/opportunities/$oppId/email': typeof OrgSlugAdminOpportunitiesOppIdEmailRoute
   '/org/$slug/admin/programs/$programId/session-runner': typeof OrgSlugAdminProgramsProgramIdSessionRunnerRoute
   '/org/$slug/e/$eventSlug/people/$userId': typeof OrgSlugEEventSlugPeopleUserIdRoute
@@ -567,6 +591,9 @@ export interface FileRoutesByTo {
   '/org/$slug/e/$eventSlug': typeof OrgSlugEEventSlugIndexRoute
   '/org/$slug/poll/$pollToken': typeof OrgSlugPollPollTokenIndexRoute
   '/org/$slug/survey/$surveyToken': typeof OrgSlugSurveySurveyTokenIndexRoute
+  '/org/$slug/admin/crm/people/$contactId': typeof OrgSlugAdminCrmPeopleContactIdRoute
+  '/org/$slug/admin/events/$eventId/checkin': typeof OrgSlugAdminEventsEventIdCheckinRoute
+  '/org/$slug/admin/events/luma/$lumaEventId': typeof OrgSlugAdminEventsLumaLumaEventIdRoute
   '/org/$slug/admin/opportunities/$oppId/email': typeof OrgSlugAdminOpportunitiesOppIdEmailRoute
   '/org/$slug/admin/programs/$programId/session-runner': typeof OrgSlugAdminProgramsProgramIdSessionRunnerRoute
   '/org/$slug/e/$eventSlug/people/$userId': typeof OrgSlugEEventSlugPeopleUserIdRoute
@@ -638,6 +665,9 @@ export interface FileRoutesById {
   '/org/$slug/e/$eventSlug/': typeof OrgSlugEEventSlugIndexRoute
   '/org/$slug/poll/$pollToken/': typeof OrgSlugPollPollTokenIndexRoute
   '/org/$slug/survey/$surveyToken/': typeof OrgSlugSurveySurveyTokenIndexRoute
+  '/org/$slug/admin/crm/people/$contactId': typeof OrgSlugAdminCrmPeopleContactIdRoute
+  '/org/$slug/admin/events/$eventId_/checkin': typeof OrgSlugAdminEventsEventIdCheckinRoute
+  '/org/$slug/admin/events/luma/$lumaEventId': typeof OrgSlugAdminEventsLumaLumaEventIdRoute
   '/org/$slug/admin/opportunities/$oppId/email': typeof OrgSlugAdminOpportunitiesOppIdEmailRoute
   '/org/$slug/admin/programs/$programId/session-runner': typeof OrgSlugAdminProgramsProgramIdSessionRunnerRoute
   '/org/$slug/e/$eventSlug/people/$userId': typeof OrgSlugEEventSlugPeopleUserIdRoute
@@ -710,6 +740,9 @@ export interface FileRouteTypes {
     | '/org/$slug/e/$eventSlug/'
     | '/org/$slug/poll/$pollToken/'
     | '/org/$slug/survey/$surveyToken/'
+    | '/org/$slug/admin/crm/people/$contactId'
+    | '/org/$slug/admin/events/$eventId/checkin'
+    | '/org/$slug/admin/events/luma/$lumaEventId'
     | '/org/$slug/admin/opportunities/$oppId/email'
     | '/org/$slug/admin/programs/$programId/session-runner'
     | '/org/$slug/e/$eventSlug/people/$userId'
@@ -773,6 +806,9 @@ export interface FileRouteTypes {
     | '/org/$slug/e/$eventSlug'
     | '/org/$slug/poll/$pollToken'
     | '/org/$slug/survey/$surveyToken'
+    | '/org/$slug/admin/crm/people/$contactId'
+    | '/org/$slug/admin/events/$eventId/checkin'
+    | '/org/$slug/admin/events/luma/$lumaEventId'
     | '/org/$slug/admin/opportunities/$oppId/email'
     | '/org/$slug/admin/programs/$programId/session-runner'
     | '/org/$slug/e/$eventSlug/people/$userId'
@@ -843,6 +879,9 @@ export interface FileRouteTypes {
     | '/org/$slug/e/$eventSlug/'
     | '/org/$slug/poll/$pollToken/'
     | '/org/$slug/survey/$surveyToken/'
+    | '/org/$slug/admin/crm/people/$contactId'
+    | '/org/$slug/admin/events/$eventId_/checkin'
+    | '/org/$slug/admin/events/luma/$lumaEventId'
     | '/org/$slug/admin/opportunities/$oppId/email'
     | '/org/$slug/admin/programs/$programId/session-runner'
     | '/org/$slug/e/$eventSlug/people/$userId'
@@ -1363,6 +1402,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrgSlugAdminOpportunitiesOppIdEmailRouteImport
       parentRoute: typeof OrgSlugAdminRouteRoute
     }
+    '/org/$slug/admin/events/luma/$lumaEventId': {
+      id: '/org/$slug/admin/events/luma/$lumaEventId'
+      path: '/events/luma/$lumaEventId'
+      fullPath: '/org/$slug/admin/events/luma/$lumaEventId'
+      preLoaderRoute: typeof OrgSlugAdminEventsLumaLumaEventIdRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/admin/events/$eventId_/checkin': {
+      id: '/org/$slug/admin/events/$eventId_/checkin'
+      path: '/events/$eventId/checkin'
+      fullPath: '/org/$slug/admin/events/$eventId/checkin'
+      preLoaderRoute: typeof OrgSlugAdminEventsEventIdCheckinRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/admin/crm/people/$contactId': {
+      id: '/org/$slug/admin/crm/people/$contactId'
+      path: '/crm/people/$contactId'
+      fullPath: '/org/$slug/admin/crm/people/$contactId'
+      preLoaderRoute: typeof OrgSlugAdminCrmPeopleContactIdRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
   }
 }
 
@@ -1459,6 +1519,9 @@ interface OrgSlugAdminRouteRouteChildren {
   OrgSlugAdminMembersIndexRoute: typeof OrgSlugAdminMembersIndexRoute
   OrgSlugAdminOpportunitiesIndexRoute: typeof OrgSlugAdminOpportunitiesIndexRoute
   OrgSlugAdminProgramsIndexRoute: typeof OrgSlugAdminProgramsIndexRoute
+  OrgSlugAdminCrmPeopleContactIdRoute: typeof OrgSlugAdminCrmPeopleContactIdRoute
+  OrgSlugAdminEventsEventIdCheckinRoute: typeof OrgSlugAdminEventsEventIdCheckinRoute
+  OrgSlugAdminEventsLumaLumaEventIdRoute: typeof OrgSlugAdminEventsLumaLumaEventIdRoute
   OrgSlugAdminOpportunitiesOppIdEmailRoute: typeof OrgSlugAdminOpportunitiesOppIdEmailRoute
   OrgSlugAdminProgramsProgramIdSessionRunnerRoute: typeof OrgSlugAdminProgramsProgramIdSessionRunnerRoute
   OrgSlugAdminOpportunitiesOppIdIndexRoute: typeof OrgSlugAdminOpportunitiesOppIdIndexRoute
@@ -1480,6 +1543,10 @@ const OrgSlugAdminRouteRouteChildren: OrgSlugAdminRouteRouteChildren = {
   OrgSlugAdminMembersIndexRoute: OrgSlugAdminMembersIndexRoute,
   OrgSlugAdminOpportunitiesIndexRoute: OrgSlugAdminOpportunitiesIndexRoute,
   OrgSlugAdminProgramsIndexRoute: OrgSlugAdminProgramsIndexRoute,
+  OrgSlugAdminCrmPeopleContactIdRoute: OrgSlugAdminCrmPeopleContactIdRoute,
+  OrgSlugAdminEventsEventIdCheckinRoute: OrgSlugAdminEventsEventIdCheckinRoute,
+  OrgSlugAdminEventsLumaLumaEventIdRoute:
+    OrgSlugAdminEventsLumaLumaEventIdRoute,
   OrgSlugAdminOpportunitiesOppIdEmailRoute:
     OrgSlugAdminOpportunitiesOppIdEmailRoute,
   OrgSlugAdminProgramsProgramIdSessionRunnerRoute:

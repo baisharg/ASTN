@@ -112,8 +112,11 @@ export const getPerson = query({
         .take(100)
       guestRows.push(...rows.filter((g) => g.orgId === orgId))
     }
+    // Luma events that ASTN manages show up once, from socialEventGuests.
+    const managedLumaIds = new Set<string>()
     for (const g of guestRows) {
       const event = await ctx.db.get('socialEvents', g.eventId)
+      if (event?.lumaEventId) managedLumaIds.add(event.lumaEventId)
       timeline.push({
         kind: 'event',
         title: event?.title ?? 'Evento',
@@ -163,6 +166,9 @@ export const getPerson = query({
       )
       .take(500)
     for (const a of activities) {
+      const lumaEventId =
+        a.source === 'luma' ? a.externalId?.split(':')[1] : undefined
+      if (lumaEventId && managedLumaIds.has(lumaEventId)) continue
       timeline.push({
         kind: a.kind,
         title: a.title,

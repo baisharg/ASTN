@@ -33,7 +33,10 @@ function EventCard({
     isVirtual: boolean
   }
 }) {
-  const lumaUrl = `https://lu.ma/${event.url}`
+  // Older rows stored only the Luma slug; newer ones the full URL.
+  const lumaUrl = /^https?:\/\//.test(event.url)
+    ? event.url
+    : `https://luma.com/${event.url}`
 
   return (
     <a

@@ -1,5 +1,6 @@
 import { ConvexError, v } from 'convex/values'
-import { mutation, query } from '../_generated/server'
+import { internal } from '../_generated/api'
+import { internalMutation, mutation, query } from '../_generated/server'
 import { requireOrgAdmin } from '../lib/auth'
 import {
   FIELD_KEY,
@@ -26,6 +27,11 @@ const TABLE = {
   contacts: 'crmContacts',
   organizations: 'crmOrganizations',
 } as const
+
+// Records rewritten per scheduled batch when renaming options or deleting a
+// field, and the most records the synchronous in-use check will scan.
+const BATCH_SIZE = 200
+const IN_USE_SCAN_LIMIT = 5000
 
 type CrmRecord = Doc<'crmContacts'> | Doc<'crmOrganizations'>
 
@@ -242,26 +248,42 @@ export const updateField = mutation({
     }
     if (args.hidden !== undefined) patch.hidden = args.hidden
 
-    if (args.renameOptions?.length && isSelect(def.type)) {
-      const renames = new Map(args.renameOptions.map((r) => [r.from, r.to]))
-      const records = await ctx.db
-        .query(TABLE[def.collection])
-        .withIndex('by_orgId', (q) => q.eq('orgId', args.orgId))
-        .take(5000)
-      for (const record of records) {
-        const current = record.fields?.[def.key]
-        if (current === undefined || current === null) continue
-        const next = Array.isArray(current)
-          ? [...new Set(current.map((x) => renames.get(x) ?? x))]
-          : typeof current === 'string'
-            ? (renames.get(current) ?? current)
-            : current
-        if (JSON.stringify(next) !== JSON.stringify(current)) {
-          await ctx.db.patch(TABLE[def.collection], record._id, {
-            fields: { ...record.fields, [def.key]: next },
-          } as never)
+    const renames = (args.renameOptions ?? []).filter((r) => r.from !== r.to)
+    if (renames.length > 0) {
+      if (!isSelect(def.type)) {
+        throw new ConvexError('Only select fields have options to rename')
+      }
+      // Every rename must start from a current option and land on one of the
+      // options the field will have after this update.
+      const current = new Set((def.options ?? []).map((o) => o.value))
+      const final = new Set(
+        (args.options !== undefined
+          ? dedupeOptions(args.options)
+          : (def.options ?? [])
+        ).map((o) => o.value),
+      )
+      for (const { from, to } of renames) {
+        if (!current.has(from)) {
+          throw new ConvexError(`'${from}' is not an option of this field`)
+        }
+        if (!final.has(to)) {
+          throw new ConvexError(
+            `'${to}' must be one of the field's options to rename '${from}' to it`,
+          )
         }
       }
+      // Records are rewritten in scheduled batches (renameOptionValues).
+      await ctx.scheduler.runAfter(
+        0,
+        internal.contacts.records.renameOptionValues,
+        {
+          orgId: args.orgId,
+          collection: def.collection,
+          key: def.key,
+          renames,
+          cursor: null,
+        },
+      )
     }
 
     if (args.options !== undefined && isSelect(def.type)) {
@@ -270,12 +292,17 @@ export const updateField = mutation({
       const removed = (def.options ?? [])
         .map((o) => o.value)
         .filter((value) => !keep.has(value))
-        .filter((value) => !args.renameOptions?.some((r) => r.from === value))
+        .filter((value) => !renames.some((r) => r.from === value))
       if (removed.length > 0) {
         const records = await ctx.db
           .query(TABLE[def.collection])
           .withIndex('by_orgId', (q) => q.eq('orgId', args.orgId))
-          .take(5000)
+          .take(IN_USE_SCAN_LIMIT + 1)
+        if (records.length > IN_USE_SCAN_LIMIT) {
+          throw new ConvexError(
+            'Too many records to check whether these options are in use',
+          )
+        }
         const inUse = removed.filter((value) =>
           records.some((r) => {
             const current = r.fields?.[def.key]
@@ -317,7 +344,11 @@ export const reorderFields = mutation({
   },
 })
 
-/** Delete a custom field and clear its values. Builtin fields can be hidden. */
+/**
+ * Delete a custom field and clear its values. Builtin fields can be hidden.
+ * The field is hidden at once; its values are cleared in scheduled batches
+ * (deleteFieldValues), and the definition goes after the last one.
+ */
 export const deleteField = mutation({
   args: { orgId: v.id('organizations'), fieldId: v.id('crmFieldDefs') },
   returns: v.null(),
@@ -328,11 +359,101 @@ export const deleteField = mutation({
     if (def.source === 'builtin') {
       throw new ConvexError('Builtin fields can be hidden, not deleted')
     }
-    const records = await ctx.db
-      .query(TABLE[def.collection])
-      .withIndex('by_orgId', (q) => q.eq('orgId', orgId))
-      .take(5000)
-    for (const record of records) {
+    await ctx.db.patch('crmFieldDefs', fieldId, {
+      hidden: true,
+      updatedAt: Date.now(),
+    })
+    await ctx.scheduler.runAfter(
+      0,
+      internal.contacts.records.deleteFieldValues,
+      { fieldId, cursor: null },
+    )
+    return null
+  },
+})
+
+/** One page of an org's contacts or organizations, by creation order. */
+async function recordPage(
+  ctx: MutationCtx,
+  orgId: Id<'organizations'>,
+  collection: CrmCollection,
+  cursor: string | null,
+) {
+  const page = { numItems: BATCH_SIZE, cursor }
+  return collection === 'contacts'
+    ? await ctx.db
+        .query('crmContacts')
+        .withIndex('by_orgId', (q) => q.eq('orgId', orgId))
+        .paginate(page)
+    : await ctx.db
+        .query('crmOrganizations')
+        .withIndex('by_orgId', (q) => q.eq('orgId', orgId))
+        .paginate(page)
+}
+
+/** Apply option renames to one batch of records, then schedule the next. */
+export const renameOptionValues = internalMutation({
+  args: {
+    orgId: v.id('organizations'),
+    collection: crmCollectionValidator,
+    key: v.string(),
+    renames: v.array(v.object({ from: v.string(), to: v.string() })),
+    cursor: v.union(v.string(), v.null()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const renames = new Map(args.renames.map((r) => [r.from, r.to]))
+    const { page, isDone, continueCursor } = await recordPage(
+      ctx,
+      args.orgId,
+      args.collection,
+      args.cursor,
+    )
+    for (const record of page) {
+      const current = record.fields?.[args.key]
+      if (current === undefined || current === null) continue
+      const next = Array.isArray(current)
+        ? [...new Set(current.map((x) => renames.get(x) ?? x))]
+        : typeof current === 'string'
+          ? (renames.get(current) ?? current)
+          : current
+      if (JSON.stringify(next) !== JSON.stringify(current)) {
+        await ctx.db.patch(TABLE[args.collection], record._id, {
+          fields: { ...record.fields, [args.key]: next },
+        } as never)
+      }
+    }
+    if (!isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.contacts.records.renameOptionValues,
+        { ...args, cursor: continueCursor },
+      )
+    }
+    return null
+  },
+})
+
+/**
+ * Clear a field's values from one batch of records; after the last batch,
+ * delete the definition.
+ */
+export const deleteFieldValues = internalMutation({
+  args: {
+    fieldId: v.id('crmFieldDefs'),
+    cursor: v.union(v.string(), v.null()),
+  },
+  returns: v.null(),
+  handler: async (ctx, { fieldId, cursor }) => {
+    const def = await ctx.db.get('crmFieldDefs', fieldId)
+    if (!def) return null
+    const { page, isDone, continueCursor } = await recordPage(
+      ctx,
+      def.orgId,
+      def.collection,
+      cursor,
+    )
+    for (const record of page) {
       if (record.fields && def.key in record.fields) {
         const { [def.key]: _removed, ...rest } = record.fields
         await ctx.db.patch(TABLE[def.collection], record._id, {
@@ -340,7 +461,15 @@ export const deleteField = mutation({
         } as never)
       }
     }
-    await ctx.db.delete('crmFieldDefs', fieldId)
+    if (isDone) {
+      await ctx.db.delete('crmFieldDefs', fieldId)
+    } else {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.contacts.records.deleteFieldValues,
+        { fieldId, cursor: continueCursor },
+      )
+    }
     return null
   },
 })
