@@ -43,7 +43,7 @@ ASTN connects three groups: **individuals** pursuing AI safety careers, **local 
 ```bash
 git clone <repo-url>
 cd ASTN
-bun install
+vp install
 ```
 
 2. Create a `.env.local` file with your client-side keys:
