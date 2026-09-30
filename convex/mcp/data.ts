@@ -1,14 +1,28 @@
 import { v } from 'convex/values'
+import { internal } from '../_generated/api'
 import { internalMutation, internalQuery } from '../_generated/server'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc, Id } from '../_generated/dataModel'
 import { requireOrgAdminFor, requireOrgRecord } from '../lib/auth'
 import {
+  BUILTIN_FIELDS,
   CORE_COLUMNS,
+  addMissingOptions,
   ensureBuiltinFieldDefs,
-  splitRecord,
+  listFieldDefs,
 } from '../contacts/fields'
-import { setFieldOnRecord } from '../contacts/records'
+import type { FieldValue } from '../contacts/fields'
+import {
+  CORE_COLUMN_DEFS,
+  OPS_BY_TYPE,
+  filterIsActive,
+  matchesAll,
+  normalizeText,
+} from '../contacts/filters'
+import type { FilterColumn, FilterOp, ViewFilter } from '../contacts/filters'
+import { findContactByEmail } from '../contacts/people'
+import { crmCollectionValidator } from '../contacts/validators'
+import type { CrmCollection, CrmFieldType } from '../contacts/validators'
 import {
   CONTACT_EDITABLE,
   OPPORTUNITY_EDITABLE,
@@ -16,7 +30,6 @@ import {
   SAFE_RECORD_KEY,
   bumpCount,
   liveCount,
-  parseBoolish,
 } from '../crm'
 
 // Data layer for the MCP endpoint (convex/mcp/server.ts). These are internal
@@ -95,7 +108,14 @@ const COLLECTIONS: Record<
   },
 }
 
-async function resolveOrgForAdmin(
+const TABLE = {
+  contacts: 'crmContacts',
+  organizations: 'crmOrganizations',
+} as const
+
+type CrmRecordDoc = Doc<'crmContacts'> | Doc<'crmOrganizations'>
+
+export async function resolveOrgForAdmin(
   ctx: QueryCtx | MutationCtx,
   userId: string,
   orgSlug: string,
@@ -109,8 +129,121 @@ async function resolveOrgForAdmin(
   return org
 }
 
-// Split `fields` into a patch of allowlisted keys; throw on unknown keys so
-// the calling agent gets a corrective error instead of silent data loss.
+// ── Configurable fields (contacts, organizations) ─────────────────────────
+
+type ColumnInfo = {
+  key: string
+  label: string
+  type: CrmFieldType
+  core: boolean
+  options: Array<string>
+  hidden: boolean
+  source: 'core' | 'builtin' | 'airtable' | 'admin'
+}
+
+/**
+ * Core columns plus the org's field definitions. A query can't create the
+ * builtin definitions, so builtins an org never materialized are listed
+ * with no options (the first write creates them).
+ */
+async function crmColumns(
+  ctx: QueryCtx | MutationCtx,
+  orgId: Id<'organizations'>,
+  collection: CrmCollection,
+): Promise<Array<ColumnInfo>> {
+  const defs = await listFieldDefs(ctx, orgId, collection)
+  const have = new Set(defs.map((d) => d.key))
+  const fields: Array<ColumnInfo> = [...defs]
+    .sort((a, b) => a.order - b.order)
+    .map((d) => ({
+      key: d.key,
+      label: d.label,
+      type: d.type,
+      core: false,
+      options: (d.options ?? []).map((o) => o.value),
+      hidden: d.hidden ?? false,
+      source: d.source,
+    }))
+  for (const b of BUILTIN_FIELDS[collection]) {
+    if (have.has(b.key)) continue
+    fields.push({
+      key: b.key,
+      label: b.label,
+      type: b.type,
+      core: false,
+      options: [],
+      hidden: false,
+      source: 'builtin',
+    })
+  }
+  const core: Array<ColumnInfo> = CORE_COLUMN_DEFS[collection].map((c) => ({
+    ...c,
+    core: true,
+    options: [],
+    hidden: false,
+    source: 'core',
+  }))
+  return [...core, ...fields]
+}
+
+const VALUE_SHAPES: Record<CrmFieldType, string> = {
+  text: 'string',
+  longText: 'string',
+  url: 'string',
+  email: 'string',
+  phone: 'string',
+  singleSelect: 'string (one of the options)',
+  multiSelect: 'string[] (each one of the options)',
+  checkbox: 'boolean',
+  number: 'number',
+  date: "'YYYY-MM-DD' string",
+}
+
+/** Field discovery for astn_resources on crm_contacts / crm_organizations. */
+export const describeFields = internalQuery({
+  args: {
+    userId: v.string(),
+    orgSlug: v.string(),
+    collection: crmCollectionValidator,
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const org = await resolveOrgForAdmin(ctx, args.userId, args.orgSlug)
+    const columns = await crmColumns(ctx, org._id, args.collection)
+    return {
+      resource: `crm_${args.collection}`,
+      org: args.orgSlug,
+      coreColumns: columns
+        .filter((c) => c.core)
+        .map((c) => ({ key: c.key, label: c.label, type: c.type })),
+      fields: columns
+        .filter((c) => !c.core)
+        .map((c) => ({
+          key: c.key,
+          label: c.label,
+          type: c.type,
+          ...(c.type === 'singleSelect' || c.type === 'multiSelect'
+            ? { options: c.options }
+            : {}),
+          hidden: c.hidden,
+          source: c.source,
+        })),
+      valueShapes: VALUE_SHAPES,
+      filterOps: OPS_BY_TYPE,
+      notes:
+        'Records store core columns at the top level and every other field in `fields`, keyed by ' +
+        'field key. Writes (astn_create/astn_update) take a flat `fields` object of core column ' +
+        'and field keys; null clears a field. Values must have the shape above; select values ' +
+        'must be existing options unless you pass addOptions: true, which adds the new ones. ' +
+        (args.collection === 'contacts'
+          ? 'Email is stored lowercased; `otherEmails` is read-only here. lumaApproved, ' +
+            'lumaCheckedIn and lumaTags are kept in sync from Luma. '
+          : '') +
+        'astn_list accepts `filters` [{field, op, value}] with the ops above per type.',
+    }
+  },
+})
+
 /**
  * Contacts and organizations accept core columns plus any configurable field
  * key (builtin or custom). Throws listing the valid keys on unknown ones.
@@ -118,13 +251,16 @@ async function resolveOrgForAdmin(
 async function checkFieldKeys(
   ctx: MutationCtx,
   orgId: Id<'organizations'>,
-  collection: 'contacts' | 'organizations',
+  collection: CrmCollection,
   fields: unknown,
-): Promise<Record<string, unknown>> {
-  const f = (fields && typeof fields === 'object' ? fields : {}) as Record<
-    string,
-    unknown
-  >
+): Promise<{
+  f: Record<string, unknown>
+  defs: Map<string, Doc<'crmFieldDefs'>>
+}> {
+  if (!fields || typeof fields !== 'object' || Array.isArray(fields)) {
+    throw new Error('`fields` must be an object of field key → value')
+  }
+  const f = fields as Record<string, unknown>
   const defs = await ensureBuiltinFieldDefs(ctx, orgId, collection)
   const valid = new Set([
     ...CORE_COLUMNS[collection],
@@ -134,10 +270,147 @@ async function checkFieldKeys(
   if (invalid.length > 0) {
     throw new Error(
       `Unknown field(s) for ${collection}: ${invalid.join(', ')}. ` +
-        `Valid fields: ${[...valid].join(', ')}`,
+        `Valid fields: ${[...valid].join(', ')}. ` +
+        'Call astn_resources with this resource and org for types and options.',
     )
   }
-  return f
+  return { f, defs: new Map(defs.map((d) => [d.key, d])) }
+}
+
+/**
+ * Strict check of one field value for MCP writes, with messages an agent
+ * can act on. Select values outside the options are refused unless
+ * `addOptions`, in which case they are returned in `newOptions`.
+ */
+function strictFieldValue(
+  def: Doc<'crmFieldDefs'>,
+  raw: unknown,
+  addOptions: boolean,
+): { value: FieldValue; newOptions: Array<string> } {
+  const name = `'${def.key}' (${def.label}, ${def.type})`
+  const shapeError = () =>
+    new Error(
+      `Invalid value for ${name}: expected ${VALUE_SHAPES[def.type]} or null, ` +
+        `got ${JSON.stringify(raw)}`,
+    )
+  if (raw === null || raw === undefined) return { value: null, newOptions: [] }
+  switch (def.type) {
+    case 'singleSelect':
+    case 'multiSelect': {
+      let values: Array<string>
+      if (def.type === 'singleSelect') {
+        if (typeof raw !== 'string') throw shapeError()
+        values = raw.trim() ? [raw.trim()] : []
+      } else {
+        if (!Array.isArray(raw) || raw.some((x) => typeof x !== 'string')) {
+          throw shapeError()
+        }
+        values = [
+          ...new Set((raw as Array<string>).map((x) => x.trim())),
+        ].filter(Boolean)
+      }
+      const options = (def.options ?? []).map((o) => o.value)
+      const known = new Set(options)
+      const unknown = values.filter((x) => !known.has(x))
+      if (unknown.length > 0 && !addOptions) {
+        const hints = unknown
+          .map((u) => {
+            const near = options.find(
+              (o) => normalizeText(o) === normalizeText(u),
+            )
+            return near ? ` ('${u}' → did you mean '${near}'?)` : ''
+          })
+          .join('')
+        throw new Error(
+          `Unknown option(s) for ${name}: ${unknown.map((u) => `'${u}'`).join(', ')}.${hints} ` +
+            `Valid options: ${options.length ? options.map((o) => `'${o}'`).join(', ') : '(none yet)'}. ` +
+            'Pass addOptions: true to add new options.',
+        )
+      }
+      const value =
+        def.type === 'singleSelect'
+          ? (values[0] ?? null)
+          : values.length
+            ? values
+            : null
+      return { value, newOptions: unknown }
+    }
+    case 'checkbox':
+      if (typeof raw !== 'boolean') throw shapeError()
+      return { value: raw, newOptions: [] }
+    case 'number':
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) throw shapeError()
+      return { value: raw, newOptions: [] }
+    case 'date': {
+      if (typeof raw !== 'string') throw shapeError()
+      const s = raw.trim()
+      if (!s) return { value: null, newOptions: [] }
+      if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(s) ||
+        Number.isNaN(Date.parse(`${s}T00:00:00Z`)) ||
+        new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) !== s
+      ) {
+        throw shapeError()
+      }
+      return { value: s, newOptions: [] }
+    }
+    default:
+      if (typeof raw !== 'string') throw shapeError()
+      return { value: raw.trim() || null, newOptions: [] }
+  }
+}
+
+/**
+ * Validate a flat MCP `fields` object for a contact or organization and
+ * split it into core column values and field values (null = clear). Adds
+ * select options only after every value has passed.
+ */
+async function checkWrite(
+  ctx: MutationCtx,
+  orgId: Id<'organizations'>,
+  collection: CrmCollection,
+  fields: unknown,
+  addOptions: boolean,
+): Promise<{
+  core: Record<string, string | undefined>
+  values: Record<string, FieldValue>
+}> {
+  const { f, defs } = await checkFieldKeys(ctx, orgId, collection, fields)
+  const core: Record<string, string | undefined> = {}
+  const values: Record<string, FieldValue> = {}
+  const toAdd: Array<{ def: Doc<'crmFieldDefs'>; value: FieldValue }> = []
+  for (const [key, raw] of Object.entries(f)) {
+    if (CORE_COLUMNS[collection].includes(key)) {
+      if (raw === null || raw === undefined) {
+        if (key === 'name') throw new Error("'name' can't be cleared")
+        core[key] = undefined
+        continue
+      }
+      if (typeof raw !== 'string') {
+        throw new Error(
+          `Invalid value for core column '${key}': expected a string or null, got ${JSON.stringify(raw)}`,
+        )
+      }
+      const text = raw.trim()
+      core[key] = !text
+        ? undefined
+        : key === 'email'
+          ? text.toLowerCase()
+          : text
+      if (key === 'name' && !text) throw new Error("'name' can't be empty")
+      continue
+    }
+    const def = defs.get(key)!
+    const { value, newOptions } = strictFieldValue(def, raw, addOptions)
+    values[key] = value
+    if (newOptions.length > 0) toAdd.push({ def, value })
+  }
+  for (const { def, value } of toAdd) {
+    // Re-read so two values for the same def don't overwrite each other.
+    const fresh = (await ctx.db.get('crmFieldDefs', def._id)) ?? def
+    await addMissingOptions(ctx, fresh, value)
+  }
+  return { core, values }
 }
 
 function buildPatch(
@@ -158,7 +431,7 @@ function buildPatch(
       invalid.push(key)
       continue
     }
-    patch[key] = key === 'inBuenosAires' ? parseBoolish(value) : value
+    patch[key] = value
   }
   if (invalid.length > 0) {
     throw new Error(
@@ -216,11 +489,82 @@ export const stats = internalQuery({
   },
 })
 
+// Most bytes one listing page reads; the rows cap is the page size.
+const PAGE_BYTES = 4 * 1024 * 1024
+
+type Compiled = { filter: ViewFilter; column: FilterColumn }
+
+/** Check filters against the org's columns; throw with the valid choices. */
+function compileFilters(
+  raw: Array<{ field: string; op: string; value?: unknown }>,
+  columns: Array<ColumnInfo>,
+): Array<Compiled> {
+  const byKey = new Map(columns.map((c) => [c.key, c]))
+  const byLabel = new Map(columns.map((c) => [normalizeText(c.label), c]))
+  return raw.map((f) => {
+    const column =
+      byKey.get(f.field) ?? byLabel.get(normalizeText(String(f.field)))
+    if (!column) {
+      throw new Error(
+        `Unknown filter field '${f.field}'. Use a core column or field key: ` +
+          `${columns.map((c) => c.key).join(', ')}`,
+      )
+    }
+    const ops = OPS_BY_TYPE[column.type]
+    if (!ops.includes(f.op as FilterOp)) {
+      throw new Error(
+        `Op '${f.op}' doesn't apply to '${column.key}' (${column.type}). ` +
+          `Valid ops: ${ops.join(', ')}`,
+      )
+    }
+    const filter: ViewFilter = {
+      field: column.key,
+      op: f.op as FilterOp,
+      value: f.value,
+    }
+    if (!filterIsActive(filter)) {
+      throw new Error(
+        `Filter on '${column.key}' with op '${f.op}' needs a value`,
+      )
+    }
+    if (column.type === 'checkbox' && typeof f.value !== 'boolean') {
+      throw new Error(
+        `Filter on checkbox '${column.key}' needs value true or false`,
+      )
+    }
+    return { filter, column }
+  })
+}
+
+/**
+ * Field key → label, for `labels: true`. The relabeling itself happens in
+ * the action (tools.ts): Convex values can't have non-ASCII keys, and
+ * labels like "Participó en" have them. Clashing labels get "(key)".
+ */
+function fieldLabels(columns: Array<ColumnInfo>): Record<string, string> {
+  const count = new Map<string, number>()
+  for (const c of columns) count.set(c.label, (count.get(c.label) ?? 0) + 1)
+  const out: Record<string, string> = {}
+  for (const c of columns) {
+    if (c.core) continue
+    out[c.key] =
+      (count.get(c.label) ?? 0) > 1 ? `${c.label} (${c.key})` : c.label
+  }
+  return out
+}
+
+const filterArg = v.object({
+  field: v.string(),
+  op: v.string(),
+  value: v.optional(v.any()),
+})
+
+/** astn_list for crm_opportunities and crm_submissions (fixed columns). */
 export const listRecords = internalQuery({
   args: {
     userId: v.string(),
     orgSlug: v.string(),
-    collection: collectionValidator,
+    collection: v.union(v.literal('opportunities'), v.literal('submissions')),
     search: v.optional(v.string()),
     limit: v.optional(v.number()),
   },
@@ -231,7 +575,7 @@ export const listRecords = internalQuery({
     const limit = Math.min(Math.max(Math.floor(args.limit ?? 100), 1), 500)
     const search = args.search?.trim()
     if (search && meta.searchIndex) {
-      // Cast: `meta.table` is a union over four tables, so the inferred
+      // Cast: `meta.table` is a union over tables, so the inferred
       // search-index name collapses to `never`. The per-collection metadata
       // pins index/field pairs that exist in schema.ts.
       return await (ctx.db.query(meta.table) as any)
@@ -244,6 +588,102 @@ export const listRecords = internalQuery({
       .query(meta.table)
       .withIndex('by_orgId', (q: any) => q.eq('orgId', org._id))
       .take(limit)
+  },
+})
+
+/**
+ * One page of crm_contacts / crm_organizations for astn_list: a single
+ * native `.paginate()` (Convex allows one per query) over the org index, or
+ * over the name search index with `search`, with the filters applied to the
+ * page. The action (tools.ts listCrm) chains pages up to the caller's limit
+ * and scan budget. `positions` are the matches' indexes within the page, so
+ * the action can re-read a shorter page ending exactly at a match.
+ */
+export const listCrmPage = internalQuery({
+  args: {
+    userId: v.string(),
+    orgSlug: v.string(),
+    collection: crmCollectionValidator,
+    filters: v.optional(v.array(filterArg)),
+    email: v.optional(v.string()),
+    search: v.optional(v.string()),
+    cursor: v.union(v.string(), v.null()),
+    numItems: v.number(),
+    labels: v.optional(v.boolean()),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const org = await resolveOrgForAdmin(ctx, args.userId, args.orgSlug)
+    const collection = args.collection
+    const table = TABLE[collection]
+    const columns = await crmColumns(ctx, org._id, collection)
+    const filters = compileFilters(args.filters ?? [], columns)
+    const labels = args.labels ? { fieldLabels: fieldLabels(columns) } : {}
+    const pass = (r: CrmRecordDoc) => matchesAll(r, filters)
+
+    if (args.email) {
+      if (collection !== 'contacts') {
+        throw new Error('email applies to crm_contacts only')
+      }
+      if (args.cursor) throw new Error("email lookups aren't paginated")
+      const contact = await findContactByEmail(ctx, org._id, args.email)
+      const matches = contact && pass(contact) ? [contact] : []
+      return {
+        matches,
+        positions: matches.map(() => 0),
+        scanned: contact ? 1 : 0,
+        continueCursor: null,
+        isDone: true,
+        ...labels,
+      }
+    }
+
+    const numItems = Math.min(Math.max(Math.floor(args.numItems), 1), 500)
+    const opts = {
+      numItems,
+      cursor: args.cursor,
+      maximumRowsRead: numItems,
+      maximumBytesRead: PAGE_BYTES,
+    }
+    const search = args.search?.trim()
+    let result
+    try {
+      result = search
+        ? await ctx.db
+            .query(table)
+            .withSearchIndex('search_name', (q) =>
+              q.search('name', search).eq('orgId', org._id),
+            )
+            .paginate(opts)
+        : await ctx.db
+            .query(table)
+            .withIndex('by_orgId', (q) => q.eq('orgId', org._id))
+            .paginate(opts)
+    } catch (err) {
+      if (args.cursor && /cursor/i.test(String(err))) {
+        throw new Error(
+          'Invalid cursor: pass the nextCursor of a previous call with the same resource and search',
+        )
+      }
+      throw err
+    }
+    const page = result.page as Array<CrmRecordDoc>
+    const matches: Array<CrmRecordDoc> = []
+    const positions: Array<number> = []
+    page.forEach((row, i) => {
+      if (pass(row)) {
+        matches.push(row)
+        positions.push(i)
+      }
+    })
+    return {
+      matches,
+      positions,
+      scanned: page.length,
+      continueCursor: result.continueCursor,
+      isDone: result.isDone,
+      ...labels,
+    }
   },
 })
 
@@ -272,27 +712,29 @@ export const createRecord = internalMutation({
     orgSlug: v.string(),
     collection: collectionValidator,
     fields: v.any(),
+    addOptions: v.optional(v.boolean()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
     const org = await resolveOrgForAdmin(ctx, args.userId, args.orgSlug)
     const meta = COLLECTIONS[args.collection]
     if (args.collection === 'contacts' || args.collection === 'organizations') {
-      const f = await checkFieldKeys(ctx, org._id, args.collection, args.fields)
-      const { core, fields } = await splitRecord(
+      const { core, values } = await checkWrite(
         ctx,
         org._id,
         args.collection,
-        f,
+        args.fields,
+        args.addOptions ?? false,
       )
+      const fields: Record<string, FieldValue> = {}
+      for (const [key, value] of Object.entries(values)) {
+        if (value !== null) fields[key] = value
+      }
       const now = Date.now()
       const id = await ctx.db.insert(meta.table, {
         orgId: org._id,
         ...core,
         name: core.name ?? 'No name',
-        ...(args.collection === 'contacts' && core.email
-          ? { email: core.email.toLowerCase() }
-          : {}),
         fields,
         createdAt: now,
         updatedAt: now,
@@ -340,6 +782,7 @@ export const updateRecord = internalMutation({
     collection: collectionValidator,
     id: v.string(),
     fields: v.any(),
+    addOptions: v.optional(v.boolean()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -347,36 +790,33 @@ export const updateRecord = internalMutation({
     const meta = COLLECTIONS[args.collection]
     const id = ctx.db.normalizeId(meta.table, args.id)
     if (!id) throw new Error('Record not found')
-    await requireOrgRecord(ctx, id as Id<any>, org._id, 'Record not found')
+    const record = await requireOrgRecord(
+      ctx,
+      id as Id<any>,
+      org._id,
+      'Record not found',
+    )
 
     if (args.collection === 'contacts' || args.collection === 'organizations') {
-      const collection = args.collection
-      const f = await checkFieldKeys(ctx, org._id, collection, args.fields)
-      const keys = Object.keys(f)
+      const { core, values } = await checkWrite(
+        ctx,
+        org._id,
+        args.collection,
+        args.fields,
+        args.addOptions ?? false,
+      )
+      const keys = [...Object.keys(core), ...Object.keys(values)]
       if (keys.length === 0) throw new Error('No fields to update')
-      const core: Record<string, unknown> = {}
-      for (const key of keys) {
-        if (!CORE_COLUMNS[collection].includes(key)) continue
-        core[key] =
-          key === 'email' && typeof f[key] === 'string'
-            ? (f[key] as string).trim().toLowerCase()
-            : f[key]
+      const fields = { ...(record as CrmRecordDoc).fields }
+      for (const [key, value] of Object.entries(values)) {
+        if (value === null) delete fields[key]
+        else fields[key] = value
       }
-      if (Object.keys(core).length > 0) {
-        await ctx.db.patch(id, { ...core, updatedAt: Date.now() } as any)
-      }
-      for (const key of keys) {
-        if (CORE_COLUMNS[collection].includes(key)) continue
-        const record = (await ctx.db.get(id)) as any
-        await setFieldOnRecord(ctx, {
-          orgId: org._id,
-          collection,
-          record,
-          key,
-          value: f[key],
-          lenient: true,
-        })
-      }
+      await ctx.db.patch(id, {
+        ...core,
+        fields,
+        updatedAt: Date.now(),
+      } as any)
       return { id, collection: args.collection, updated: keys }
     }
 
@@ -410,6 +850,18 @@ export const deleteRecord = internalMutation({
     )
     await ctx.db.delete(id)
     await bumpCount(ctx, org._id, meta.countField, -1)
+    // A contact's history goes with it, in scheduled batches (as bulk delete).
+    const contactId =
+      args.collection === 'contacts'
+        ? ctx.db.normalizeId('crmContacts', args.id)
+        : null
+    if (contactId) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.contacts.bulk.deleteContactActivities,
+        { contactId },
+      )
+    }
     return {
       id,
       collection: args.collection,

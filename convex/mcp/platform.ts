@@ -267,6 +267,13 @@ export const list = internalQuery({
     level: v.optional(v.string()),
     date: v.optional(v.string()),
     limit: v.optional(v.number()),
+    // events only. `now` comes from the calling action: queries don't read
+    // the clock.
+    when: v.optional(v.string()),
+    from: v.optional(v.string()),
+    to: v.optional(v.string()),
+    includePrivate: v.optional(v.boolean()),
+    now: v.optional(v.number()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -490,12 +497,8 @@ export const list = internalQuery({
         return filtered.slice(0, limit)
       }
 
-      case 'events': {
-        return await ctx.db
-          .query('events')
-          .withIndex('by_org', (qq) => qq.eq('orgId', orgId))
-          .take(limit)
-      }
+      case 'events':
+        return await listEvents(ctx, orgId, args, limit)
 
       case 'outbox':
       case 'email_log': {
@@ -551,6 +554,135 @@ export const list = internalQuery({
     }
   },
 })
+
+// Most event rows one call reads when dropping private ones.
+const EVENT_SCAN_CAP = 2000
+
+const ISO_DATE =
+  /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}:\d{2})?)?$/
+
+/**
+ * ms for an ISO date (YYYY-MM-DD, midnight UTC) or ISO datetime
+ * (YYYY-MM-DDTHH:mm[:ss[.sss]][Z|±HH:mm]; no offset means UTC). Anything
+ * else, and impossible dates like 2026-02-30, are refused.
+ */
+function parseDateArg(name: string, raw: string | undefined) {
+  if (raw === undefined) return undefined
+  const fail = (): never => {
+    throw new Error(
+      `${name} must be an ISO date (2026-05-01) or datetime (2026-05-01T18:00:00-03:00), got ${JSON.stringify(raw)}`,
+    )
+  }
+  const m = ISO_DATE.exec(raw.trim())
+  if (!m) return fail()
+  const [, y, mo, d, h = '0', mi = '0', sec = '0', ms = '0', zone] = m
+  const [year, month, day, hour, minute, second] = [y, mo, d, h, mi, sec].map(
+    Number,
+  )
+  const t = Date.UTC(
+    year,
+    month - 1,
+    day,
+    hour,
+    minute,
+    second,
+    Number(ms.padEnd(3, '0')),
+  )
+  const check = new Date(t)
+  if (
+    check.getUTCFullYear() !== year ||
+    check.getUTCMonth() !== month - 1 ||
+    check.getUTCDate() !== day ||
+    check.getUTCHours() !== hour ||
+    check.getUTCMinutes() !== minute ||
+    check.getUTCSeconds() !== second
+  ) {
+    return fail()
+  }
+  if (!zone || zone === 'Z') return t
+  const [oh, om] = zone.slice(1).split(':').map(Number)
+  if (oh > 23 || om > 59) return fail()
+  const offset = (oh * 60 + om) * 60_000
+  return zone[0] === '+' ? t - offset : t + offset
+}
+
+/**
+ * Events (the Luma mirror) by start time. upcoming: startAt ≥ now,
+ * ascending; past: startAt < now, descending; all: descending. `from`
+ * (inclusive) and `to` (exclusive) narrow the window.
+ */
+async function listEvents(
+  ctx: QueryCtx,
+  orgId: Id<'organizations'>,
+  args: {
+    when?: string
+    from?: string
+    to?: string
+    includePrivate?: boolean
+    now?: number
+  },
+  limit: number,
+) {
+  const when = args.when ?? 'all'
+  if (!['upcoming', 'past', 'all'].includes(when)) {
+    throw new Error("when must be 'upcoming', 'past' or 'all'")
+  }
+  let lo = parseDateArg('from', args.from)
+  let hi = parseDateArg('to', args.to)
+  if (when !== 'all') {
+    if (args.now === undefined) throw new Error('now is required')
+    if (when === 'upcoming') lo = Math.max(lo ?? args.now, args.now)
+    else hi = Math.min(hi ?? args.now, args.now)
+  }
+  if (lo !== undefined && hi !== undefined && lo >= hi) {
+    throw new Error(
+      when === 'all'
+        ? '`from` must be before `to`'
+        : `The window is empty: with when='${when}', from/to leave no time ` +
+            `(upcoming starts now, past ends now; from must be before to).`,
+    )
+  }
+  const query = ctx.db
+    .query('events')
+    .withIndex('by_org_start', (q) => {
+      const eq = q.eq('orgId', orgId)
+      if (lo !== undefined && hi !== undefined) {
+        return eq.gte('startAt', lo).lt('startAt', hi)
+      }
+      if (lo !== undefined) return eq.gte('startAt', lo)
+      if (hi !== undefined) return eq.lt('startAt', hi)
+      return eq
+    })
+    .order(when === 'upcoming' ? 'asc' : 'desc')
+  const includePrivate = args.includePrivate ?? true
+  const out = []
+  let scanned = 0
+  for await (const e of query) {
+    if (out.length >= limit || ++scanned > EVENT_SCAN_CAP) break
+    // Rows from the old public-endpoint sync have no visibility: public.
+    if (!includePrivate && e.visibility && e.visibility !== 'public') continue
+    out.push({
+      _id: e._id,
+      lumaEventId: e.lumaEventId,
+      title: e.title,
+      startAt: e.startAt,
+      startAtIso: new Date(e.startAt).toISOString(),
+      endAt: e.endAt ?? null,
+      timezone: e.timezone,
+      url: e.url,
+      location: e.location ?? null,
+      isVirtual: e.isVirtual,
+      visibility: e.visibility ?? null,
+      canceled: e.canceled ?? false,
+      lumaAccess: e.lumaAccess ?? null,
+      guestCount: e.guestCount ?? null,
+      approvedCount: e.approvedCount ?? null,
+      pendingCount: e.pendingCount ?? null,
+      checkedInCount: e.checkedInCount ?? null,
+    })
+  }
+  return out
+}
 
 // ── astn_get ──────────────────────────────────────────────────────────────
 
