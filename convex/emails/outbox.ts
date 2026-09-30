@@ -10,6 +10,7 @@ import type { Doc } from '../_generated/dataModel'
 import { getUserId, requireOrgAdminFor } from '../lib/auth'
 import { resolveApplicantContact } from '../lib/applicantContact'
 import type { FormField } from '../lib/formFields'
+import { appUrl, emailFrom } from '../lib/siteUrl'
 import { resend } from './send'
 
 // Outbox for applicant decision emails (issue #20). Changing an application's
@@ -20,8 +21,6 @@ import { resend } from './send'
 //   - hard idempotency: one 'sent' emailLog row per (application, kind)
 //   - the only text variable is {{applicant_name}} (always resolvable);
 //     poll/survey links are system-managed blocks, never failable variables
-
-const FROM_ADDRESS = 'ASTN <notifications@safetytalent.org>'
 
 export const DECISION_KINDS = [
   'accepted',
@@ -728,7 +727,7 @@ export const ensureLinkTargets = internalMutation({
       formFields,
       'Applicant',
     )
-    const baseUrl = process.env.SITE_URL ?? 'https://safetytalent.org'
+    const baseUrl = appUrl()
 
     let pollLink: string | null = null
     if (includePollLink) {
@@ -826,7 +825,7 @@ export const finalizeDraftSend = internalMutation({
     }
 
     await resend.sendEmail(ctx, {
-      from: FROM_ADDRESS,
+      from: emailFrom(),
       to,
       subject,
       html,
@@ -940,7 +939,7 @@ export const finalizeAutoSend = internalMutation({
     if (!app) return 'gone'
     if (await hasSentKind(ctx, applicationId, kind)) return 'already_sent'
 
-    await resend.sendEmail(ctx, { from: FROM_ADDRESS, to, subject, html })
+    await resend.sendEmail(ctx, { from: emailFrom(), to, subject, html })
     await ctx.db.insert('emailLog', {
       orgId: app.orgId,
       opportunityId: app.opportunityId,
@@ -978,7 +977,7 @@ export const sendAvailabilityEmailNow = internalMutation({
   ) => {
     const app = await ctx.db.get('opportunityApplications', applicationId)
     if (!app) return null
-    await resend.sendEmail(ctx, { from: FROM_ADDRESS, to, subject, html })
+    await resend.sendEmail(ctx, { from: emailFrom(), to, subject, html })
     await ctx.db.insert('emailLog', {
       orgId: app.orgId,
       opportunityId: app.opportunityId,

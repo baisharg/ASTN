@@ -332,7 +332,9 @@ Bun.serve({
 })
 
 function isAllowedOrigin(origin: string): boolean {
-  return /^https?:\/\/(localhost(:\d+)?|safetytalent\.org)$/.test(origin)
+  return /^https?:\/\/(localhost(:\d+)?|app\.baish\.com\.ar|safetytalent\.org)$/.test(
+    origin,
+  )
 }
 
 const mode = facilitatorProgramId ? 'Facilitator' : 'Admin'

@@ -1,6 +1,7 @@
 import { v } from 'convex/values'
 import { httpAction, internalMutation } from '../_generated/server'
 import { internal } from '../_generated/api'
+import { appUrl } from '../lib/siteUrl'
 
 /**
  * HTTP handler for /unsubscribe
@@ -45,7 +46,7 @@ export const unsubscribeHandler = httpAction(async (ctx, request) => {
   <div class="card">
     <h1>You've been unsubscribed</h1>
     <p>You will no longer receive email notifications from ASTN.</p>
-    <p>You can re-enable notifications anytime from your <a href="https://safetytalent.org/profile?section=privacy">profile settings</a>.</p>
+    <p>You can re-enable notifications anytime from your <a href="${appUrl()}/profile?section=privacy">profile settings</a>.</p>
   </div>
 </body>
 </html>`
