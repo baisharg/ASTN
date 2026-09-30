@@ -12,6 +12,7 @@ import {
   guestStatusFromLuma,
   isOnAllowlist,
   normalizeEmail,
+  updateGuestAndSync,
 } from './lib'
 import {
   LumaApiError,
@@ -272,6 +273,26 @@ export const applyWebhookGuest = internalMutation({
   },
 })
 
+/** Queue a Luma push for every guest not yet mirrored to Luma. */
+export const pushUnlinkedGuests = internalMutation({
+  args: { eventId: v.id('socialEvents') },
+  returns: v.number(),
+  handler: async (ctx, { eventId }) => {
+    const event = await ctx.db.get('socialEvents', eventId)
+    if (!event?.lumaEventId) return 0
+    const unlinked = await ctx.db
+      .query('socialEventGuests')
+      .withIndex('by_eventId_and_lumaSync', (q) =>
+        q.eq('eventId', eventId).eq('lumaSync', 'not_linked'),
+      )
+      .take(500)
+    for (const guest of unlinked) {
+      await updateGuestAndSync(ctx, event, guest._id, {})
+    }
+    return unlinked.length
+  },
+})
+
 // ── Actions ─────────────────────────────────────────────────────────────
 
 /** Mirror one guest's registration or status to Luma. */
@@ -436,6 +457,10 @@ export const importLumaEvent = internalAction({
       return null
     }
     await pullGuestsImpl(ctx, eventId)
+    // Guests who registered in the app before the event was linked.
+    await ctx.runMutation(internal.social.lumaSync.pushUnlinkedGuests, {
+      eventId,
+    })
     return null
   },
 })
