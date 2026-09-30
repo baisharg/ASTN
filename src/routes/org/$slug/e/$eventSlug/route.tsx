@@ -10,9 +10,6 @@ import { SocialEventProvider } from '~/components/social/SocialEventContext'
 import { useLiveState } from '~/components/social/live'
 import { LangToggle, SocialLangProvider, useCopy } from '~/lib/social-i18n'
 
-const FONTS_HREF =
-  'https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap'
-
 export const Route = createFileRoute('/org/$slug/e/$eventSlug')({
   loader: async ({ context, params }) => {
     const event = await context.queryClient.ensureQueryData(
@@ -37,10 +34,6 @@ export const Route = createFileRoute('/org/$slug/e/$eventSlug')({
         { property: 'og:url', content: url },
         { property: 'og:title', content: title },
         { property: 'og:description', content: description },
-      ],
-      links: [
-        { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
-        { rel: 'stylesheet', href: FONTS_HREF },
       ],
     }
   },
