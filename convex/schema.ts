@@ -1994,6 +1994,9 @@ export default defineSchema({
     otherEmails: v.optional(v.array(v.string())), // lowercased
     userId: v.optional(v.string()), // linked app account
     airtableId: v.optional(v.string()),
+    // Airtable ids of contacts merged into this one, so a re-import finds
+    // them here instead of recreating them (convex/contacts/merge.ts).
+    mergedAirtableIds: v.optional(v.array(v.string())),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -2099,6 +2102,18 @@ export default defineSchema({
   })
     .index('by_contactId_and_occurredAt', ['contactId', 'occurredAt'])
     .index('by_orgId_and_externalId', ['orgId', 'externalId']),
+
+  // Contact pairs an admin marked as different people, so findDuplicates
+  // stops suggesting them. `a` < `b` as strings.
+  crmDuplicateDismissals: defineTable({
+    orgId: v.id('organizations'),
+    a: v.id('crmContacts'),
+    b: v.id('crmContacts'),
+    createdBy: v.string(),
+    createdAt: v.number(),
+  })
+    .index('by_orgId_and_a_and_b', ['orgId', 'a', 'b'])
+    .index('by_orgId_and_b', ['orgId', 'b']),
 
   // Saved, shared CRM views.
   crmViews: defineTable({

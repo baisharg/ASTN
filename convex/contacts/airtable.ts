@@ -8,6 +8,7 @@ import {
   addEmails,
   fetchAirtable,
   indexByEmail,
+  indexByMergedAirtableId,
   mergeRecord,
   nameMatchable,
   orgNameKey,
@@ -139,6 +140,12 @@ const specValidator = v.object({
 const activityInValidator = v.object({
   externalId: v.string(),
   contactId: v.id('crmContacts'),
+  // How to find the contact again if it was merged into another one
+  // between the contacts step and this one.
+  locator: v.object({
+    airtableId: optionalString,
+    emails: v.array(v.string()),
+  }),
   kind: v.union(
     v.literal('program'),
     v.literal('session'),
@@ -157,6 +164,7 @@ const statusValidator = v.union(
   v.literal('unchanged'),
 )
 type Status = 'created' | 'updated' | 'unchanged'
+const activityStatusValidator = v.union(statusValidator, v.literal('skipped'))
 
 const conflictValidator = v.object({
   collection: crmCollectionValidator,
@@ -226,6 +234,7 @@ export const loadState = internalQuery({
         email: optionalString,
         otherEmails: v.optional(v.array(v.string())),
         airtableId: optionalString,
+        mergedAirtableIds: v.optional(v.array(v.string())),
         phone: optionalString,
         linkedin: optionalString,
         website: optionalString,
@@ -289,6 +298,7 @@ export const loadState = internalQuery({
         email: c.email,
         otherEmails: c.otherEmails,
         airtableId: c.airtableId,
+        mergedAirtableIds: c.mergedAirtableIds,
         phone: c.phone,
         linkedin: c.linkedin,
         website: c.website,
@@ -417,8 +427,11 @@ export const upsertContacts = internalMutation({
     const conflicts: Array<Conflict> = []
     const now = Date.now()
     let created = 0
-    // Same email rules as the plan (primary and other emails), on live data.
-    const byEmail = indexByEmail(await orgContacts(ctx, orgId))
+    // Same rules as the plan (Airtable id, then ids of contacts merged into
+    // one, then primary and other emails), on live data.
+    const live = await orgContacts(ctx, orgId)
+    const byEmail = indexByEmail(live)
+    const byMergedAirtableId = indexByMergedAirtableId(live)
     for (const c of contacts) {
       // Re-resolve on the live data so a stale plan can't duplicate anyone.
       let doc = c.targetId ? await ctx.db.get('crmContacts', c.targetId) : null
@@ -430,6 +443,10 @@ export const upsertContacts = internalMutation({
             q.eq('orgId', orgId).eq('airtableId', c.airtableId),
           )
           .first()
+        if (!doc) {
+          const merged = byMergedAirtableId.get(c.airtableId)
+          if (merged) doc = await ctx.db.get('crmContacts', merged._id)
+        }
       }
       if (!doc) {
         const email = c.emails.find((e) => byEmail.has(e))
@@ -565,11 +582,60 @@ export const upsertActivities = internalMutation({
     orgId: v.id('organizations'),
     activities: v.array(activityInValidator),
   },
-  returns: v.array(statusValidator),
+  returns: v.array(activityStatusValidator),
   handler: async (ctx, { orgId, activities }) => {
-    const statuses: Array<Status> = []
+    const statuses: Array<Status | 'skipped'> = []
     const now = Date.now()
-    for (const a of activities) {
+    const live = new Map<Id<'crmContacts'>, boolean>()
+    const isLive = async (id: Id<'crmContacts'>) => {
+      let ok = live.get(id)
+      if (ok === undefined) {
+        const doc = await ctx.db.get('crmContacts', id)
+        ok = !!doc && doc.orgId === orgId
+        live.set(id, ok)
+      }
+      return ok
+    }
+    // Contacts merged away since the contacts step: found again by
+    // Airtable id, then ids merged into another contact, then email.
+    let maps: {
+      byMerged: Map<string, Doc<'crmContacts'>>
+      byEmail: Map<string, Doc<'crmContacts'>>
+    } | null = null
+    const relocate = async (
+      locator: (typeof activities)[number]['locator'],
+    ): Promise<Id<'crmContacts'> | null> => {
+      if (locator.airtableId) {
+        const doc = await ctx.db
+          .query('crmContacts')
+          .withIndex('by_orgId_and_airtableId', (q) =>
+            q.eq('orgId', orgId).eq('airtableId', locator.airtableId),
+          )
+          .first()
+        if (doc) return doc._id
+      }
+      if (!maps) {
+        const contacts = await orgContacts(ctx, orgId)
+        maps = {
+          byMerged: indexByMergedAirtableId(contacts),
+          byEmail: indexByEmail(contacts),
+        }
+      }
+      if (locator.airtableId) {
+        const doc = maps.byMerged.get(locator.airtableId)
+        if (doc) return doc._id
+      }
+      for (const e of locator.emails) {
+        const doc = maps.byEmail.get(e)
+        if (doc) return doc._id
+      }
+      return null
+    }
+
+    for (const { locator, ...a } of activities) {
+      const contactId = (await isLive(a.contactId))
+        ? a.contactId
+        : await relocate(locator)
       const existing = await ctx.db
         .query('crmActivities')
         .withIndex('by_orgId_and_externalId', (q) =>
@@ -577,7 +643,10 @@ export const upsertActivities = internalMutation({
         )
         .first()
       if (existing) {
-        if (sameActivity(existing, a)) {
+        // An existing row keeps its contact unless that one is gone.
+        const orphan = !(await isLive(existing.contactId))
+        const repoint = orphan && contactId ? { contactId } : {}
+        if (sameActivity(existing, a) && !repoint.contactId) {
           statuses.push('unchanged')
         } else {
           await ctx.db.patch('crmActivities', existing._id, {
@@ -585,14 +654,19 @@ export const upsertActivities = internalMutation({
             occurredAt: a.occurredAt,
             status: a.status,
             data: a.data,
+            ...repoint,
           })
           statuses.push('updated')
         }
         continue
       }
+      if (!contactId) {
+        statuses.push('skipped')
+        continue
+      }
       await ctx.db.insert('crmActivities', {
         orgId,
-        contactId: a.contactId,
+        contactId,
         kind: a.kind,
         title: a.title,
         occurredAt: a.occurredAt,
@@ -802,7 +876,7 @@ export const runAirtableImport = action({
   },
   returns: reportValidator,
   handler: async (ctx, { orgId, overwriteConflicts }): Promise<Report> => {
-    const { plan } = await prepare(ctx, orgId)
+    const { plan, state } = await prepare(ctx, orgId)
     const tally = new Tally()
     const conflicts: Array<Conflict> = [...plan.duplicateConflicts]
 
@@ -846,16 +920,35 @@ export const runAirtableImport = action({
       }
     }
 
+    const plannedByRef = new Map(plan.contacts.map((c) => [c.ref, c]))
+    const existingById = new Map(state.contacts.map((c) => [c._id, c]))
     const resolved = plan.activities.flatMap((a) => {
-      const contactId =
-        'id' in a.contact
-          ? (a.contact.id as Id<'crmContacts'>)
-          : contactIds.get(a.contact.ref)
+      let contactId: Id<'crmContacts'> | undefined
+      let locator: { airtableId?: string; emails: Array<string> }
+      if ('id' in a.contact) {
+        contactId = a.contact.id as Id<'crmContacts'>
+        const snap = existingById.get(a.contact.id)
+        locator = {
+          airtableId: snap?.airtableId,
+          emails: snap
+            ? [snap.email, ...(snap.otherEmails ?? [])].filter(
+                (e): e is string => !!e,
+              )
+            : [],
+        }
+      } else {
+        contactId = contactIds.get(a.contact.ref)
+        const planned = plannedByRef.get(a.contact.ref)
+        locator = {
+          airtableId: planned?.airtableId,
+          emails: planned?.emails ?? [],
+        }
+      }
       if (!contactId) {
         tally.add(a.source, 'activities', 'skipped')
         return []
       }
-      return [{ ...a, contactId }]
+      return [{ ...a, contactId, locator }]
     })
     for (const batch of chunks(resolved)) {
       const statuses = await ctx.runMutation(

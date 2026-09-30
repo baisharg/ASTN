@@ -8,6 +8,7 @@ import {
   ensureBuiltinFieldDefs,
   normalizeValue,
 } from '../contacts/fields'
+import { contactsByEmail } from '../contacts/people'
 import { addToAllowlist, normalizeEmail } from './lib'
 import type { FieldValue } from '../contacts/fields'
 import { hasLumaApiKey, listAllLumaContacts } from './luma'
@@ -71,6 +72,11 @@ export const upsertContacts = internalMutation({
       return normalized
     }
 
+    // Primary and other emails, so a contact merged into another (its email
+    // now among the other's otherEmails) isn't created again. New and
+    // updated contacts go back into the map as the chunk goes.
+    const byEmail = await contactsByEmail(ctx, orgId)
+
     for (const c of contacts) {
       const email = normalizeEmail(c.email)
       // Tags are Luma's to report, so they are always refreshed.
@@ -90,12 +96,7 @@ export const upsertContacts = internalMutation({
       const firstSeen = await value('firstContact', c.firstSeen)
       if (firstSeen !== undefined) gaps.firstContact = firstSeen
 
-      const existing = await ctx.db
-        .query('crmContacts')
-        .withIndex('by_orgId_and_email', (q) =>
-          q.eq('orgId', orgId).eq('email', email),
-        )
-        .first()
+      const existing = byEmail.get(email)
       if (existing) {
         const current = existing.fields ?? {}
         const fields = { ...gaps, ...current, ...fromLuma }
@@ -109,10 +110,14 @@ export const upsertContacts = internalMutation({
             fields,
             updatedAt: now,
           })
+          const patched = { ...existing, fields, updatedAt: now }
+          for (const [key, doc] of byEmail) {
+            if (doc._id === existing._id) byEmail.set(key, patched)
+          }
           updated++
         }
       } else {
-        await ctx.db.insert('crmContacts', {
+        const id = await ctx.db.insert('crmContacts', {
           orgId,
           name: c.name,
           email,
@@ -120,6 +125,8 @@ export const upsertContacts = internalMutation({
           createdAt: now,
           updatedAt: now,
         })
+        const inserted = await ctx.db.get('crmContacts', id)
+        if (inserted) byEmail.set(email, inserted)
         created++
       }
       if (allowlistApproved && c.approved > 0) {

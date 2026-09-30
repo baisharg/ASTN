@@ -159,6 +159,64 @@ export function attendanceExternalId(lumaEventId: string, email: string) {
   return `luma:${lumaEventId}:${email}`
 }
 
+// Best first: the status that counts when one person has two rows for one
+// event (registered with two emails, then merged into one contact).
+const STATUS_RANK: Record<string, number> = {
+  checked_in: 5,
+  approved: 4,
+  pending: 3,
+  waitlist: 2,
+  declined: 1,
+}
+
+/** The better of two attendance statuses (checked_in > approved > …). */
+export function bestStatus(
+  a: string | undefined,
+  b: string | undefined,
+): string | undefined {
+  return (STATUS_RANK[b ?? ''] ?? 0) > (STATUS_RANK[a ?? ''] ?? 0) ? b : a
+}
+
+type LumaRow = {
+  source: string
+  kind: string
+  status?: string
+  externalId?: string
+  data?: Record<string, unknown>
+}
+
+/** The Luma event id of a Luma history row, or null for other rows. */
+export function lumaEventOf(row: LumaRow): string | null {
+  if (row.source !== 'luma' || row.kind !== 'event') return null
+  const fromData = row.data?.lumaEventId
+  if (typeof fromData === 'string' && fromData) return fromData
+  return row.externalId?.split(':')[1] || null
+}
+
+/**
+ * Events a person was approved for (checked in included) and checked in
+ * to, counting each Luma event once with its best status: a merged contact
+ * can hold one row per email it registered with, and the sync keeps both.
+ */
+export function countLumaAttendance(rows: Array<LumaRow>): {
+  approved: number
+  checkedIn: number
+} {
+  const byEvent = new Map<string, string | undefined>()
+  for (const row of rows) {
+    const event = lumaEventOf(row)
+    if (!event) continue
+    byEvent.set(event, bestStatus(byEvent.get(event), row.status))
+  }
+  let approved = 0
+  let checkedIn = 0
+  for (const status of byEvent.values()) {
+    if (status === 'approved' || status === 'checked_in') approved++
+    if (status === 'checked_in') checkedIn++
+  }
+  return { approved, checkedIn }
+}
+
 /**
  * Recompute a contact's lumaApproved / lumaCheckedIn fields from its Luma
  * event history. Approved includes checked in.
@@ -169,8 +227,6 @@ export async function recomputeLumaCounts(
 ): Promise<void> {
   const contact = await ctx.db.get('crmContacts', contactId)
   if (!contact) return
-  let approved = 0
-  let checkedIn = 0
   // A person's whole history; far below this in practice.
   const activities = await ctx.db
     .query('crmActivities')
@@ -178,11 +234,7 @@ export async function recomputeLumaCounts(
       q.eq('contactId', contactId),
     )
     .take(5000)
-  for (const a of activities) {
-    if (a.source !== 'luma' || a.kind !== 'event') continue
-    if (a.status === 'approved' || a.status === 'checked_in') approved++
-    if (a.status === 'checked_in') checkedIn++
-  }
+  const { approved, checkedIn } = countLumaAttendance(activities)
   const fields = contact.fields ?? {}
   if (fields.lumaApproved === approved && fields.lumaCheckedIn === checkedIn) {
     return

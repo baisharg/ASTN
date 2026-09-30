@@ -8,6 +8,7 @@ import {
   requireContact,
 } from '../contacts/people'
 import { attendanceExternalId } from '../luma/shared'
+import { duplicateGroups, mergeContactsInOrg } from '../contacts/merge'
 import { resolveOrgForAdmin } from './data'
 
 // People, history and event attendance for the MCP endpoint. Internal
@@ -208,6 +209,44 @@ export const deleteActivity = internalMutation({
     }
     await ctx.db.delete('crmActivities', id)
     return { id, resource: 'crm_activities', deleted: true, title: doc.title }
+  },
+})
+
+// ── crm_duplicates / crm_merge_contacts ──────────────────────────────────
+
+export const duplicates = internalQuery({
+  args: { userId: v.string(), orgSlug: v.string() },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const org = await resolveOrgForAdmin(ctx, args.userId, args.orgSlug)
+    const groups = await duplicateGroups(ctx, org._id)
+    const byReason: Record<string, number> = {}
+    for (const g of groups) {
+      for (const r of g.reasons) byReason[r] = (byReason[r] ?? 0) + 1
+    }
+    return {
+      summary: {
+        groups: groups.length,
+        contacts: groups.reduce((n, g) => n + g.ids.length, 0),
+        blocked: groups.filter((g) => g.blocked).length,
+        byReason,
+      },
+      groups,
+    }
+  },
+})
+
+export const mergeContacts = internalMutation({
+  args: {
+    userId: v.string(),
+    orgSlug: v.string(),
+    keepId: v.string(),
+    mergeIds: v.array(v.string()),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const org = await resolveOrgForAdmin(ctx, args.userId, args.orgSlug)
+    return await mergeContactsInOrg(ctx, org._id, args.keepId, args.mergeIds)
   },
 })
 

@@ -2,6 +2,7 @@ import { ConvexError, v } from 'convex/values'
 import { mutation, query } from '../_generated/server'
 import { requireOrgAdmin } from '../lib/auth'
 import { normalizeEmail } from '../social/lib'
+import { bestStatus, lumaEventOf } from '../luma/shared'
 import {
   crmActivityKindValidator,
   crmCollectionValidator,
@@ -84,6 +85,11 @@ export async function buildPersonView(
     : null
 
   const timeline: Array<TimelineItem> = []
+
+  // TODO: the email lookups below (applications, event guests) take a fixed
+  // number of rows across all orgs before filtering by org, so another org's
+  // rows could crowd this one's out. Fine while there is one org in practice;
+  // needs email+org indexes if that changes.
 
   // Applications to the org's opportunities, by account and by email.
   const applications: Array<Doc<'opportunityApplications'>> = []
@@ -180,17 +186,29 @@ export async function buildPersonView(
     }
   }
 
-  // Imported and manual history.
+  // Imported and manual history, newest first so a cut drops the oldest.
   const activities = await ctx.db
     .query('crmActivities')
     .withIndex('by_contactId_and_occurredAt', (q) =>
       q.eq('contactId', contact._id),
     )
+    .order('desc')
     .take(500)
+  // A merged contact can hold one Luma row per email it registered with
+  // for the same event; show the event once, with the best status.
+  const lumaBest = new Map<string, Doc<'crmActivities'>>()
   for (const a of activities) {
-    const lumaEventId =
-      a.source === 'luma' ? a.externalId?.split(':')[1] : undefined
+    const lumaEventId = lumaEventOf(a)
+    if (!lumaEventId) continue
+    const best = lumaBest.get(lumaEventId)
+    if (!best || bestStatus(best.status, a.status) !== best.status) {
+      lumaBest.set(lumaEventId, a)
+    }
+  }
+  for (const a of activities) {
+    const lumaEventId = lumaEventOf(a)
     if (lumaEventId && managedLumaIds.has(lumaEventId)) continue
+    if (lumaEventId && lumaBest.get(lumaEventId)?._id !== a._id) continue
     timeline.push({
       kind: a.kind,
       title: a.title,
@@ -284,12 +302,14 @@ export async function contactsByEmail(
   return map
 }
 
+/** The person page's data, or null when the contact is gone (merged or deleted). */
 export const getPerson = query({
   args: { orgId: v.id('organizations'), contactId: v.id('crmContacts') },
   returns: v.any(),
   handler: async (ctx, { orgId, contactId }) => {
     await requireOrgAdmin(ctx, orgId)
-    const contact = await requireContact(ctx, orgId, contactId)
+    const contact = await ctx.db.get('crmContacts', contactId)
+    if (!contact || contact.orgId !== orgId) return null
     return await buildPersonView(ctx, contact)
   },
 })

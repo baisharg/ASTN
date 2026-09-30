@@ -3,6 +3,7 @@ import type { ActionCtx } from '../_generated/server'
 import { CRM_FIELDS, type CrmCollection } from '../lib/crmFields'
 import { OPPORTUNITY_EDITABLE } from '../crm'
 import { UPDATE_FIELDS } from './platform'
+import { invalidParams } from './errors'
 
 // MCP tool definitions + dispatch for the /mcp endpoint. The surface is a small
 // set of generic verbs (astn_list/get/create/update/delete) parameterized by a
@@ -371,6 +372,60 @@ export const TOOL_DEFS = [
     annotations: { readOnlyHint: true },
   },
   {
+    name: 'crm_duplicates',
+    description:
+      'Contacts that look like the same person, in groups, strongest first. Each group has ' +
+      'the reasons (sameEmail: an email in common; sameLinkedin; samePhone: same last 8 ' +
+      'digits; sameName: same full name, accents and case ignored; similarName: one name ' +
+      "contains the other's words with the same first name, plus similar email local parts " +
+      'or the same phone/LinkedIn), a suggestedKeepId (linked account, then Airtable, then ' +
+      'most filled in), blocked (two different linked accounts: cannot be merged), and per ' +
+      'member: name, emails, phone, LinkedIn, source, whether it has an account or came ' +
+      'from Airtable, filled field count and history item count. Pairs an admin marked as ' +
+      'different people are left out.',
+    inputSchema: {
+      type: 'object',
+      properties: { ...orgProp },
+      required: ['org'],
+    },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: 'crm_merge_contacts',
+    description:
+      'Merge duplicate contacts into one. IRREVERSIBLE: the contacts in mergeIds are ' +
+      'deleted. Before calling, show the user the contacts (crm_duplicates or crm_person) ' +
+      'and get their explicit confirmation, then pass confirm: true. The kept contact gets ' +
+      'every email (its primary stays), empty columns and fields filled from the others, ' +
+      'multi-selects joined, the earliest first contact, notes appended, a fuller name if ' +
+      'one of the others has every word of its name and more, and all their history. Luma ' +
+      'and Airtable syncs keep matching it. Refused when two contacts are linked to ' +
+      'different app accounts, or one has more than 500 history items.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...orgProp,
+        keepId: {
+          type: 'string',
+          description: 'crmContacts _id of the contact to keep.',
+        },
+        mergeIds: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'crmContacts _ids to merge into keepId and delete (1-20). Earlier ones win when filling gaps.',
+        },
+        confirm: {
+          type: 'boolean',
+          description:
+            'Must be true, after the user confirmed this exact merge.',
+        },
+      },
+      required: ['org', 'keepId', 'mergeIds', 'confirm'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true },
+  },
+  {
     name: 'event_attendance',
     description:
       'Who registered for and attended an event: the event (with Luma counts, visibility, ' +
@@ -584,8 +639,11 @@ function describeAllResources() {
     tools: {
       crm_person: 'one person: contact, emails, profile and full timeline',
       event_attendance: 'an event and who registered / checked in',
+      crm_duplicates: 'contacts that look like the same person, grouped',
+      crm_merge_contacts:
+        'merge duplicate contacts into one (irreversible; confirm with the user first)',
     },
-    note: "Pass a `resource` to astn_resources for its field detail (with `org` for crm_contacts / crm_organizations, whose fields are configured per org). Reads cover the whole org, including the CRM with its configurable fields, each person's history (crm_activities, crm_person) and the Luma events mirror with attendance (events, event_attendance). Writes are allowed where a mistake can be undone: you can build a cohort end to end — create the opportunity with its application form, create and open its feedback survey and availability poll, record admission decisions — and keep the CRM up to date (contacts, organizations, notes), because all of that is reversible. What stays out is what is not: sending emails or broadcasts (a status change queues a draft for a human to send, and never sends), any Luma write (creating or editing Luma events, approving guests and blasts all email real guests), membership changes, finalizing a poll, and deleting anything holding other people's answers or imported history.",
+    note: "Pass a `resource` to astn_resources for its field detail (with `org` for crm_contacts / crm_organizations, whose fields are configured per org). Reads cover the whole org, including the CRM with its configurable fields, each person's history (crm_activities, crm_person) and the Luma events mirror with attendance (events, event_attendance). Writes are allowed where a mistake can be undone: you can build a cohort end to end — create the opportunity with its application form, create and open its feedback survey and availability poll, record admission decisions — and keep the CRM up to date (contacts, organizations, notes), because all of that is reversible. The one irreversible write is crm_merge_contacts, which deletes the merged duplicates; it needs confirm: true after the user agreed to that exact merge. What stays out otherwise is what is not reversible: sending emails or broadcasts (a status change queues a draft for a human to send, and never sends), any Luma write (creating or editing Luma events, approving guests and blasts all email real guests), membership changes, finalizing a poll, and deleting anything holding other people's answers or imported history.",
   }
 }
 
@@ -644,7 +702,7 @@ async function listCrm(
   args: Record<string, unknown>,
 ) {
   if (args.filters !== undefined && !Array.isArray(args.filters)) {
-    throw new Error('filters must be an array of {field, op, value}')
+    throw invalidParams('filters must be an array of {field, op, value}')
   }
   const str = (key: string) =>
     typeof args[key] === 'string' ? (args[key] as string) : undefined
@@ -937,6 +995,38 @@ export async function callTool(
         email: str('email'),
       })
 
+    case 'crm_duplicates':
+      return await ctx.runQuery(internal.mcp.people.duplicates, {
+        userId,
+        orgSlug: org,
+      })
+
+    case 'crm_merge_contacts': {
+      if (args.confirm !== true) {
+        throw new Error(
+          'Merging deletes the merged contacts and cannot be undone. Show the user the ' +
+            'contacts, get their explicit confirmation, then call again with confirm: true.',
+        )
+      }
+      const keepId = str('keepId')
+      const mergeIds = args.mergeIds
+      if (
+        !keepId ||
+        !Array.isArray(mergeIds) ||
+        mergeIds.some((id) => typeof id !== 'string')
+      ) {
+        throw invalidParams(
+          'Pass keepId (string) and mergeIds (array of crmContacts _ids)',
+        )
+      }
+      return await ctx.runMutation(internal.mcp.people.mergeContacts, {
+        userId,
+        orgSlug: org,
+        keepId,
+        mergeIds: mergeIds as Array<string>,
+      })
+    }
+
     case 'event_attendance':
       return await ctx.runQuery(internal.mcp.people.eventAttendance, {
         userId,
@@ -960,6 +1050,6 @@ export async function callTool(
       })
 
     default:
-      throw new Error(`Unknown tool: ${name}`)
+      throw invalidParams(`Unknown tool: ${name}`)
   }
 }
