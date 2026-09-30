@@ -1,5 +1,5 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { useQuery } from 'convex/react'
+import { useMutation, useQuery } from 'convex/react'
 import {
   Database,
   Upload,
@@ -8,8 +8,9 @@ import {
   Briefcase,
   FileText,
   Shield,
+  Table2,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../../../../../../convex/_generated/api'
 import { AuthHeader } from '~/components/layout/auth-header'
 import { Card, CardContent, CardHeader, CardTitle } from '~/components/ui/card'
@@ -17,8 +18,11 @@ import { Button } from '~/components/ui/button'
 import { Spinner } from '~/components/ui/spinner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { CrmTable } from '~/components/crm/CrmTable'
+import { CrmRecordsTable } from '~/components/crm/CrmRecordsTable'
 import { CrmImportDialog } from '~/components/crm/CrmImportDialog'
 import { CrmExportMenu } from '~/components/crm/CrmExportMenu'
+import { AirtableImportCard } from '~/components/crm/airtableImport'
+import { Dialog, DialogContent, DialogTitle } from '~/components/ui/dialog'
 
 export const Route = createFileRoute('/org/$slug/admin/crm/')({
   component: CrmDashboard,
@@ -34,19 +38,19 @@ const TAB_CONFIG: Record<
   CollectionTab,
   { label: string; icon: typeof Users; collection: string }
 > = {
-  contacts: { label: 'Contacts', icon: Users, collection: 'crmContacts' },
+  contacts: { label: 'Contactos', icon: Users, collection: 'crmContacts' },
   organizations: {
-    label: 'Organizations',
+    label: 'Organizaciones',
     icon: Building2,
     collection: 'crmOrganizations',
   },
   opportunities: {
-    label: 'Opportunities',
+    label: 'Oportunidades',
     icon: Briefcase,
     collection: 'crmOpportunities',
   },
   submissions: {
-    label: 'Submissions',
+    label: 'Formularios',
     icon: FileText,
     collection: 'crmSubmissions',
   },
@@ -56,6 +60,7 @@ function CrmDashboard() {
   const { slug } = Route.useParams()
   const [activeTab, setActiveTab] = useState<CollectionTab>('contacts')
   const [importOpen, setImportOpen] = useState(false)
+  const [airtableOpen, setAirtableOpen] = useState(false)
 
   const org = useQuery(api.orgs.directory.getOrgBySlug, { slug })
   const membership = useQuery(
@@ -70,6 +75,25 @@ function CrmDashboard() {
     api.crm.getStats,
     isAdmin ? { orgId: org._id } : 'skip',
   )
+
+  // Create the builtin field definitions once per org (idempotent). The ref
+  // marks the org while the call is in flight and after it succeeds; a
+  // failure clears it and retries a few times.
+  const setupFields = useMutation(api.contacts.records.setupFields)
+  const setupFor = useRef<string | null>(null)
+  const [setupRetry, setSetupRetry] = useState(0)
+  useEffect(() => {
+    if (!isAdmin || !org || setupFor.current === org._id) return
+    const orgId = org._id
+    setupFor.current = orgId
+    setupFields({ orgId }).catch((err: unknown) => {
+      console.error('setupFields failed', err)
+      if (setupFor.current === orgId) setupFor.current = null
+      if (setupRetry < 3) {
+        setTimeout(() => setSetupRetry((n) => n + 1), 2000 * (setupRetry + 1))
+      }
+    })
+  }, [isAdmin, org, setupFields, setupRetry])
 
   if (org === undefined || membership === undefined) {
     return (
@@ -90,7 +114,9 @@ function CrmDashboard() {
         <AuthHeader />
         <main className="container mx-auto px-4 py-8">
           <div className="text-center py-12">
-            <p className="text-muted-foreground">Organization not found</p>
+            <p className="text-muted-foreground">
+              No encontramos la organización
+            </p>
           </div>
         </main>
       </div>
@@ -107,14 +133,14 @@ function CrmDashboard() {
               <Shield className="size-8 text-slate-400" />
             </div>
             <h1 className="text-2xl font-display text-foreground mb-4">
-              Admin Access Required
+              Necesitás ser admin
             </h1>
             <p className="text-slate-600 mb-6">
-              You need to be an admin of this organization to access this page.
+              Solo los admins de la organización pueden ver el CRM.
             </p>
             <Button asChild>
               <Link to="/org/$slug" params={{ slug }}>
-                Back to Organization
+                Volver a la organización
               </Link>
             </Button>
           </div>
@@ -127,7 +153,7 @@ function CrmDashboard() {
     <div className="min-h-screen">
       <AuthHeader />
       <main className="container mx-auto px-4 py-8">
-        <div className="max-w-6xl mx-auto">
+        <div className="max-w-7xl mx-auto">
           {/* Header */}
           <div className="mb-8">
             <div className="flex items-center gap-2 text-muted-foreground text-sm mb-2">
@@ -149,15 +175,15 @@ function CrmDashboard() {
               <span>/</span>
               <span className="text-slate-700">CRM</span>
             </div>
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h1 className="text-2xl font-display font-semibold text-foreground flex items-center gap-2">
                   <Database className="size-6" />
-                  CRM Database
+                  CRM
                 </h1>
                 <p className="text-muted-foreground mt-1">
-                  Manage your organization's contacts, organizations,
-                  opportunities, and form responses
+                  Personas, organizaciones, oportunidades y formularios de la
+                  organización
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -166,9 +192,13 @@ function CrmDashboard() {
                   orgSlug={slug}
                   activeCollection={activeTab}
                 />
+                <Button variant="outline" onClick={() => setAirtableOpen(true)}>
+                  <Table2 className="size-4 mr-2" />
+                  Importar de Airtable
+                </Button>
                 <Button onClick={() => setImportOpen(true)}>
                   <Upload className="size-4 mr-2" />
-                  Import Excel/CSV
+                  Importar Excel/CSV
                 </Button>
               </div>
             </div>
@@ -233,10 +263,20 @@ function CrmDashboard() {
             </TabsList>
 
             <TabsContent value="contacts" className="mt-4">
-              <CrmTable orgId={org._id} collection="contacts" />
+              <CrmRecordsTable
+                key={`${org._id}:contacts`}
+                orgId={org._id}
+                orgSlug={slug}
+                collection="contacts"
+              />
             </TabsContent>
             <TabsContent value="organizations" className="mt-4">
-              <CrmTable orgId={org._id} collection="organizations" />
+              <CrmRecordsTable
+                key={`${org._id}:organizations`}
+                orgId={org._id}
+                orgSlug={slug}
+                collection="organizations"
+              />
             </TabsContent>
             <TabsContent value="opportunities" className="mt-4">
               <CrmTable orgId={org._id} collection="opportunities" />
@@ -247,6 +287,16 @@ function CrmDashboard() {
           </Tabs>
         </div>
       </main>
+
+      <Dialog open={airtableOpen} onOpenChange={setAirtableOpen}>
+        <DialogContent
+          aria-describedby={undefined}
+          className="max-h-[90vh] gap-0 overflow-y-auto border-0 bg-transparent p-0 shadow-none sm:max-w-2xl"
+        >
+          <DialogTitle className="sr-only">Importar desde Airtable</DialogTitle>
+          <AirtableImportCard orgId={org._id} />
+        </DialogContent>
+      </Dialog>
 
       {/* Import Dialog */}
       <CrmImportDialog

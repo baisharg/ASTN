@@ -5,6 +5,7 @@ import { internalMutation, internalQuery } from '../_generated/server'
 import { components } from '../_generated/api'
 import { log } from '../lib/logging'
 import { getLegacyUserEmail } from '../lib/auth'
+import { takePublicEvents } from '../events/queries'
 
 // Initialize Resend component
 // For production: set RESEND_API_KEY in Convex dashboard
@@ -829,12 +830,15 @@ export const getUpcomingEventsForUser = internalQuery({
       const org = await ctx.db.get('organizations', orgId)
       if (!org) continue
 
-      const orgEvents = await ctx.db
-        .query('events')
-        .withIndex('by_org_start', (q) =>
-          q.eq('orgId', orgId).gt('startAt', since),
-        )
-        .take(10)
+      // The Luma mirror also holds private and canceled events.
+      const orgEvents = await takePublicEvents(
+        ctx.db
+          .query('events')
+          .withIndex('by_org_start', (q) =>
+            q.eq('orgId', orgId).gt('startAt', since),
+          ),
+        10,
+      )
 
       for (const e of orgEvents) {
         events.push({

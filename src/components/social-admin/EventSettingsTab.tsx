@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 import { useMutation } from 'convex/react'
 import { formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -6,6 +7,7 @@ import {
   ExternalLink,
   Link2,
   Loader2,
+  Mail,
   RefreshCw,
   Save,
 } from 'lucide-react'
@@ -183,6 +185,8 @@ function DetailsCard({ event }: { event: AdminEvent }) {
         <CardTitle>Datos del evento</CardTitle>
         <CardDescription>
           Lo que ve la gente en la página del evento.
+          {event.lumaEventId &&
+            ' Como está vinculado con Luma, el nombre, el horario, la dirección y la descripción también se actualizan allá (Luma avisa a los invitados si cambian el horario o el lugar). Una dirección borrada solo se borra en ASTN: Luma no deja quitarla desde acá.'}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -354,6 +358,20 @@ function LumaCard({ event }: { event: AdminEvent }) {
                   <ExternalLink className="size-4 mr-2" />
                   Abrir en Luma
                 </a>
+              </Button>
+            )}
+            {event.lumaEventId && event.orgSlug && (
+              <Button variant="outline" className="min-h-11" asChild>
+                <Link
+                  to="/org/$slug/admin/events/luma/$lumaEventId"
+                  params={{
+                    slug: event.orgSlug,
+                    lumaEventId: event.lumaEventId,
+                  }}
+                >
+                  <Mail className="size-4 mr-2" />
+                  Emails y ajustes de Luma
+                </Link>
               </Button>
             )}
             <Button

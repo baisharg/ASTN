@@ -4,6 +4,7 @@ import { action, internalAction } from '../_generated/server'
 import { internal } from '../_generated/api'
 import { log } from '../lib/logging'
 import { fetchLumaEvents, resolveLumaCalendarId } from './lumaClient'
+import type { Id } from '../_generated/dataModel'
 
 /**
  * Resolve a Lu.ma calendar URL to its calendar API ID.
@@ -18,8 +19,10 @@ export const resolveLumaCalendar = action({
 })
 
 /**
- * Sync events for a single organization from Lu.ma.
- * Uses the free public API (no API key needed).
+ * Sync events for a single organization from Lu.ma, through the old public
+ * endpoint (no API key needed). Orgs on the calendar of LUMA_API_KEY use the
+ * official API instead (convex/luma/sync.ts), which also mirrors private
+ * events and guest lists.
  */
 export const syncOrgEvents = internalAction({
   args: { orgId: v.id('organizations') },
@@ -66,7 +69,11 @@ export const syncOrgEvents = internalAction({
         : undefined,
       timezone: entry.event.timezone,
       coverUrl: entry.event.cover_url ?? undefined,
-      url: entry.event.url,
+      // The endpoint returns only the slug; store the full URL like the
+      // official API does.
+      url: /^https?:\/\//.test(entry.event.url)
+        ? entry.event.url
+        : `https://luma.com/${entry.event.url}`,
       location:
         entry.event.geo_address_info?.full_address ??
         entry.event.geo_address_info?.address ??
@@ -117,8 +124,26 @@ export const runFullEventSync = internalAction({
       orgCount: orgsWithLuma.length,
     })
 
+    // Orgs on the API key's calendar get a full official-API sync (events,
+    // then guests into the CRM); the rest keep the public endpoint.
+    const official: Array<Id<'organizations'>> = await ctx.runAction(
+      internal.luma.sync.officialApiOrgs,
+      {},
+    )
+    for (const orgId of official) {
+      try {
+        await ctx.runAction(internal.luma.sync.syncOrg, { orgId, mode: 'full' })
+      } catch (error) {
+        log('error', 'Failed to sync org events (Luma API)', {
+          orgId,
+          error: String(error),
+        })
+      }
+    }
+
     // Sync each org's events (staggered to avoid rate limits)
     for (const org of orgsWithLuma) {
+      if (official.includes(org._id)) continue
       try {
         await ctx.runAction(internal.events.sync.syncOrgEvents, {
           orgId: org._id,

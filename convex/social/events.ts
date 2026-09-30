@@ -4,6 +4,7 @@ import { mutation, query } from '../_generated/server'
 import { getUserId, requireOrgAdmin } from '../lib/auth'
 import { slugifyTitle } from '../orgOpportunities'
 import schema from '../schema'
+import { requireOrgOwnsApiCalendar } from '../luma/binding'
 import { DEFAULT_MEETING_MINUTES } from './constants'
 import {
   addToAllowlist,
@@ -54,7 +55,7 @@ const eventPublicValidator = v.object({
   viewerIsAdmin: v.boolean(),
 })
 
-async function uniqueEventSlug(
+export async function uniqueEventSlug(
   ctx: MutationCtx,
   orgId: Id<'organizations'>,
   base: string,
@@ -470,7 +471,7 @@ export const updateEvent = mutation({
   },
   returns: v.null(),
   handler: async (ctx, { eventId, ...fields }) => {
-    await requireEventAdmin(ctx, eventId)
+    const { event } = await requireEventAdmin(ctx, eventId)
     const patch: Partial<Doc<'socialEvents'>> = { updatedAt: Date.now() }
     if (fields.title !== undefined) {
       const title = fields.title.trim()
@@ -508,6 +509,28 @@ export const updateEvent = mutation({
       patch.matchingPrompt = fields.matchingPrompt.trim() || undefined
     }
     await ctx.db.patch('socialEvents', eventId, patch)
+
+    // Linked to Luma: send the details that changed there too.
+    if (event.lumaEventId) {
+      const changed = (key: keyof Doc<'socialEvents'>) =>
+        key in patch && patch[key] !== event[key]
+      const lumaFields: Array<'name' | 'description' | 'time' | 'address'> = []
+      if (changed('title')) lumaFields.push('name')
+      if (changed('description')) lumaFields.push('description')
+      if (changed('startAt') || changed('endAt') || changed('timezone')) {
+        lumaFields.push('time')
+      }
+      if (changed('venueAddress') && patch.venueAddress) {
+        lumaFields.push('address')
+      }
+      if (lumaFields.length > 0) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.luma.api.pushSocialEventToLuma,
+          { eventId, fields: lumaFields },
+        )
+      }
+    }
     return null
   },
 })
@@ -520,7 +543,9 @@ export const linkLumaEvent = mutation({
   args: { eventId: v.id('socialEvents'), lumaEventId: v.string() },
   returns: v.null(),
   handler: async (ctx, { eventId, lumaEventId }) => {
-    await requireEventAdmin(ctx, eventId)
+    const { event } = await requireEventAdmin(ctx, eventId)
+    // Only the org whose calendar LUMA_API_KEY belongs to may use it.
+    await requireOrgOwnsApiCalendar(ctx, event.orgId)
     const id = lumaEventId.trim()
     if (!/^evt-[A-Za-z0-9]+$/.test(id)) {
       throw new ConvexError('Luma event IDs look like evt-XXXXXXXX')

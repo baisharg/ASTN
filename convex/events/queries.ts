@@ -1,5 +1,34 @@
 import { v } from 'convex/values'
 import { internalQuery, query } from '../_generated/server'
+import type { Doc } from '../_generated/dataModel'
+
+/**
+ * Whether an event may be shown to members and the public. The Luma mirror
+ * also copies private and members-only events, and keeps canceled ones.
+ */
+export function isPublicEvent(event: Doc<'events'>): boolean {
+  return !event.canceled && (event.visibility ?? 'public') === 'public'
+}
+
+/** Private events may come in runs; read at most this many to fill a list. */
+export const PUBLIC_SCAN_LIMIT = 1000
+
+/**
+ * The first `limit` public events of an ordered query, reading rows until
+ * that many are found or PUBLIC_SCAN_LIMIT rows have been read.
+ */
+export async function takePublicEvents(
+  rows: AsyncIterable<Doc<'events'>>,
+  limit: number,
+): Promise<Array<Doc<'events'>>> {
+  const out: Array<Doc<'events'>> = []
+  let scanned = 0
+  for await (const row of rows) {
+    if (isPublicEvent(row)) out.push(row)
+    if (out.length >= limit || ++scanned >= PUBLIC_SCAN_LIMIT) break
+  }
+  return out
+}
 
 /**
  * Get all organizations that have Lu.ma calendar sync configured.
@@ -27,19 +56,25 @@ export const getOrgEvents = query({
   handler: async (ctx, { orgId }) => {
     const now = Date.now()
 
-    const upcoming = await ctx.db
-      .query('events')
-      .withIndex('by_org_start', (q) =>
-        q.eq('orgId', orgId).gte('startAt', now),
-      )
-      .order('asc')
-      .take(50)
+    const upcoming = await takePublicEvents(
+      ctx.db
+        .query('events')
+        .withIndex('by_org_start', (q) =>
+          q.eq('orgId', orgId).gte('startAt', now),
+        )
+        .order('asc'),
+      50,
+    )
 
-    const past = await ctx.db
-      .query('events')
-      .withIndex('by_org_start', (q) => q.eq('orgId', orgId).lt('startAt', now))
-      .order('desc')
-      .take(20)
+    const past = await takePublicEvents(
+      ctx.db
+        .query('events')
+        .withIndex('by_org_start', (q) =>
+          q.eq('orgId', orgId).lt('startAt', now),
+        )
+        .order('desc'),
+      20,
+    )
 
     return { upcoming, past }
   },
@@ -72,16 +107,15 @@ export const getDashboardEvents = query({
     const thirtyDaysFromNow = now + 30 * 24 * 60 * 60 * 1000
 
     // Fetch all upcoming events
-    const allEvents = await ctx.db
-      .query('events')
-      .filter((q) =>
-        q.and(
-          q.gte(q.field('startAt'), now),
-          q.lte(q.field('startAt'), thirtyDaysFromNow),
-        ),
-      )
-      .order('asc')
-      .take(50)
+    const allEvents = await takePublicEvents(
+      ctx.db
+        .query('events')
+        .withIndex('by_startAt', (q) =>
+          q.gte('startAt', now).lte('startAt', thirtyDaysFromNow),
+        )
+        .order('asc'),
+      50,
+    )
 
     // Get org details for each event
     const orgsData = await Promise.all(

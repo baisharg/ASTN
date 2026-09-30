@@ -7,6 +7,7 @@ import {
   ORGANIZATION_EDITABLE,
 } from '../crm'
 import { UPDATE_FIELDS } from './platform'
+import { BUILTIN_FIELDS } from '../contacts/fields'
 
 // MCP tool definitions + dispatch for the /mcp endpoint. The surface is a small
 // set of generic verbs (astn_list/get/create/update/delete) parameterized by a
@@ -26,9 +27,17 @@ const CRM_RESOURCES: Record<string, CrmCollection> = {
   crm_submissions: 'submissions',
 }
 
+// Contacts and organizations also accept any custom field key the org
+// defined (see the `crmFieldDefs` table); these are the builtin ones.
 const CRM_WRITABLE: Record<CrmCollection, Set<string>> = {
-  contacts: CONTACT_EDITABLE,
-  organizations: ORGANIZATION_EDITABLE,
+  contacts: new Set([
+    ...CONTACT_EDITABLE,
+    ...BUILTIN_FIELDS.contacts.map((f) => f.key),
+  ]),
+  organizations: new Set([
+    ...ORGANIZATION_EDITABLE,
+    ...BUILTIN_FIELDS.organizations.map((f) => f.key),
+  ]),
   opportunities: OPPORTUNITY_EDITABLE,
   submissions: new Set(['participant', 'period', 'source']),
 }

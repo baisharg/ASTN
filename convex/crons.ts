@@ -88,4 +88,14 @@ crons.interval(
   {},
 )
 
+// Luma calendar mirror (official API): recent and upcoming events, then the
+// guest lists that changed, into the CRM. The first run reads the whole
+// history; the daily 'sync-luma-events' job does a full pass.
+crons.interval(
+  'sync-luma-calendar-recent',
+  { minutes: 30 },
+  internal.luma.sync.syncRecent,
+  {},
+)
+
 export default crons

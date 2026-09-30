@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import { internalMutation, internalQuery } from '../_generated/server'
 import { internal } from '../_generated/api'
 import { log } from '../lib/logging'
+import { isPublicEvent } from '../events/queries'
 import type { Id } from '../_generated/dataModel'
 
 // Rate limit: max 5 event notifications per hour per user
@@ -62,7 +63,8 @@ export const notifyAllFrequencyUsers = internalMutation({
   },
   handler: async (ctx, { eventId, orgId }) => {
     const event = await ctx.db.get('events', eventId)
-    if (!event) return { notified: 0, rateLimited: 0 }
+    // The Luma mirror also holds private and canceled events.
+    if (!event || !isPublicEvent(event)) return { notified: 0, rateLimited: 0 }
 
     const org = await ctx.db.get('organizations', orgId)
     if (!org) return { notified: 0, rateLimited: 0 }

@@ -6,6 +6,8 @@ import {
   internalMutation,
   internalQuery,
 } from '../_generated/server'
+import { apiCalendarOrg, assertOrgOwnsApiCalendar } from '../luma/binding'
+import { flagGuestSync } from '../luma/mirror'
 import {
   addToAllowlist,
   getGuestByEmail,
@@ -33,6 +35,8 @@ const lumaGuestValidator = v.object({
   name: v.union(v.string(), v.null()),
   approvalStatus: v.string(),
   checkedInAt: v.optional(v.number()),
+  // The guest's Luma ticket QR payload, for the ASTN door check-in.
+  checkInCode: v.optional(v.string()),
 })
 
 type IncomingLumaGuest = Infer<typeof lumaGuestValidator>
@@ -55,6 +59,7 @@ export const getGuestForSync = internalQuery({
         lumaGuestId: v.union(v.string(), v.null()),
       }),
       lumaEventId: v.union(v.string(), v.null()),
+      orgId: v.id('organizations'),
     }),
   ),
   handler: async (ctx, { guestId }) => {
@@ -62,6 +67,7 @@ export const getGuestForSync = internalQuery({
     if (!guest) return null
     const event = await ctx.db.get('socialEvents', guest.eventId)
     return {
+      orgId: guest.orgId,
       guest: {
         email: guest.email,
         name: guest.name ?? null,
@@ -191,6 +197,8 @@ async function applyLumaGuest(
       lumaGuestId: incoming.id,
       lumaSync: needsPush ? 'pending' : 'synced',
       checkedInAt: incoming.checkedInAt,
+      checkInSource: incoming.checkedInAt !== undefined ? 'luma' : undefined,
+      lumaCheckInCode: incoming.checkInCode,
       registeredAt: now,
       updatedAt: now,
     })
@@ -207,11 +215,19 @@ async function applyLumaGuest(
   const patch: Partial<Doc<'socialEventGuests'>> = {}
   if (existing.lumaGuestId !== incoming.id) patch.lumaGuestId = incoming.id
   if (!existing.name && incoming.name) patch.name = incoming.name
+  // A check-in at the ASTN door stays; Luma only adds its own.
   if (
     incoming.checkedInAt !== undefined &&
-    existing.checkedInAt !== incoming.checkedInAt
+    existing.checkedInAt === undefined
   ) {
     patch.checkedInAt = incoming.checkedInAt
+    patch.checkInSource = 'luma'
+  }
+  if (
+    incoming.checkInCode &&
+    existing.lumaCheckInCode !== incoming.checkInCode
+  ) {
+    patch.lumaCheckInCode = incoming.checkInCode
   }
   const localChangeInFlight = existing.lumaSync === 'pending'
   if (!localChangeInFlight && existing.status !== status) {
@@ -263,10 +279,17 @@ export const applyWebhookGuest = internalMutation({
   },
   returns: v.boolean(),
   handler: async (ctx, { lumaEventId, guest }) => {
-    const event = await ctx.db
-      .query('socialEvents')
-      .withIndex('by_lumaEventId', (q) => q.eq('lumaEventId', lumaEventId))
-      .first()
+    // Luma's webhooks come from the key's calendar: only its org's rows.
+    const orgId = await apiCalendarOrg(ctx)
+    if (!orgId) return false
+    // The attendance mirror (CRM history) re-reads this event's guests.
+    await flagGuestSync(ctx, orgId, lumaEventId)
+    const event = (
+      await ctx.db
+        .query('socialEvents')
+        .withIndex('by_lumaEventId', (q) => q.eq('lumaEventId', lumaEventId))
+        .take(10)
+    ).find((e) => e.orgId === orgId)
     if (!event) return false
     await applyLumaGuest(ctx, event, guest)
     return true
@@ -304,7 +327,7 @@ export const pushGuest = internalAction({
       guestId,
     })
     if (!data) return null
-    const { guest, lumaEventId } = data
+    const { guest, lumaEventId, orgId } = data
     if (!lumaEventId) return null
     if (!hasLumaApiKey()) {
       await ctx.runMutation(internal.social.lumaSync.markGuestSynced, {
@@ -315,6 +338,8 @@ export const pushGuest = internalAction({
     }
 
     try {
+      // Only the org whose calendar the key belongs to may write to Luma.
+      await assertOrgOwnsApiCalendar(ctx, orgId)
       const wanted =
         guest.status === 'approved' || guest.status === 'declined'
           ? guest.status
@@ -390,6 +415,7 @@ async function pullGuestsImpl(
       name: g.user_name,
       approvalStatus: g.approval_status,
       checkedInAt: lumaCheckedInAt(g),
+      checkInCode: g.check_in_qr_code,
     }))
     for (let i = 0; i < mapped.length; i += 100) {
       await ctx.runMutation(internal.social.lumaSync.applyLumaGuests, {

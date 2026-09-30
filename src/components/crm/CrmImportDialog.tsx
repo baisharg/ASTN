@@ -1,4 +1,4 @@
-import { useMutation } from 'convex/react'
+import { useMutation, useQuery } from 'convex/react'
 import { FileUp, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
@@ -12,7 +12,9 @@ import {
   NOTES_TARGET,
   SKIP_TARGET,
   suggestFieldKey,
+  withFieldDefs,
 } from '../../../convex/lib/crmFields'
+import type { CrmFieldDef } from '../../../convex/lib/crmFields'
 import { Button } from '~/components/ui/button'
 import {
   Dialog,
@@ -116,8 +118,8 @@ function buildRecord(
 function buildInitialMapping(
   headers: Array<string>,
   collection: TargetCollection,
+  fields: Array<CrmFieldDef>,
 ): Record<string, string> {
-  const fields = CRM_FIELDS[collection]
   const orphanDefault =
     collection === 'submissions' ? DATA_TARGET : NOTES_TARGET
   const mapping: Record<string, string> = {}
@@ -174,6 +176,29 @@ export function CrmImportDialog({
   const insertOrganizations = useMutation(api.crm.insertOrganizations)
   const insertOpportunities = useMutation(api.crm.insertOpportunities)
   const insertSubmissions = useMutation(api.crm.insertSubmissions)
+
+  // The org's configurable fields (builtin labels, Airtable and custom
+  // fields) are mapping targets too for contacts and organizations.
+  const contactDefs = useQuery(
+    api.contacts.records.listFields,
+    open ? { orgId, collection: 'contacts' } : 'skip',
+  )
+  const organizationDefs = useQuery(
+    api.contacts.records.listFields,
+    open ? { orgId, collection: 'organizations' } : 'skip',
+  )
+  const fieldsFor = useCallback(
+    (collection: TargetCollection): Array<CrmFieldDef> => {
+      if (collection === 'contacts') {
+        return withFieldDefs(CRM_FIELDS.contacts, contactDefs ?? [])
+      }
+      if (collection === 'organizations') {
+        return withFieldDefs(CRM_FIELDS.organizations, organizationDefs ?? [])
+      }
+      return CRM_FIELDS[collection]
+    },
+    [contactDefs, organizationDefs],
+  )
 
   const handleFileSelect = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -258,11 +283,15 @@ export function CrmImportDialog({
     for (const sheet of sheets) {
       const collection = sheetMappings[sheet.name]
       if (!collection) continue
-      next[sheet.name] = buildInitialMapping(sheet.headers, collection)
+      next[sheet.name] = buildInitialMapping(
+        sheet.headers,
+        collection,
+        fieldsFor(collection),
+      )
     }
     setColumnMappings(next)
     setStatus('mapping')
-  }, [sheets, sheetMappings])
+  }, [sheets, sheetMappings, fieldsFor])
 
   const handleImport = useCallback(async () => {
     setStatus('importing')
@@ -479,7 +508,14 @@ export function CrmImportDialog({
               <Button variant="outline" onClick={handleReset}>
                 Cancel
               </Button>
-              <Button onClick={goToMapping} disabled={mappedSheetCount === 0}>
+              <Button
+                onClick={goToMapping}
+                disabled={
+                  mappedSheetCount === 0 ||
+                  contactDefs === undefined ||
+                  organizationDefs === undefined
+                }
+              >
                 Next: map columns
               </Button>
             </div>
@@ -498,7 +534,7 @@ export function CrmImportDialog({
               {mappedSheets.map((sheet) => {
                 const collection = sheetMappings[sheet.name] as TargetCollection
                 const mapping = columnMappings[sheet.name] ?? {}
-                const fields = CRM_FIELDS[collection]
+                const fields = fieldsFor(collection)
                 const sample = sheet.rows[0] ?? {}
 
                 const missingRequired = fields
@@ -599,7 +635,7 @@ interface ColumnMapSectionProps {
   sheet: SheetPreview
   collection: TargetCollection
   mapping: Record<string, string>
-  fields: (typeof CRM_FIELDS)[TargetCollection]
+  fields: Array<CrmFieldDef>
   sample: Record<string, any>
   missingRequired: Array<string>
   onChange: (header: string, target: string) => void

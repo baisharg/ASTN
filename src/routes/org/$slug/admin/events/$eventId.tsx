@@ -5,6 +5,7 @@ import {
   CalendarDays,
   ExternalLink,
   ListChecks,
+  ScanLine,
   Settings,
   Users,
 } from 'lucide-react'
@@ -118,12 +119,23 @@ function AdminEventPage({
                 {event.venueName ? ` · ${event.venueName}` : ''}
               </p>
             </div>
-            <Button variant="outline" className="min-h-11" asChild>
-              <a href={publicPath} target="_blank" rel="noreferrer">
-                <ExternalLink className="size-4 mr-2" />
-                Ver página para asistentes
-              </a>
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button className="min-h-11" asChild>
+                <Link
+                  to="/org/$slug/admin/events/$eventId/checkin"
+                  params={{ slug, eventId: event._id }}
+                >
+                  <ScanLine className="size-4 mr-2" />
+                  Check-in en la puerta
+                </Link>
+              </Button>
+              <Button variant="outline" className="min-h-11" asChild>
+                <a href={publicPath} target="_blank" rel="noreferrer">
+                  <ExternalLink className="size-4 mr-2" />
+                  Ver página para asistentes
+                </a>
+              </Button>
+            </div>
           </div>
         </div>
 

@@ -29,16 +29,18 @@ export const upsertEvents = internalMutation({
 
     for (const event of events) {
       // Check if event already exists
+      // Each org keeps its own row for a Luma event.
       const existing = await ctx.db
         .query('events')
-        .withIndex('by_luma_id', (q) => q.eq('lumaEventId', event.lumaEventId))
+        .withIndex('by_orgId_and_lumaEventId', (q) =>
+          q.eq('orgId', orgId).eq('lumaEventId', event.lumaEventId),
+        )
         .first()
 
       if (existing) {
         // Update existing event
         await ctx.db.patch('events', existing._id, {
           ...event,
-          orgId,
           syncedAt: now,
         })
       } else {
