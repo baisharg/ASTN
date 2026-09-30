@@ -27,6 +27,7 @@ export type ApplicationStatus =
   | 'submitted'
   | 'under_review'
   | 'accepted'
+  | 'next_edition'
   | 'rejected'
   | 'redirected'
   | 'waitlisted'
@@ -36,6 +37,7 @@ const STATUS_LABELS: Record<ApplicationStatus, string> = {
   submitted: 'Submitted',
   under_review: 'Under Review',
   accepted: 'Accepted',
+  next_edition: 'Next edition',
   rejected: 'Rejected',
   redirected: 'Fit for another course',
   waitlisted: 'Waitlisted',
@@ -46,6 +48,7 @@ const STATUS_COLORS: Record<ApplicationStatus, string> = {
   submitted: 'bg-blue-50 text-blue-700 border-blue-200',
   under_review: 'bg-yellow-50 text-yellow-700 border-yellow-200',
   accepted: 'bg-green-50 text-green-700 border-green-200',
+  next_edition: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   rejected: 'bg-red-50 text-red-700 border-red-200',
   redirected: 'bg-orange-50 text-orange-700 border-orange-200',
   waitlisted: 'bg-purple-50 text-purple-700 border-purple-200',
@@ -71,6 +74,10 @@ export function ApplicationsTable({
       statusFilter !== 'all' ? (statusFilter as ApplicationStatus) : undefined,
   })
   const updateStatus = useMutation(api.opportunityApplications.updateStatus)
+  const nextEditionLinks = useQuery(
+    api.opportunityApplications.getNextEditionLinks,
+    { opportunityId },
+  )
   const exportCsv = useAction(api.opportunityApplications.exportApplications)
 
   const handleExport = async () => {
@@ -117,6 +124,7 @@ export function ApplicationsTable({
               <SelectItem value="submitted">Submitted</SelectItem>
               <SelectItem value="under_review">Under Review</SelectItem>
               <SelectItem value="accepted">Accepted</SelectItem>
+              <SelectItem value="next_edition">Next edition</SelectItem>
               <SelectItem value="rejected">Rejected</SelectItem>
               <SelectItem value="redirected">Fit for another course</SelectItem>
               <SelectItem value="waitlisted">Waitlisted</SelectItem>
@@ -161,7 +169,7 @@ export function ApplicationsTable({
           <div
             className="grid gap-2 px-4 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider"
             style={{
-              gridTemplateColumns: `${summaryFields.map(() => '1fr').join(' ')} 120px 100px 32px`,
+              gridTemplateColumns: `${summaryFields.map(() => '1fr').join(' ')} 120px 150px 32px`,
             }}
           >
             {summaryFields.map((f) => (
@@ -187,7 +195,7 @@ export function ApplicationsTable({
                   <div
                     className="grid gap-2 items-center px-4 py-3 text-sm"
                     style={{
-                      gridTemplateColumns: `${summaryFields.map(() => '1fr').join(' ')} 120px 100px 32px`,
+                      gridTemplateColumns: `${summaryFields.map(() => '1fr').join(' ')} 120px 150px 32px`,
                     }}
                   >
                     {summaryFields.map((f) => (
@@ -200,6 +208,14 @@ export function ApplicationsTable({
                     ))}
                     <span className="text-muted-foreground text-xs">
                       {new Date(app.submittedAt).toLocaleDateString()}
+                      {app.availabilityOnly && (
+                        <span
+                          className="block text-amber-700"
+                          title="Gave availability through the poll's open link without filling the application form"
+                        >
+                          Incomplete application
+                        </span>
+                      )}
                     </span>
                     <span>
                       <Badge
@@ -210,6 +226,24 @@ export function ApplicationsTable({
                       >
                         {STATUS_LABELS[app.status as ApplicationStatus]}
                       </Badge>
+                      {app.autoAcceptedFrom && (
+                        <span
+                          className="block text-[11px] text-green-700 mt-0.5"
+                          title={`Accepted automatically: marked Next edition in ${nextEditionLinks?.autoAcceptedFrom[app._id] ?? 'an earlier edition'}`}
+                        >
+                          Auto-accepted
+                        </span>
+                      )}
+                      {app.nextEditionAcceptedIn && (
+                        <span
+                          className="block text-[11px] text-muted-foreground mt-0.5 truncate"
+                          title={`Accepted in ${nextEditionLinks?.acceptedIn[app._id] ?? 'a later edition'}`}
+                        >
+                          → Accepted in{' '}
+                          {nextEditionLinks?.acceptedIn[app._id] ??
+                            'a later edition'}
+                        </span>
+                      )}
                     </span>
                     {isExpanded ? (
                       <ChevronUp className="size-4 text-muted-foreground" />
@@ -221,6 +255,14 @@ export function ApplicationsTable({
 
                 {isExpanded && (
                   <div className="border-t px-4 py-4">
+                    {app.availabilityOnly && (
+                      <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                        Incomplete application: this person gave their
+                        availability through the poll&apos;s open link and never
+                        filled the application form, so only their name and
+                        email are here.
+                      </p>
+                    )}
                     <ApplicationDetail
                       responses={r}
                       formFields={formFields}
@@ -287,6 +329,7 @@ function ApplicationDetail({
             <SelectItem value="submitted">Submitted</SelectItem>
             <SelectItem value="under_review">Under Review</SelectItem>
             <SelectItem value="accepted">Accepted</SelectItem>
+            <SelectItem value="next_edition">Next edition</SelectItem>
             <SelectItem value="rejected">Rejected</SelectItem>
             <SelectItem value="redirected">Fit for another course</SelectItem>
             <SelectItem value="waitlisted">Waitlisted</SelectItem>

@@ -1,5 +1,5 @@
 import { ConvexError, v } from 'convex/values'
-import { mutation, query } from '../_generated/server'
+import { internalMutation, mutation, query } from '../_generated/server'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc } from '../_generated/dataModel'
 import { getUserId, requireOrgAdminFor } from '../lib/auth'
@@ -12,7 +12,7 @@ import {
 } from './outbox'
 
 // Org-level library of email template sets (issue #20). A set (e.g. "TAIS",
-// "Governance") holds exactly one template per kind — the five rows are
+// "Governance") holds exactly one template per kind — the rows are
 // created together with the set, so a linked opportunity can never hit a
 // *missing* template: a decision that should send no email is expressed by
 // `enabled: false`, an explicit choice (waitlisted starts disabled).
@@ -23,6 +23,7 @@ import {
 export const EMAIL_KINDS = [
   'application_received',
   'accepted',
+  'next_edition',
   'rejected',
   'redirected',
   'waitlisted',
@@ -32,6 +33,7 @@ export type EmailKind = (typeof EMAIL_KINDS)[number]
 const emailKindValidator = v.union(
   v.literal('application_received'),
   v.literal('accepted'),
+  v.literal('next_edition'),
   v.literal('rejected'),
   v.literal('redirected'),
   v.literal('waitlisted'),
@@ -53,6 +55,11 @@ const DEFAULT_TEMPLATES: Record<
     markdownBody:
       'Hi {{applicant_name}},\n\nCongratulations! You have been accepted. We will follow up shortly with next steps.',
   },
+  next_edition: {
+    subject: 'A place for you in the next edition',
+    markdownBody:
+      'Hi {{applicant_name}},\n\nThank you for applying. We cannot fit you into this edition, but we have saved you a place in the next one — we will write to you when it opens.',
+  },
   rejected: {
     subject: 'Update on your application',
     markdownBody:
@@ -69,6 +76,11 @@ const DEFAULT_TEMPLATES: Record<
       'Hi {{applicant_name}},\n\nThank you for applying. You are currently on the waitlist — we will let you know as soon as a spot opens up.',
   },
 }
+
+const DISABLED_BY_DEFAULT: ReadonlySet<EmailKind> = new Set([
+  'waitlisted',
+  'next_edition',
+])
 
 async function requireAdmin(
   ctx: QueryCtx | MutationCtx,
@@ -136,7 +148,7 @@ export const listSets = query({
   },
 })
 
-// Creates the set together with all five kind templates — a set with missing
+// Creates the set together with a template for every kind — a set with missing
 // templates is unrepresentable.
 export const createSet = mutation({
   args: { orgId: v.id('organizations'), name: v.string() },
@@ -158,9 +170,10 @@ export const createSet = mutation({
         orgId,
         setId,
         kind,
-        // Waitlist is rarely used — starts disabled (an explicit off, not a
-        // missing template). Enable it from the set editor when needed.
-        enabled: kind !== 'waitlisted',
+        // Waitlist is rarely used and Next edition needs its own wording —
+        // both start disabled (an explicit off, not a missing template).
+        // Enable them from the set editor when needed.
+        enabled: !DISABLED_BY_DEFAULT.has(kind),
         subject: DEFAULT_TEMPLATES[kind].subject,
         markdownBody: DEFAULT_TEMPLATES[kind].markdownBody,
         includePollLink: false,
@@ -290,7 +303,7 @@ export const updateTemplate = mutation({
           kind: template.kind,
           setId: template.setId,
         })
-      // And the reverse: a kind that is off must not leave queued drafts behind.
+        // And the reverse: a kind that is off must not leave queued drafts behind.
       ;({ discarded, keptEdited } = await discardPendingDraftsForKind(ctx, {
         kind: template.kind,
         setId: template.setId,
@@ -316,7 +329,7 @@ export const updateTemplate = mutation({
 
 // ── Per-opportunity view (Emails tab) ───────────────────────────────────────
 
-// The five effective templates for an opportunity: override → set template.
+// The effective templates (one per kind) for an opportunity: override → set template.
 // Returns null when no set is linked (outbox system inactive).
 export const getEffectiveTemplates = query({
   args: { opportunityId: v.id('orgOpportunities') },
@@ -549,5 +562,43 @@ export const setOpportunityTemplateSet = mutation({
       }
     }
     return null
+  },
+})
+
+/**
+ * One-off, idempotent: give every existing set a template for each kind it is
+ * missing. Needed when a kind is added (Next edition, sep 2026): sets created
+ * before it have no row for it, and a set must never have a missing template.
+ * New rows are disabled, so adding them sends nothing to anyone.
+ */
+export const addMissingKindTemplates = internalMutation({
+  args: {},
+  returns: v.array(v.object({ setName: v.string(), kind: v.string() })),
+  handler: async (ctx) => {
+    const added: Array<{ setName: string; kind: string }> = []
+    const sets = await ctx.db.query('emailTemplateSets').collect()
+    for (const set of sets) {
+      const existing = await ctx.db
+        .query('emailTemplates')
+        .withIndex('by_set_and_kind', (q) => q.eq('setId', set._id))
+        .collect()
+      const have = new Set(existing.map((t) => t.kind))
+      for (const kind of EMAIL_KINDS) {
+        if (have.has(kind)) continue
+        await ctx.db.insert('emailTemplates', {
+          orgId: set.orgId,
+          setId: set._id,
+          kind,
+          enabled: false,
+          subject: DEFAULT_TEMPLATES[kind].subject,
+          markdownBody: DEFAULT_TEMPLATES[kind].markdownBody,
+          includePollLink: false,
+          includeSurveyLink: false,
+          updatedAt: Date.now(),
+        })
+        added.push({ setName: set.name, kind })
+      }
+    }
+    return added
   },
 })

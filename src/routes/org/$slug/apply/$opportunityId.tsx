@@ -482,10 +482,12 @@ function ApplyPage() {
               <span>
                 {hasPreviousAppData ? (
                   <>
-                    Some answers have been pre-filled from your previous
-                    application to{' '}
+                    Some answers have been pre-filled from your previous{' '}
+                    {previousApplication?.sourceTitles.length === 1
+                      ? 'application to '
+                      : 'applications to '}
                     <strong>
-                      {previousApplication?.sourceOpportunityTitle}
+                      {previousApplication?.sourceTitles.join(', ')}
                     </strong>
                     . Review and update as needed.
                   </>

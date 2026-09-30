@@ -25,6 +25,7 @@ const FROM_ADDRESS = 'ASTN <notifications@safetytalent.org>'
 
 export const DECISION_KINDS = [
   'accepted',
+  'next_edition',
   'rejected',
   'redirected',
   'waitlisted',
@@ -33,6 +34,7 @@ export type DecisionKind = (typeof DECISION_KINDS)[number]
 
 export const decisionKindValidator = v.union(
   v.literal('accepted'),
+  v.literal('next_edition'),
   v.literal('rejected'),
   v.literal('redirected'),
   v.literal('waitlisted'),
@@ -43,6 +45,7 @@ const KIND_BY_STATUS: Record<string, DecisionKind | null> = {
   submitted: null,
   under_review: null,
   accepted: 'accepted',
+  next_edition: 'next_edition',
   rejected: 'rejected',
   redirected: 'redirected',
   waitlisted: 'waitlisted',
@@ -197,9 +200,7 @@ export async function refreshPendingDraftsForTemplate(
       .query('orgOpportunities')
       .withIndex('by_org_and_status', (q) => q.eq('orgId', set.orgId))
       .collect()
-    opportunities.push(
-      ...linked.filter((o) => o.emailTemplateSetId === setId),
-    )
+    opportunities.push(...linked.filter((o) => o.emailTemplateSetId === setId))
   }
 
   let refreshed = 0
@@ -954,6 +955,44 @@ export const finalizeAutoSend = internalMutation({
       status: 'sent',
     })
     return 'sent'
+  },
+})
+
+// Availability emails from a poll's open link (confirmation, or the personal
+// link when the availability already existed). Not idempotent on purpose: the
+// person may ask for their link more than once, and the open-link rate limit
+// already caps how often that can happen.
+export const sendAvailabilityEmailNow = internalMutation({
+  args: {
+    applicationId: v.id('opportunityApplications'),
+    kind: v.string(),
+    to: v.string(),
+    recipientName: v.string(),
+    subject: v.string(),
+    html: v.string(),
+  },
+  returns: v.null(),
+  handler: async (
+    ctx,
+    { applicationId, kind, to, recipientName, subject, html },
+  ) => {
+    const app = await ctx.db.get('opportunityApplications', applicationId)
+    if (!app) return null
+    await resend.sendEmail(ctx, { from: FROM_ADDRESS, to, subject, html })
+    await ctx.db.insert('emailLog', {
+      orgId: app.orgId,
+      opportunityId: app.opportunityId,
+      applicationId,
+      recipientEmail: to,
+      recipientName,
+      kind,
+      source: 'auto',
+      subject,
+      sentAt: Date.now(),
+      sentBy: 'system',
+      status: 'sent',
+    })
+    return null
   },
 })
 

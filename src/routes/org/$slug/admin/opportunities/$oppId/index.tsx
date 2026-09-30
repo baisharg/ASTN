@@ -84,12 +84,10 @@ type OpportunityStatus = 'active' | 'closed' | 'draft'
 function OpportunityDetailsForm({
   opportunity,
   redirectTargets,
-  sourceOptions,
   existingTags,
 }: {
   opportunity: Doc<'orgOpportunities'>
   redirectTargets: Array<Doc<'orgOpportunities'>>
-  sourceOptions: Array<Doc<'orgOpportunities'>>
   existingTags: Array<string>
 }) {
   const updateOpp = useMutation(api.orgOpportunities.update)
@@ -110,9 +108,6 @@ function OpportunityDetailsForm({
   const [redirectOpportunityId, setRedirectOpportunityId] = useState<
     string | null
   >(opportunity.redirectOpportunityId ?? null)
-  const [sourceOpportunityId, setSourceOpportunityId] = useState<string | null>(
-    opportunity.sourceOpportunityId ?? null,
-  )
   const [isSavingDetails, setIsSavingDetails] = useState(false)
 
   const canSaveDetails = title.trim() && description.trim()
@@ -136,9 +131,6 @@ function OpportunityDetailsForm({
         featured,
         redirectOpportunityId: redirectOpportunityId
           ? (redirectOpportunityId as Id<'orgOpportunities'>)
-          : null,
-        sourceOpportunityId: sourceOpportunityId
-          ? (sourceOpportunityId as Id<'orgOpportunities'>)
           : null,
       })
       toast.success('Opportunity details saved')
@@ -308,34 +300,11 @@ function OpportunityDetailsForm({
         </div>
       )}
 
-      <div className="space-y-1">
-        <Label>Pre-fill applicants from a previous opportunity</Label>
-        <Select
-          value={sourceOpportunityId ?? 'none'}
-          onValueChange={(v) =>
-            setSourceOpportunityId(!v || v === 'none' ? null : v)
-          }
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="No pre-fill source" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="none">No pre-fill source</SelectItem>
-            {sourceOptions.map((t) => (
-              <SelectItem key={t._id} value={t._id}>
-                {t.title}
-                {t.status !== 'active' ? ` (${t.status})` : ''}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <p className="text-xs text-muted-foreground">
-          Applicants who previously applied to the source will have matching
-          answers pre-filled here. They can review and edit before submitting.
-          Only fields with the same key carry over; identity fields (name,
-          email, location, LinkedIn) stay sourced from their ASTN profile.
-        </p>
-      </div>
+      <p className="text-xs text-muted-foreground">
+        Returning applicants see their answers from any earlier application in
+        this organization pre-filled, matched by question key. Identity fields
+        (name, email, location, LinkedIn) come from their ASTN profile.
+      </p>
 
       <Button type="submit" disabled={!canSaveDetails || isSavingDetails}>
         {isSavingDetails ? (
@@ -388,17 +357,12 @@ function OpportunityEditPage() {
     (o) => o._id !== opportunity?._id,
   )
 
-  // Source (pre-fill) options: all opportunities in this org (any status),
-  // excluding the current one. Usually the source is a closed prior edition.
+  // All opportunities in this org, for tag suggestions.
   // Gated on admin membership — listAllByOrg throws for non-admins.
   const allOpportunities = useQuery(
     api.orgOpportunities.listAllByOrg,
     org && membership?.role === 'admin' ? { orgId: org._id } : 'skip',
   )
-  const sourceOptions = (allOpportunities ?? []).filter(
-    (o) => o._id !== opportunity?._id,
-  )
-
   // Tags already used anywhere in this org, offered as suggestions in the form.
   const existingTags = Array.from(
     new Set((allOpportunities ?? []).flatMap((o) => o.tags ?? [])),
@@ -609,6 +573,10 @@ function OpportunityEditPage() {
             </div>
           </div>
 
+          {membership?.role === 'admin' && (
+            <AutoAcceptedNotice opportunityId={opportunity._id} />
+          )}
+
           <Tabs defaultValue="details">
             <TabsList>
               <TabsTrigger value="details" className="gap-2">
@@ -655,7 +623,6 @@ function OpportunityEditPage() {
                       key={opportunity._id}
                       opportunity={opportunity}
                       redirectTargets={redirectTargets}
-                      sourceOptions={sourceOptions}
                       existingTags={existingTags}
                     />
                   </CardContent>
@@ -783,6 +750,75 @@ function OpportunityEditPage() {
 }
 
 // ─── Availability Tab ───
+
+/**
+ * One-time notice about people accepted automatically because they were
+ * marked Next edition in an earlier edition of this course. Shows only what
+ * this admin has not seen yet; dismissing it marks those as seen for them.
+ */
+function AutoAcceptedNotice({
+  opportunityId,
+}: {
+  opportunityId: Id<'orgOpportunities'>
+}) {
+  const unseen = useQuery(api.opportunityApplications.getUnseenAutoAccepted, {
+    opportunityId,
+  })
+  const markSeen = useMutation(api.opportunityApplications.markAutoAcceptedSeen)
+  const [dismissed, setDismissed] = useState(false)
+
+  if (!unseen || unseen.length === 0 || dismissed) return null
+
+  const byEdition = new Map<string, Array<string>>()
+  for (const person of unseen) {
+    byEdition.set(person.fromTitle, [
+      ...(byEdition.get(person.fromTitle) ?? []),
+      person.name,
+    ])
+  }
+
+  const close = () => {
+    setDismissed(true)
+    void markSeen({ applicationIds: unseen.map((p) => p.applicationId) })
+  }
+
+  return (
+    <AlertDialog open onOpenChange={(open) => !open && close()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {unseen.length === 1
+              ? '1 person was accepted automatically'
+              : `${unseen.length} people were accepted automatically`}
+          </AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-3 text-sm">
+              <p>
+                They were marked Next edition in an earlier edition of this
+                course, so they were accepted as soon as they applied or gave
+                their availability. Their accepted email is waiting in the
+                Outbox.
+              </p>
+              {[...byEdition].map(([edition, names]) => (
+                <div key={edition}>
+                  <p className="font-medium text-foreground">From {edition}</p>
+                  <ul className="list-disc pl-5">
+                    {names.map((name, i) => (
+                      <li key={`${name}-${i}`}>{name}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogAction onClick={close}>Got it</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
 
 function AvailabilityTab({
   opportunityId,
@@ -932,18 +968,6 @@ function AvailabilityTab({
 
   return (
     <div className="space-y-6">
-      {/* Applicant emails (incl. the on-apply confirmation with this poll's
-          link) live in the Emails tab (issue #20). */}
-      <Card className="border-blue-200 bg-blue-50/50">
-        <CardContent className="py-3">
-          <p className="text-sm text-blue-900">
-            Applicant emails for this opportunity are managed in the{' '}
-            <span className="font-medium">Emails</span> tab (including the
-            on-apply confirmation with this poll&apos;s link).
-          </p>
-        </CardContent>
-      </Card>
-
       {/* Poll info card */}
       <Card>
         <CardHeader>
@@ -972,6 +996,60 @@ function AvailabilityTab({
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Generic link: anyone identifies with name + email */}
+          <div className="space-y-2">
+            <Label>Generic link</Label>
+            <div className="flex items-center gap-2">
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <ClipboardCopy className="size-4 mr-1" />
+                    Copy
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      Share this link with care
+                    </AlertDialogTitle>
+                    <AlertDialogDescription asChild>
+                      <div className="space-y-2 text-sm">
+                        <p>
+                          This link is meant for people we already plan to
+                          accept, or who were accepted in a past edition.
+                        </p>
+                        <p>
+                          Anyone who has it can join this opportunity&apos;s
+                          applicants with just a name and an email. Send it
+                          directly to the people it is for, and avoid posting it
+                          in groups or public channels.
+                        </p>
+                      </div>
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(baseUrl)
+                        toast.success('Generic link copied')
+                      }}
+                    >
+                      Copy link
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              For people without a personal link: they give their name and email
+              (the email identifies them). Someone new appears in Applications
+              as an incomplete application to review; someone marked Next
+              edition in an earlier edition of this course is accepted
+              automatically.
+            </p>
+          </div>
+
           {/* Per-applicant links */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">

@@ -191,7 +191,7 @@ export const TOOL_DEFS = [
     description:
       `Update fields of a record. Updatable resources: ${UPDATE_RESOURCES.join(', ')}. ` +
       'Only allowlisted fields can be changed (see astn_resources). For applications you ' +
-      'can set `status` (submitted/under_review/accepted/rejected/redirected/waitlisted/participated) and ' +
+      'can set `status` (submitted/under_review/accepted/next_edition/rejected/redirected/waitlisted/participated) and ' +
       '`reviewNotes`; this records the decision inside ASTN and never emails the applicant. ' +
       'For opportunities and surveys you can also replace `formFields` — the application form and ' +
       'the survey questions respectively. Pass the whole array (astn_get returns the current one); ' +
@@ -339,7 +339,7 @@ const PLATFORM_UPDATE_HINTS: Record<string, string> = {
   polls:
     'status ∈ open|closed. Finalizing (picking the chosen slot) is done in the web app.',
   applications:
-    'status ∈ submitted|under_review|accepted|rejected|redirected|waitlisted|participated (redirected = "Fit for another course"); reviewNotes is free text. Setting these records the decision in ASTN and stamps reviewedAt/reviewedBy — it does NOT email the applicant (decision emails are drafted into the outbox when the opportunity has a template set).',
+    'status ∈ submitted|under_review|accepted|next_edition|rejected|redirected|waitlisted|participated (redirected = "Fit for another course"; next_edition = accepted for a later edition of the same course — whoever has it is accepted automatically when they apply or give availability to a later edition sharing a course tag); reviewNotes is free text. Setting these records the decision in ASTN and stamps reviewedAt/reviewedBy — it does NOT email the applicant (decision emails are drafted into the outbox when the opportunity has a template set).',
 }
 
 function describeResource(resource: string) {
@@ -370,7 +370,7 @@ function describeAllResources() {
   ]
   return {
     resources: all.map(cap),
-    note: 'Pass a `resource` to astn_resources for its field detail. Reads cover the whole org. Writes are allowed where a mistake can be undone: you can build a cohort end to end — create the opportunity with its application form, create and open its feedback survey and availability poll, record admission decisions — because all of that is reversible. What stays out is what is not: sending emails or broadcasts (a status change queues a draft for a human to send, and never sends), membership changes, finalizing a poll, and deleting anything holding other people\'s answers.',
+    note: "Pass a `resource` to astn_resources for its field detail. Reads cover the whole org. Writes are allowed where a mistake can be undone: you can build a cohort end to end — create the opportunity with its application form, create and open its feedback survey and availability poll, record admission decisions — because all of that is reversible. What stays out is what is not: sending emails or broadcasts (a status change queues a draft for a human to send, and never sends), membership changes, finalizing a poll, and deleting anything holding other people's answers.",
   }
 }
 

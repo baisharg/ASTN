@@ -11,6 +11,7 @@ export const applicationStatusValidator = v.union(
   v.literal('submitted'),
   v.literal('under_review'),
   v.literal('accepted'),
+  v.literal('next_edition'),
   v.literal('rejected'),
   v.literal('redirected'),
   v.literal('waitlisted'),

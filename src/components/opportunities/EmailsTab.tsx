@@ -68,6 +68,7 @@ import { Textarea } from '~/components/ui/textarea'
 type EmailKind =
   | 'application_received'
   | 'accepted'
+  | 'next_edition'
   | 'rejected'
   | 'redirected'
   | 'waitlisted'
@@ -75,9 +76,12 @@ type EmailKind =
 const KIND_LABELS: Record<string, string> = {
   application_received: 'Application received',
   accepted: 'Accepted',
+  next_edition: 'Next edition',
   rejected: 'Rejected',
   redirected: 'Fit for another course',
   waitlisted: 'Waitlisted',
+  availability_received: 'Availability received',
+  availability_link: 'Availability link',
   availability: 'Availability (legacy)',
   broadcast: 'Broadcast',
 }
@@ -85,6 +89,7 @@ const KIND_LABELS: Record<string, string> = {
 const KIND_COLORS: Record<string, string> = {
   application_received: 'bg-blue-50 text-blue-700 border-blue-200',
   accepted: 'bg-green-50 text-green-700 border-green-200',
+  next_edition: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   rejected: 'bg-red-50 text-red-700 border-red-200',
   redirected: 'bg-orange-50 text-orange-700 border-orange-200',
   waitlisted: 'bg-purple-50 text-purple-700 border-purple-200',
@@ -151,7 +156,7 @@ export function EmailsTab({
 type Draft = {
   _id: Id<'emailOutbox'>
   applicationId: Id<'opportunityApplications'>
-  kind: 'accepted' | 'rejected' | 'redirected' | 'waitlisted'
+  kind: 'accepted' | 'next_edition' | 'rejected' | 'redirected' | 'waitlisted'
   subject: string
   markdownBody: string
   includePollLink: boolean
@@ -802,9 +807,7 @@ function queueEffect(r: {
     return `${r.queued} draft${r.queued === 1 ? '' : 's'} queued for decisions already made`
   if (r.discarded > 0) {
     const kept =
-      r.keptEdited > 0
-        ? ` ${r.keptEdited} you had edited stayed.`
-        : ''
+      r.keptEdited > 0 ? ` ${r.keptEdited} you had edited stayed.` : ''
     return `${r.discarded} unsent draft${r.discarded === 1 ? '' : 's'} removed.${kept}`
   }
   if (r.keptEdited > 0)

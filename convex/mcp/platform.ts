@@ -4,17 +4,17 @@ import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc, Id } from '../_generated/dataModel'
 import { requireOrgAdminFor } from '../lib/auth'
 import { isOutboxActive, syncOutboxOnStatusChange } from '../emails/outbox'
-import {
-  assertFormFieldsShape,
-  sanitizeFormFieldKeys,
-} from '../lib/formFields'
+import { assertFormFieldsShape, sanitizeFormFieldKeys } from '../lib/formFields'
 import type { FormField } from '../lib/formFields'
 import {
   describeImpact,
   impactOnApplications,
   impactOnSurveyResponses,
 } from '../lib/formFieldChanges'
-import { createOpportunityFor, opportunityAttachments } from '../orgOpportunities'
+import {
+  createOpportunityFor,
+  opportunityAttachments,
+} from '../orgOpportunities'
 import { createSurveyFor } from '../feedbackSurveys'
 import { createPollFor } from '../availabilityPolls'
 
@@ -66,6 +66,7 @@ export const APPLICATION_STATUSES = [
   'submitted',
   'under_review',
   'accepted',
+  'next_edition', // accepted, but for a later edition of the same course
   'rejected',
   'redirected', // "Fit for another course"
   'waitlisted',
@@ -1172,7 +1173,9 @@ export const deleteOpportunity = internalMutation({
       throw new Error(
         `Cannot delete: this opportunity has ${blocking
           .map(([k, n]) => `${n} ${k}`)
-          .join(', ')}. Archive it instead (astn_update fields={archived:true}) — ` +
+          .join(
+            ', ',
+          )}. Archive it instead (astn_update fields={archived:true}) — ` +
           `nothing is lost and it leaves the list.`,
       )
     }

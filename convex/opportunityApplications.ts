@@ -1,13 +1,17 @@
 import { ConvexError, v } from 'convex/values'
 import { action, internalQuery, mutation, query } from './_generated/server'
-import { getUserId } from './lib/auth'
+import { getUserId, requireOrgAdmin } from './lib/auth'
 import { resolveApplicantContact } from './lib/applicantContact'
-import { resolveApplicantDisplayName } from './lib/applicantName'
+import {
+  resolveApplicantDisplayName,
+  resolveApplicantDisplayNameFromApplication,
+} from './lib/applicantName'
 import { rateLimiter } from './lib/rateLimiter'
 import { internal } from './_generated/api'
 import type { MutationCtx } from './_generated/server'
 import type { Id } from './_generated/dataModel'
 import { isOutboxActive, syncOutboxOnStatusChange } from './emails/outbox'
+import { maybeAutoAcceptFromNextEdition } from './lib/nextEdition'
 import {
   PROFILE_PREFILL_KEYS,
   sanitizeResponsesForForm,
@@ -162,6 +166,7 @@ export const submit = mutation({
       profileName: profile?.name,
       responses,
     })
+    await maybeAutoAcceptFromNextEdition(ctx, applicationId)
     if (isOutboxActive(opportunity)) {
       // On-apply confirmation (issue #20). All preconditions (kill switch,
       // template enabled, idempotency) are re-checked in the action.
@@ -227,6 +232,7 @@ export const submitGuest = mutation({
       applicationId,
       responses,
     })
+    await maybeAutoAcceptFromNextEdition(ctx, applicationId)
     if (isOutboxActive(opportunity)) {
       // On-apply confirmation (issue #20): see the authenticated path above.
       await ctx.scheduler.runAfter(
@@ -320,6 +326,7 @@ export const getMyApplication = query({
         v.literal('submitted'),
         v.literal('under_review'),
         v.literal('accepted'),
+        v.literal('next_edition'),
         v.literal('rejected'),
         v.literal('redirected'),
         v.literal('waitlisted'),
@@ -331,6 +338,11 @@ export const getMyApplication = query({
       reviewedAt: v.optional(v.number()),
       reviewedBy: v.optional(v.string()),
       reviewNotes: v.optional(v.string()),
+      contactEmailOverride: v.optional(v.string()),
+      availabilityOnly: v.optional(v.boolean()),
+      autoAcceptedFrom: v.optional(v.id('opportunityApplications')),
+      autoAcceptSeenBy: v.optional(v.array(v.string())),
+      nextEditionAcceptedIn: v.optional(v.id('orgOpportunities')),
     }),
     v.null(),
   ),
@@ -347,15 +359,22 @@ export const getMyApplication = query({
   },
 })
 
-// Pre-fill the apply form from the user's previous application to this
-// opportunity's configured source opportunity. Returns null when there is
-// no source configured, no prior application, or nothing to carry over.
+// Pre-fill the apply form with what this person already answered anywhere in
+// the org. Answers belong to the person, not to one opportunity: someone who
+// filled TAIS and now opens Gobernanza sees every question the two forms share
+// already answered, without an admin having to point one form at the other.
+//
+// Every prior application in the org counts (DDIs included), newest first, so
+// when two forms asked the same key the most recent answer wins. Each one is
+// cleaned against the current form on its own, since the same key can carry a
+// different option list in an older edition. Returns null when nothing
+// carries over.
 export const getPreviousResponsesForOpportunity = query({
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.union(
     v.null(),
     v.object({
-      sourceOpportunityTitle: v.string(),
+      sourceTitles: v.array(v.string()),
       responses: v.any(),
     }),
   ),
@@ -377,38 +396,168 @@ export const getPreviousResponsesForOpportunity = query({
       if (!membership || membership.role !== 'admin') return null
     }
 
-    const sourceId = opportunity.sourceOpportunityId
-    if (!sourceId) return null
-
-    // Use the most-recent prior application: `by_user_and_opportunity` is
-    // non-unique because `claimGuestApplications` can attach a userId to an
-    // older guest row alongside a later authenticated submission.
-    const [source, prior] = await Promise.all([
-      ctx.db.get('orgOpportunities', sourceId),
-      ctx.db
-        .query('opportunityApplications')
-        .withIndex('by_user_and_opportunity', (q) =>
-          q.eq('userId', userId).eq('opportunityId', sourceId),
-        )
-        .order('desc')
-        .first(),
-    ])
-    if (!source || source.orgId !== opportunity.orgId) return null
-    if (!prior) return null
-
     const formFields =
       (opportunity.formFields as Array<FormField> | undefined) ?? []
-    const cleaned = sanitizeResponsesForForm(
-      formFields,
-      (prior.responses as Record<string, unknown>) ?? {},
-      PROFILE_PREFILL_KEYS,
-    )
-    if (Object.keys(cleaned).length === 0) return null
+    if (formFields.length === 0) return null
 
-    return {
-      sourceOpportunityTitle: source.title,
-      responses: cleaned,
+    // A person applies to a handful of things, so reading all their rows and
+    // filtering by org is cheap. Their application to this same opportunity
+    // is left out: editing it is handled by the page from `getMyApplication`.
+    const mine = await ctx.db
+      .query('opportunityApplications')
+      .withIndex('by_user_and_opportunity', (q) => q.eq('userId', userId))
+      .collect()
+    const prior = mine
+      .filter(
+        (a) =>
+          a.orgId === opportunity.orgId && a.opportunityId !== opportunityId,
+      )
+      .sort((a, b) => b.submittedAt - a.submittedAt)
+
+    const responses: Record<string, unknown> = {}
+    const usedOpportunityIds = new Set<Id<'orgOpportunities'>>()
+    for (const application of prior) {
+      const cleaned = sanitizeResponsesForForm(
+        formFields,
+        (application.responses as Record<string, unknown>) ?? {},
+        PROFILE_PREFILL_KEYS,
+      )
+      for (const [key, value] of Object.entries(cleaned)) {
+        if (key in responses || isBlankAnswer(value)) continue
+        responses[key] = value
+        usedOpportunityIds.add(application.opportunityId)
+      }
     }
+    if (Object.keys(responses).length === 0) return null
+
+    const sources = await Promise.all(
+      [...usedOpportunityIds].map((id) => ctx.db.get('orgOpportunities', id)),
+    )
+    return {
+      sourceTitles: sources.flatMap((s) => (s ? [s.title] : [])),
+      responses,
+    }
+  },
+})
+
+// An empty answer in a newer form must not hide a real one in an older form.
+function isBlankAnswer(value: unknown): boolean {
+  if (value === undefined || value === null) return true
+  if (typeof value === 'string') return value.trim() === ''
+  if (Array.isArray(value)) return value.length === 0
+  return false
+}
+
+// Admin: where each Next edition link in this opportunity points. For an
+// application accepted automatically, the edition it was promised in; for a
+// `next_edition` application already honoured, the edition that accepted it.
+export const getNextEditionLinks = query({
+  args: { opportunityId: v.id('orgOpportunities') },
+  returns: v.object({
+    autoAcceptedFrom: v.record(v.string(), v.string()),
+    acceptedIn: v.record(v.string(), v.string()),
+  }),
+  handler: async (ctx, { opportunityId }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) return { autoAcceptedFrom: {}, acceptedIn: {} }
+    await requireOrgAdmin(ctx, opportunity.orgId)
+
+    const applications = await ctx.db
+      .query('opportunityApplications')
+      .withIndex('by_opportunity_and_status', (q) =>
+        q.eq('opportunityId', opportunityId),
+      )
+      .collect()
+
+    const autoAcceptedFrom: Record<string, string> = {}
+    const acceptedIn: Record<string, string> = {}
+    for (const app of applications) {
+      if (app.autoAcceptedFrom) {
+        const promise = await ctx.db.get(
+          'opportunityApplications',
+          app.autoAcceptedFrom,
+        )
+        const edition = promise
+          ? await ctx.db.get('orgOpportunities', promise.opportunityId)
+          : null
+        if (edition) autoAcceptedFrom[app._id] = edition.title
+      }
+      if (app.nextEditionAcceptedIn) {
+        const edition = await ctx.db.get(
+          'orgOpportunities',
+          app.nextEditionAcceptedIn,
+        )
+        if (edition) acceptedIn[app._id] = edition.title
+      }
+    }
+    return { autoAcceptedFrom, acceptedIn }
+  },
+})
+
+// Admin: people accepted automatically (Next edition) that this admin has not
+// been told about yet. Drives the one-time notice on the opportunity page.
+export const getUnseenAutoAccepted = query({
+  args: { opportunityId: v.id('orgOpportunities') },
+  returns: v.array(
+    v.object({
+      applicationId: v.id('opportunityApplications'),
+      name: v.string(),
+      fromTitle: v.string(),
+    }),
+  ),
+  handler: async (ctx, { opportunityId }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) return []
+    const userId = await requireOrgAdmin(ctx, opportunity.orgId)
+
+    const accepted = await ctx.db
+      .query('opportunityApplications')
+      .withIndex('by_opportunity_and_status', (q) =>
+        q.eq('opportunityId', opportunityId).eq('status', 'accepted'),
+      )
+      .collect()
+
+    const unseen = []
+    for (const app of accepted) {
+      if (!app.autoAcceptedFrom) continue
+      if (app.autoAcceptSeenBy?.includes(userId)) continue
+      const promise = await ctx.db.get(
+        'opportunityApplications',
+        app.autoAcceptedFrom,
+      )
+      const edition = promise
+        ? await ctx.db.get('orgOpportunities', promise.opportunityId)
+        : null
+      unseen.push({
+        applicationId: app._id,
+        name: await resolveApplicantDisplayNameFromApplication(
+          ctx.db,
+          app,
+          'Applicant',
+        ),
+        fromTitle: edition?.title ?? 'an earlier edition',
+      })
+    }
+    return unseen
+  },
+})
+
+// Admin: dismiss the automatic-acceptance notice for these applications.
+export const markAutoAcceptedSeen = mutation({
+  args: { applicationIds: v.array(v.id('opportunityApplications')) },
+  returns: v.null(),
+  handler: async (ctx, { applicationIds }) => {
+    for (const id of applicationIds) {
+      const app = await ctx.db.get('opportunityApplications', id)
+      if (!app) continue
+      const userId = await requireOrgAdmin(ctx, app.orgId)
+      const seen = app.autoAcceptSeenBy ?? []
+      if (seen.includes(userId)) continue
+      await ctx.db.patch('opportunityApplications', id, {
+        autoAcceptSeenBy: [...seen, userId],
+      })
+    }
+    return null
   },
 })
 
@@ -421,6 +570,7 @@ export const listByOpportunity = query({
         v.literal('submitted'),
         v.literal('under_review'),
         v.literal('accepted'),
+        v.literal('next_edition'),
         v.literal('rejected'),
         v.literal('redirected'),
         v.literal('waitlisted'),
@@ -441,6 +591,7 @@ export const listByOpportunity = query({
         v.literal('submitted'),
         v.literal('under_review'),
         v.literal('accepted'),
+        v.literal('next_edition'),
         v.literal('rejected'),
         v.literal('redirected'),
         v.literal('waitlisted'),
@@ -452,6 +603,11 @@ export const listByOpportunity = query({
       reviewedAt: v.optional(v.number()),
       reviewedBy: v.optional(v.string()),
       reviewNotes: v.optional(v.string()),
+      contactEmailOverride: v.optional(v.string()),
+      availabilityOnly: v.optional(v.boolean()),
+      autoAcceptedFrom: v.optional(v.id('opportunityApplications')),
+      autoAcceptSeenBy: v.optional(v.array(v.string())),
+      nextEditionAcceptedIn: v.optional(v.id('orgOpportunities')),
     }),
   ),
   handler: async (ctx, { opportunityId, statusFilter }) => {
@@ -505,6 +661,7 @@ export const listRecipientsByOpportunity = query({
         v.literal('submitted'),
         v.literal('under_review'),
         v.literal('accepted'),
+        v.literal('next_edition'),
         v.literal('rejected'),
         v.literal('redirected'),
         v.literal('waitlisted'),
@@ -658,6 +815,7 @@ export const updateStatus = mutation({
       v.literal('submitted'),
       v.literal('under_review'),
       v.literal('accepted'),
+      v.literal('next_edition'),
       v.literal('rejected'),
       v.literal('redirected'),
       v.literal('waitlisted'),
@@ -740,6 +898,7 @@ export const listForExport = internalQuery({
         v.literal('submitted'),
         v.literal('under_review'),
         v.literal('accepted'),
+        v.literal('next_edition'),
         v.literal('rejected'),
         v.literal('redirected'),
         v.literal('waitlisted'),
@@ -751,6 +910,11 @@ export const listForExport = internalQuery({
       reviewedAt: v.optional(v.number()),
       reviewedBy: v.optional(v.string()),
       reviewNotes: v.optional(v.string()),
+      contactEmailOverride: v.optional(v.string()),
+      availabilityOnly: v.optional(v.boolean()),
+      autoAcceptedFrom: v.optional(v.id('opportunityApplications')),
+      autoAcceptSeenBy: v.optional(v.array(v.string())),
+      nextEditionAcceptedIn: v.optional(v.id('orgOpportunities')),
     }),
   ),
   handler: async (ctx, { opportunityId }) => {
