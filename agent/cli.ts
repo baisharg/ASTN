@@ -50,7 +50,7 @@ if (programId) {
 console.log()
 
 // Open browser with token in hash (never sent to server)
-const appUrl = process.env.APP_URL ?? 'https://safetytalent.org'
+const appUrl = process.env.APP_URL ?? 'https://app.baish.com.ar'
 const targetUrl = programId
   ? `${appUrl}/org/${orgSlug}/admin/programs/${programId}#agent=${token}`
   : `${appUrl}/org/${orgSlug}/admin#agent=${token}`

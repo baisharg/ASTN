@@ -6,6 +6,7 @@ import { components } from '../_generated/api'
 import { log } from '../lib/logging'
 import { getLegacyUserEmail } from '../lib/auth'
 import { takePublicEvents } from '../events/queries'
+import { emailFrom } from '../lib/siteUrl'
 
 // Initialize Resend component
 // For production: set RESEND_API_KEY in Convex dashboard
@@ -13,9 +14,6 @@ import { takePublicEvents } from '../events/queries'
 export const resend = new Resend(components.resend, {
   testMode: false,
 })
-
-// From address for all ASTN emails
-const FROM_ADDRESS = 'ASTN <notifications@safetytalent.org>'
 
 /**
  * Send a match alert email
@@ -30,7 +28,7 @@ export const sendMatchAlert = internalMutation({
   },
   handler: async (ctx, { to, subject, html, unsubscribeUrl }) => {
     await resend.sendEmail(ctx, {
-      from: FROM_ADDRESS,
+      from: emailFrom(),
       to,
       subject,
       html,
@@ -60,7 +58,7 @@ export const sendWeeklyDigest = internalMutation({
   },
   handler: async (ctx, { to, subject, html, unsubscribeUrl }) => {
     await resend.sendEmail(ctx, {
-      from: FROM_ADDRESS,
+      from: emailFrom(),
       to,
       subject,
       html,
@@ -576,7 +574,7 @@ export const sendDeadlineReminder = internalMutation({
   returns: v.null(),
   handler: async (ctx, { to, subject, html, unsubscribeUrl }) => {
     await resend.sendEmail(ctx, {
-      from: FROM_ADDRESS,
+      from: emailFrom(),
       to,
       subject,
       html,
@@ -631,7 +629,7 @@ export const sendFeedbackNotification = internalMutation({
     `
 
     await resend.sendEmail(ctx, {
-      from: FROM_ADDRESS,
+      from: emailFrom(),
       to,
       subject: `[ASTN Feedback] New feedback from ${page}`,
       html,
@@ -655,7 +653,7 @@ export const sendEventDigest = internalMutation({
   },
   handler: async (ctx, { to, subject, html, unsubscribeUrl }) => {
     await resend.sendEmail(ctx, {
-      from: FROM_ADDRESS,
+      from: emailFrom(),
       to,
       subject,
       html,
