@@ -12,7 +12,9 @@ const searchSchema = z.object({
       'preferences',
       'privacy',
     ])
-    .optional(),
+    .optional()
+    // Old links (e.g. ?step=enrichment, a removed step) open the profile.
+    .catch(undefined),
 })
 
 export const Route = createFileRoute('/profile/edit')({
