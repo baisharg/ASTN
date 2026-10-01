@@ -108,7 +108,27 @@ export function getRouter() {
         /^Non-Error promise rejection captured with value: Object Not Found Matching Id:\d+, MethodName:update, ParamCount:\d+$/,
         // Unactionable: bots/crawlers with corrupted JS bundles failing to construct Convex WebSocket
         "Failed to construct 'WebSocket'",
+        // Benign browser noise
+        'ResizeObserver loop limit exceeded',
+        'ResizeObserver loop completed with undelivered notifications',
+        // Android in-app browsers (WebView bridge torn down)
+        'Java object is gone',
       ],
+    })
+
+    // After a deploy, an open tab can ask for code chunks that no longer
+    // exist. Reload once to pick up the new build instead of erroring.
+    window.addEventListener('vite:preloadError', (event) => {
+      try {
+        const key = 'astn-chunk-reload'
+        const last = Number(sessionStorage.getItem(key) ?? 0)
+        if (Date.now() - last < 60_000) return
+        sessionStorage.setItem(key, String(Date.now()))
+      } catch {
+        // No storage: still reload once.
+      }
+      event.preventDefault()
+      window.location.reload()
     })
   }
 

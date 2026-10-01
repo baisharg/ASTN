@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../../../convex/_generated/api'
+import type { FunctionReturnType } from 'convex/server'
 import type { MatchSortOrder } from '~/lib/matchScoring'
 import { OnboardingGuard } from '~/components/auth/onboarding-guard'
 import { AuthHeader } from '~/components/layout/auth-header'
@@ -537,6 +538,43 @@ function MatchesContent() {
     )
   }
 
+  return (
+    <MatchesList
+      matchesData={matchesData}
+      isComputing={isComputing}
+      isProgressStale={isProgressStale}
+      matchProgress={matchProgress}
+      growthAreas={growthAreas}
+      onCompute={handleCompute}
+    />
+  )
+}
+
+type LoadedMatches = Extract<
+  NonNullable<FunctionReturnType<typeof api.matches.getMyMatches>>,
+  { matches: unknown }
+>
+
+// Split out so its hooks always run in the same order: MatchesContent
+// returns early for loading, gating and error states.
+function MatchesList({
+  matchesData,
+  isComputing,
+  isProgressStale,
+  matchProgress,
+  growthAreas,
+  onCompute: handleCompute,
+}: {
+  matchesData: LoadedMatches
+  isComputing: boolean
+  isProgressStale: boolean
+  matchProgress:
+    | FunctionReturnType<typeof api.matches.getMatchProgress>
+    | undefined
+  growthAreas: ReturnType<typeof aggregateGrowthAreas>
+  onCompute: () => Promise<void>
+}) {
+  const posthog = usePostHog()
   const isMobile = useIsMobile()
   const dismissMatch = useMutation(api.matches.dismissMatch)
   const saveMatch = useMutation(api.matches.saveMatch)
