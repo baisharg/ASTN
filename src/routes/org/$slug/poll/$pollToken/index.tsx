@@ -9,6 +9,15 @@ import { CheckCircle2, Clock, Loader2, Lock, Mail } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '../../../../../../convex/_generated/api'
 import { AvailabilityGrid } from '~/components/availability/AvailabilityGrid'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '~/components/ui/alert-dialog'
 import { GradientBg } from '~/components/layout/GradientBg'
 import { Button } from '~/components/ui/button'
 import { Input } from '~/components/ui/input'
@@ -95,6 +104,7 @@ function OpenAvailabilityForm({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [outcome, setOutcome] = useState<'saved' | 'emailed_link' | null>(null)
+  const [emailNoticeSeen, setEmailNoticeSeen] = useState(false)
 
   // Say what is missing instead of silently disabling the button.
   const missing = [
@@ -134,23 +144,47 @@ function OpenAvailabilityForm({
     }
   }
 
-  if (outcome) {
+  if (outcome === 'saved') {
     return (
       <Notice
-        icon={
-          outcome === 'saved' ? (
-            <CheckCircle2 className="size-8 text-green-600 mx-auto mb-4" />
-          ) : (
-            <Mail className="size-8 text-blue-600 mx-auto mb-4" />
-          )
-        }
-        title={outcome === 'saved' ? 'Availability saved' : 'Check your email'}
-        body={
-          outcome === 'saved'
-            ? `Thanks! We emailed ${email.trim()} a personal link to review or change your availability later.`
-            : `${email.trim()} already shared an availability for this poll, so we did not change it. We emailed that address a personal link to update it.`
-        }
+        icon={<CheckCircle2 className="size-8 text-green-600 mx-auto mb-4" />}
+        title="Availability saved"
+        body={`Thanks! We emailed ${email.trim()} a personal link to review or change your availability later.`}
       />
+    )
+  }
+
+  if (outcome === 'emailed_link') {
+    const body = `${email.trim()} already shared an availability for this poll, so we did not change it. We emailed that address a personal link to update it.`
+    // A pop-up the person has to dismiss, so nobody closes the tab thinking
+    // their new times were saved.
+    return (
+      <>
+        <Notice
+          icon={<Mail className="size-8 text-blue-600 mx-auto mb-4" />}
+          title="Check your email"
+          body={body}
+        />
+        <AlertDialog
+          open={!emailNoticeSeen}
+          onOpenChange={(open) => !open && setEmailNoticeSeen(true)}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2">
+                <Mail className="size-5 text-blue-600" />
+                Your availability was not changed
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {body} Use the link in that email to change your times.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogAction>Got it</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </>
     )
   }
 
