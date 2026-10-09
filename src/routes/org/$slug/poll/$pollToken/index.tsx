@@ -191,7 +191,16 @@ function OpenAvailabilityForm({
   return (
     <GradientBg>
       <main className="container mx-auto px-4 py-8">
-        <form onSubmit={handleSubmit} className="max-w-3xl mx-auto">
+        <form
+          onSubmit={handleSubmit}
+          // Only the Send button submits: Enter in a field does not.
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && e.target instanceof HTMLInputElement) {
+              e.preventDefault()
+            }
+          }}
+          className="max-w-3xl mx-auto"
+        >
           <div className="mb-6">
             <p className="text-sm text-muted-foreground">{org.name}</p>
             <h1 className="text-2xl font-display font-semibold text-foreground">

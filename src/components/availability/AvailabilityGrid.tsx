@@ -96,8 +96,12 @@ export function AvailabilityGrid({
       if (readOnly) return
       lastPointerTypeRef.current = e.pointerType
       if (e.pointerType === 'touch') return // touch taps handled by onClick
+      // Right click (or Ctrl+click on a Mac) always clears, whatever the
+      // selected mode; other buttons do nothing.
+      const secondary = e.button === 2 || (e.button === 0 && e.ctrlKey)
+      if (e.button !== 0 && !secondary) return
       isDraggingRef.current = true
-      activePaintModeRef.current = paintModeRef.current
+      activePaintModeRef.current = secondary ? 'clear' : paintModeRef.current
       paintCell(key)
     },
     [readOnly, paintCell],
@@ -128,8 +132,9 @@ export function AvailabilityGrid({
   return (
     <div className="flex flex-col gap-3">
       {!readOnly && (
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
+            type="button"
             variant="outline"
             size="sm"
             className={cn(
@@ -144,6 +149,7 @@ export function AvailabilityGrid({
             Available
           </Button>
           <Button
+            type="button"
             variant="outline"
             size="sm"
             className={cn(
@@ -158,6 +164,7 @@ export function AvailabilityGrid({
             Maybe
           </Button>
           <Button
+            type="button"
             variant="outline"
             size="sm"
             className={cn(
@@ -173,6 +180,7 @@ export function AvailabilityGrid({
           </Button>
           {Object.keys(slots).length > 0 && (
             <Button
+              type="button"
               variant="ghost"
               size="sm"
               className="ml-auto text-muted-foreground"
@@ -185,11 +193,12 @@ export function AvailabilityGrid({
       )}
 
       <div
-        className="select-none overflow-x-auto"
+        className="select-none overflow-x-auto max-w-full"
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
+        onContextMenu={readOnly ? undefined : (e) => e.preventDefault()}
       >
-        <table className="border-collapse">
+        <table className="w-full border-collapse">
           <thead>
             <tr>
               <th className="sticky left-0 z-10 bg-background p-1" />
