@@ -10,6 +10,7 @@ import {
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
 import type { FormField } from '../../../convex/lib/formFields'
+import { nameRoleOfFieldKey } from '../../../convex/lib/applicantName'
 import { DynamicResponseViewer } from '~/components/opportunities/DynamicResponseViewer'
 import { Card } from '~/components/ui/card'
 import { Button } from '~/components/ui/button'
@@ -198,12 +199,15 @@ export function ApplicationsTable({
                       gridTemplateColumns: `${summaryFields.map(() => '1fr').join(' ')} 120px 150px 32px`,
                     }}
                   >
-                    {summaryFields.map((f) => (
+                    {(app.availabilityOnly
+                      ? incompleteSummaryCells(summaryFields, r)
+                      : summaryFields.map((f) => formatCellValue(r[f.key]))
+                    ).map((value, i) => (
                       <span
-                        key={f.key}
+                        key={summaryFields[i].key}
                         className="truncate text-muted-foreground"
                       >
-                        {formatCellValue(r[f.key])}
+                        {value}
                       </span>
                     ))}
                     <span className="text-muted-foreground text-xs">
@@ -279,6 +283,42 @@ export function ApplicationsTable({
       )}
     </div>
   )
+}
+
+/**
+ * An incomplete application (availability through the poll's generic link)
+ * only stores firstName, lastName and email, whose keys rarely match the
+ * form's own. Place them in the columns that ask for them, and if no column
+ * does, show the name and email in the first two.
+ */
+function incompleteSummaryCells(
+  summaryFields: Array<FormField>,
+  r: Record<string, unknown>,
+): Array<string> {
+  const first = typeof r.firstName === 'string' ? r.firstName : ''
+  const last = typeof r.lastName === 'string' ? r.lastName : ''
+  const email = typeof r.email === 'string' ? r.email : ''
+  const full = [first, last].filter(Boolean).join(' ')
+  const hasLastColumn = summaryFields.some(
+    (f) => nameRoleOfFieldKey(f.key) === 'last',
+  )
+
+  const cells = summaryFields.map((f) => {
+    if (r[f.key] !== undefined) return formatCellValue(r[f.key])
+    if (f.kind === 'email' || /e-?mail|correo/i.test(f.key)) return email
+    const role = nameRoleOfFieldKey(f.key)
+    if (role === 'first') return hasLastColumn ? first : full
+    if (role === 'last') return last
+    if (role === 'full') return full
+    return ''
+  })
+
+  const showsName = summaryFields.some((f) => nameRoleOfFieldKey(f.key))
+  if (!showsName && cells.length > 0) {
+    cells[0] = full
+    if (cells.length > 1 && !cells.includes(email)) cells[1] = email
+  }
+  return cells
 }
 
 function formatCellValue(val: unknown): string {

@@ -60,6 +60,21 @@ function readByKeys(
   return null
 }
 
+/**
+ * Which part of a person's name a form field asks for, judging by its key.
+ */
+export function nameRoleOfFieldKey(
+  key: string,
+): 'first' | 'last' | 'full' | null {
+  const k = normalizeKey(key)
+  const matches = (keys: Array<string>) =>
+    keys.some((candidate) => normalizeKey(candidate) === k)
+  if (matches(FIRST_NAME_KEYS)) return 'first'
+  if (matches(LAST_NAME_KEYS)) return 'last'
+  if (matches(FULL_NAME_KEYS)) return 'full'
+  return null
+}
+
 export function extractApplicantNameFromResponses(
   responses: unknown,
 ): string | null {
