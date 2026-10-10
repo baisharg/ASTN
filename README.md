@@ -2,7 +2,7 @@
 
 A career command center for AI safety talent. Users maintain living profiles, receive AI-powered opportunity matching with fit explanations, and get personalized career recommendations.
 
-Live at [safetytalent.org](https://safetytalent.org).
+Live at [app.baish.com.ar](https://app.baish.com.ar) (formerly safetytalent.org, which redirects there).
 
 ## What it does
 

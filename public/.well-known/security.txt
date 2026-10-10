@@ -1,4 +1,4 @@
 Contact: mailto:luca@baish.com.ar
 Preferred-Languages: en
-Canonical: https://safetytalent.org/.well-known/security.txt
+Canonical: https://app.baish.com.ar/.well-known/security.txt
 Expires: 2027-02-11T00:00:00.000Z

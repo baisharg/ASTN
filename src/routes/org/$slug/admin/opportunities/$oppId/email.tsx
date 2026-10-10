@@ -37,6 +37,7 @@ import { Label } from '~/components/ui/label'
 import { Spinner } from '~/components/ui/spinner'
 import { Textarea } from '~/components/ui/textarea'
 import { cn } from '~/lib/utils'
+import { SITE_HOST, SITE_URL } from '~/lib/site-url'
 
 export const Route = createFileRoute(
   '/org/$slug/admin/opportunities/$oppId/email',
@@ -225,9 +226,7 @@ function EmailComposePage() {
   // when the poll/survey is actually live, so an unrecognized variable stays
   // visible as literal `{{...}}` text.
   const origin =
-    typeof window !== 'undefined'
-      ? window.location.origin
-      : 'https://safetytalent.org'
+    typeof window !== 'undefined' ? window.location.origin : SITE_URL
   const pollExampleLink =
     activePoll && activePoll.status !== 'finalized'
       ? `${origin}/org/${slug}/poll/example`
@@ -703,7 +702,7 @@ function EmailComposePage() {
                       AI Safety Talent Network
                     </p>
                     <p className="text-xs text-gray-400 text-center">
-                      safetytalent.org
+                      {SITE_HOST}
                     </p>
                   </div>
                 </div>

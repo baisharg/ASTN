@@ -26,6 +26,7 @@ import { GradientBg } from '~/components/layout/GradientBg'
 import { DynamicFormRenderer } from '~/components/opportunities/DynamicFormRenderer'
 import { Button } from '~/components/ui/button'
 import { saveGuestApplicationEmail } from '~/lib/pendingGuestApplication'
+import { SITE_URL } from '~/lib/site-url'
 
 // Keep in sync with APPLICATION_EDIT_GRACE_MS in
 // convex/opportunityApplications.ts.
@@ -65,7 +66,7 @@ export const Route = createFileRoute('/org/$slug/apply/$opportunityId')({
     const fallback = isRedirect
       ? `Express interest in future cohorts at ${orgName} on AI Safety Talent Network.`
       : `Apply for this opportunity at ${orgName} on AI Safety Talent Network.`
-    const url = `https://safetytalent.org/org/${params.slug}/apply/${params.opportunityId}`
+    const url = `${SITE_URL}/org/${params.slug}/apply/${params.opportunityId}`
 
     return {
       meta: [

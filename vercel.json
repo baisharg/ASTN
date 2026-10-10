@@ -1,6 +1,30 @@
 {
   "installCommand": "pnpm install --frozen-lockfile",
   "buildCommand": "bash scripts/vercel-build.sh",
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "safetytalent.org"
+        }
+      ],
+      "destination": "https://app.baish.com.ar/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "www.safetytalent.org"
+        }
+      ],
+      "destination": "https://app.baish.com.ar/:path*",
+      "permanent": true
+    }
+  ],
   "rewrites": [
     {
       "source": "/ingest/static/:path*",
@@ -21,7 +45,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://clerk.safetytalent.org https://challenges.cloudflare.com https://us-assets.i.posthog.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.convex.cloud wss://*.convex.cloud https://clerk.safetytalent.org https://us.i.posthog.com https://us-assets.i.posthog.com ws://localhost:*; img-src 'self' data: blob: https://img.clerk.com https://*.tile.openstreetmap.org https://*.convex.cloud; font-src 'self' data:; frame-src https://clerk.safetytalent.org https://accounts.safetytalent.org https://challenges.cloudflare.com https://lu.ma; worker-src 'self' blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://clerk.safetytalent.org https://clerk.app.baish.com.ar https://challenges.cloudflare.com https://us-assets.i.posthog.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.convex.cloud wss://*.convex.cloud https://clerk.safetytalent.org https://clerk.app.baish.com.ar https://us.i.posthog.com https://us-assets.i.posthog.com ws://localhost:*; img-src 'self' data: blob: https://img.clerk.com https://*.tile.openstreetmap.org https://*.convex.cloud; font-src 'self' data:; frame-src https://clerk.safetytalent.org https://accounts.safetytalent.org https://clerk.app.baish.com.ar https://accounts.app.baish.com.ar https://challenges.cloudflare.com https://lu.ma; worker-src 'self' blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
         },
         {
           "key": "X-Content-Type-Options",
