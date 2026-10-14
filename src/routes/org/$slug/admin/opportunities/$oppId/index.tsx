@@ -761,13 +761,21 @@ function AutoAcceptedNotice({
 }: {
   opportunityId: Id<'orgOpportunities'>
 }) {
-  const unseen = useQuery(api.opportunityApplications.getUnseenAutoAccepted, {
-    opportunityId,
-  })
+  const allUnseen = useQuery(
+    api.opportunityApplications.getUnseenAutoAccepted,
+    { opportunityId },
+  )
   const markSeen = useMutation(api.opportunityApplications.markAutoAcceptedSeen)
-  const [dismissed, setDismissed] = useState(false)
+  // Remember what was dismissed per person, not as a single flag: someone
+  // accepted automatically while the page is open must still get a notice.
+  const [dismissedIds, setDismissedIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  )
+  const unseen = (allUnseen ?? []).filter(
+    (p) => !dismissedIds.has(p.applicationId),
+  )
 
-  if (!unseen || unseen.length === 0 || dismissed) return null
+  if (unseen.length === 0) return null
 
   const byEdition = new Map<string, Array<string>>()
   for (const person of unseen) {
@@ -778,7 +786,9 @@ function AutoAcceptedNotice({
   }
 
   const close = () => {
-    setDismissed(true)
+    setDismissedIds(
+      (prev) => new Set([...prev, ...unseen.map((p) => p.applicationId)]),
+    )
     void markSeen({ applicationIds: unseen.map((p) => p.applicationId) })
   }
 
