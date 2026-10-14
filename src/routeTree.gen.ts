@@ -9,101 +9,81 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as TermsRouteImport } from './routes/terms'
-import { Route as PrivacyRouteImport } from './routes/privacy'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as SettingsRouteRouteImport } from './routes/settings/route'
-import { Route as ApplyRouteRouteImport } from './routes/apply/route'
-import { Route as AdminRouteRouteImport } from './routes/admin/route'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as SettingsIndexRouteImport } from './routes/settings/index'
-import { Route as ProfileIndexRouteImport } from './routes/profile/index'
-import { Route as OrgsIndexRouteImport } from './routes/orgs/index'
-import { Route as OpportunitiesIndexRouteImport } from './routes/opportunities/index'
-import { Route as MatchesIndexRouteImport } from './routes/matches/index'
-import { Route as ApplyIndexRouteImport } from './routes/apply/index'
+import { Route as AdminRouteRouteImport } from './routes/admin/route'
+import { Route as ApplyRouteRouteImport } from './routes/apply/route'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as PrivacyRouteImport } from './routes/privacy'
+import { Route as SettingsRouteRouteImport } from './routes/settings/route'
+import { Route as TermsRouteImport } from './routes/terms'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
-import { Route as ProfileEditRouteImport } from './routes/profile/edit'
-import { Route as ProfileAttendanceRouteImport } from './routes/profile/attendance'
-import { Route as ProfileAgentRouteImport } from './routes/profile/agent'
-import { Route as OpportunitiesIdRouteImport } from './routes/opportunities/$id'
-import { Route as MatchesIdRouteImport } from './routes/matches/$id'
-import { Route as ApplyStatusRouteImport } from './routes/apply/status'
-import { Route as AdminUsersRouteRouteImport } from './routes/admin/users/route'
 import { Route as AdminApplicationsRouteRouteImport } from './routes/admin/applications/route'
-import { Route as OrgSlugIndexRouteImport } from './routes/org/$slug/index'
-import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
-import { Route as AdminOpportunitiesIndexRouteImport } from './routes/admin/opportunities/index'
-import { Route as AdminCostsIndexRouteImport } from './routes/admin/costs/index'
+import { Route as AdminUsersRouteRouteImport } from './routes/admin/users/route'
+import { Route as ApplyIndexRouteImport } from './routes/apply/index'
+import { Route as ApplyStatusRouteImport } from './routes/apply/status'
+import { Route as MatchesIndexRouteImport } from './routes/matches/index'
+import { Route as MatchesIdRouteImport } from './routes/matches/$id'
+import { Route as OpportunitiesIndexRouteImport } from './routes/opportunities/index'
+import { Route as OpportunitiesIdRouteImport } from './routes/opportunities/$id'
+import { Route as OrgsIndexRouteImport } from './routes/orgs/index'
+import { Route as ProfileIndexRouteImport } from './routes/profile/index'
+import { Route as ProfileAgentRouteImport } from './routes/profile/agent'
+import { Route as ProfileAttendanceRouteImport } from './routes/profile/attendance'
+import { Route as ProfileEditRouteImport } from './routes/profile/edit'
+import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as AdminApplicationsIndexRouteImport } from './routes/admin/applications/index'
-import { Route as OrgSlugVisitRouteImport } from './routes/org/$slug/visit'
-import { Route as OrgSlugProgramsRouteImport } from './routes/org/$slug/programs'
-import { Route as OrgSlugJoinRouteImport } from './routes/org/$slug/join'
-import { Route as OrgSlugEventsRouteImport } from './routes/org/$slug/events'
-import { Route as AdminUsersUserIdRouteImport } from './routes/admin/users/$userId'
+import { Route as AdminCostsIndexRouteImport } from './routes/admin/costs/index'
+import { Route as AdminOpportunitiesIndexRouteImport } from './routes/admin/opportunities/index'
 import { Route as AdminOpportunitiesNewRouteImport } from './routes/admin/opportunities/new'
+import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
+import { Route as AdminUsersUserIdRouteImport } from './routes/admin/users/$userId'
+import { Route as OrgSlugIndexRouteImport } from './routes/org/$slug/index'
 import { Route as OrgSlugAdminRouteRouteImport } from './routes/org/$slug/admin/route'
-import { Route as OrgSlugSpaceIndexRouteImport } from './routes/org/$slug/space/index'
-import { Route as OrgSlugAdminIndexRouteImport } from './routes/org/$slug/admin/index'
-import { Route as OrgSlugSpaceBookingsRouteImport } from './routes/org/$slug/space/bookings'
-import { Route as OrgSlugProgramProgramSlugRouteImport } from './routes/org/$slug/program/$programSlug'
-import { Route as OrgSlugApplyOpportunityIdRouteImport } from './routes/org/$slug/apply/$opportunityId'
-import { Route as OrgSlugAdminSpaceRouteImport } from './routes/org/$slug/admin/space'
-import { Route as OrgSlugAdminSetupRouteImport } from './routes/org/$slug/admin/setup'
-import { Route as OrgSlugAdminSettingsRouteImport } from './routes/org/$slug/admin/settings'
-import { Route as OrgSlugAdminGuestsRouteImport } from './routes/org/$slug/admin/guests'
-import { Route as OrgSlugAdminBookingsRouteImport } from './routes/org/$slug/admin/bookings'
+import { Route as OrgSlugEventsRouteImport } from './routes/org/$slug/events'
+import { Route as OrgSlugJoinRouteImport } from './routes/org/$slug/join'
+import { Route as OrgSlugProgramsRouteImport } from './routes/org/$slug/programs'
+import { Route as OrgSlugVisitRouteImport } from './routes/org/$slug/visit'
 import { Route as AdminOpportunitiesIdEditRouteImport } from './routes/admin/opportunities/$id/edit'
+import { Route as OrgSlugAdminIndexRouteImport } from './routes/org/$slug/admin/index'
+import { Route as OrgSlugAdminBookingsRouteImport } from './routes/org/$slug/admin/bookings'
+import { Route as OrgSlugAdminGuestsRouteImport } from './routes/org/$slug/admin/guests'
+import { Route as OrgSlugAdminSettingsRouteImport } from './routes/org/$slug/admin/settings'
+import { Route as OrgSlugAdminSetupRouteImport } from './routes/org/$slug/admin/setup'
+import { Route as OrgSlugAdminSpaceRouteImport } from './routes/org/$slug/admin/space'
+import { Route as OrgSlugApplyOpportunityIdRouteImport } from './routes/org/$slug/apply/$opportunityId'
 import { Route as OrgSlugEEventSlugRouteRouteImport } from './routes/org/$slug/e/$eventSlug/route'
-import { Route as OrgSlugSurveySurveyTokenIndexRouteImport } from './routes/org/$slug/survey/$surveyToken/index'
-import { Route as OrgSlugPollPollTokenIndexRouteImport } from './routes/org/$slug/poll/$pollToken/index'
-import { Route as OrgSlugEEventSlugIndexRouteImport } from './routes/org/$slug/e/$eventSlug/index'
-import { Route as OrgSlugAdminProgramsIndexRouteImport } from './routes/org/$slug/admin/programs/index'
-import { Route as OrgSlugAdminOpportunitiesIndexRouteImport } from './routes/org/$slug/admin/opportunities/index'
-import { Route as OrgSlugAdminMembersIndexRouteImport } from './routes/org/$slug/admin/members/index'
-import { Route as OrgSlugAdminEventsIndexRouteImport } from './routes/org/$slug/admin/events/index'
-import { Route as OrgSlugAdminCrmIndexRouteImport } from './routes/org/$slug/admin/crm/index'
+import { Route as OrgSlugProgramProgramSlugRouteImport } from './routes/org/$slug/program/$programSlug'
+import { Route as OrgSlugSpaceIndexRouteImport } from './routes/org/$slug/space/index'
+import { Route as OrgSlugSpaceBookingsRouteImport } from './routes/org/$slug/space/bookings'
 import { Route as OrgSlugAdminApplicationsIndexRouteImport } from './routes/org/$slug/admin/applications/index'
-import { Route as OrgSlugSurveySurveyTokenRespondentTokenRouteImport } from './routes/org/$slug/survey/$surveyToken/$respondentToken'
-import { Route as OrgSlugPollPollTokenRespondentTokenRouteImport } from './routes/org/$slug/poll/$pollToken/$respondentToken'
-import { Route as OrgSlugEEventSlugRequestsRouteImport } from './routes/org/$slug/e/$eventSlug/requests'
-import { Route as OrgSlugEEventSlugProfileRouteImport } from './routes/org/$slug/e/$eventSlug/profile'
-import { Route as OrgSlugEEventSlugMeetingRouteImport } from './routes/org/$slug/e/$eventSlug/meeting'
-import { Route as OrgSlugAdminMembersUserIdRouteImport } from './routes/org/$slug/admin/members/$userId'
+import { Route as OrgSlugAdminCrmIndexRouteImport } from './routes/org/$slug/admin/crm/index'
+import { Route as OrgSlugAdminEventsIndexRouteImport } from './routes/org/$slug/admin/events/index'
 import { Route as OrgSlugAdminEventsEventIdRouteImport } from './routes/org/$slug/admin/events/$eventId'
-import { Route as OrgSlugEEventSlugPeopleIndexRouteImport } from './routes/org/$slug/e/$eventSlug/people/index'
-import { Route as OrgSlugAdminProgramsProgramIdIndexRouteImport } from './routes/org/$slug/admin/programs/$programId/index'
-import { Route as OrgSlugAdminOpportunitiesOppIdIndexRouteImport } from './routes/org/$slug/admin/opportunities/$oppId/index'
-import { Route as OrgSlugEEventSlugPeopleUserIdRouteImport } from './routes/org/$slug/e/$eventSlug/people/$userId'
-import { Route as OrgSlugAdminProgramsProgramIdSessionRunnerRouteImport } from './routes/org/$slug/admin/programs/$programId/session-runner'
-import { Route as OrgSlugAdminOpportunitiesOppIdEmailRouteImport } from './routes/org/$slug/admin/opportunities/$oppId/email'
-import { Route as OrgSlugAdminEventsLumaLumaEventIdRouteImport } from './routes/org/$slug/admin/events/luma.$lumaEventId'
-import { Route as OrgSlugAdminEventsEventIdCheckinRouteImport } from './routes/org/$slug/admin/events/$eventId_.checkin'
+import { Route as OrgSlugAdminMembersIndexRouteImport } from './routes/org/$slug/admin/members/index'
+import { Route as OrgSlugAdminMembersUserIdRouteImport } from './routes/org/$slug/admin/members/$userId'
+import { Route as OrgSlugAdminOpportunitiesIndexRouteImport } from './routes/org/$slug/admin/opportunities/index'
+import { Route as OrgSlugAdminProgramsIndexRouteImport } from './routes/org/$slug/admin/programs/index'
+import { Route as OrgSlugEEventSlugIndexRouteImport } from './routes/org/$slug/e/$eventSlug/index'
+import { Route as OrgSlugEEventSlugMeetingRouteImport } from './routes/org/$slug/e/$eventSlug/meeting'
+import { Route as OrgSlugEEventSlugProfileRouteImport } from './routes/org/$slug/e/$eventSlug/profile'
+import { Route as OrgSlugEEventSlugRequestsRouteImport } from './routes/org/$slug/e/$eventSlug/requests'
+import { Route as OrgSlugPollPollTokenIndexRouteImport } from './routes/org/$slug/poll/$pollToken/index'
+import { Route as OrgSlugPollPollTokenRespondentTokenRouteImport } from './routes/org/$slug/poll/$pollToken/$respondentToken'
+import { Route as OrgSlugSurveySurveyTokenIndexRouteImport } from './routes/org/$slug/survey/$surveyToken/index'
+import { Route as OrgSlugSurveySurveyTokenRespondentTokenRouteImport } from './routes/org/$slug/survey/$surveyToken/$respondentToken'
 import { Route as OrgSlugAdminCrmPeopleContactIdRouteImport } from './routes/org/$slug/admin/crm/people/$contactId'
+import { Route as OrgSlugAdminEventsEventIdCheckinRouteImport } from './routes/org/$slug/admin/events/$eventId_.checkin'
+import { Route as OrgSlugAdminEventsLumaLumaEventIdRouteImport } from './routes/org/$slug/admin/events/luma.$lumaEventId'
+import { Route as OrgSlugAdminOpportunitiesOppIdIndexRouteImport } from './routes/org/$slug/admin/opportunities/$oppId/index'
+import { Route as OrgSlugAdminOpportunitiesOppIdEmailRouteImport } from './routes/org/$slug/admin/opportunities/$oppId/email'
+import { Route as OrgSlugAdminProgramsProgramIdIndexRouteImport } from './routes/org/$slug/admin/programs/$programId/index'
+import { Route as OrgSlugAdminProgramsProgramIdSessionRunnerRouteImport } from './routes/org/$slug/admin/programs/$programId/session-runner'
+import { Route as OrgSlugEEventSlugPeopleIndexRouteImport } from './routes/org/$slug/e/$eventSlug/people/index'
+import { Route as OrgSlugEEventSlugPeopleUserIdRouteImport } from './routes/org/$slug/e/$eventSlug/people/$userId'
 
-const TermsRoute = TermsRouteImport.update({
-  id: '/terms',
-  path: '/terms',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PrivacyRoute = PrivacyRouteImport.update({
-  id: '/privacy',
-  path: '/privacy',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsRouteRoute = SettingsRouteRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApplyRouteRoute = ApplyRouteRouteImport.update({
-  id: '/apply',
-  path: '/apply',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminRouteRoute = AdminRouteRouteImport.update({
@@ -111,79 +91,34 @@ const AdminRouteRoute = AdminRouteRouteImport.update({
   path: '/admin',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const ApplyRouteRoute = ApplyRouteRouteImport.update({
+  id: '/apply',
+  path: '/apply',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SettingsIndexRoute = SettingsIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => SettingsRouteRoute,
-} as any)
-const ProfileIndexRoute = ProfileIndexRouteImport.update({
-  id: '/profile/',
-  path: '/profile/',
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const OrgsIndexRoute = OrgsIndexRouteImport.update({
-  id: '/orgs/',
-  path: '/orgs/',
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
   getParentRoute: () => rootRouteImport,
 } as any)
-const OpportunitiesIndexRoute = OpportunitiesIndexRouteImport.update({
-  id: '/opportunities/',
-  path: '/opportunities/',
+const SettingsRouteRoute = SettingsRouteRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const MatchesIndexRoute = MatchesIndexRouteImport.update({
-  id: '/matches/',
-  path: '/matches/',
+const TermsRoute = TermsRouteImport.update({
+  id: '/terms',
+  path: '/terms',
   getParentRoute: () => rootRouteImport,
-} as any)
-const ApplyIndexRoute = ApplyIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => ApplyRouteRoute,
 } as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
-const ProfileEditRoute = ProfileEditRouteImport.update({
-  id: '/profile/edit',
-  path: '/profile/edit',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ProfileAttendanceRoute = ProfileAttendanceRouteImport.update({
-  id: '/profile/attendance',
-  path: '/profile/attendance',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ProfileAgentRoute = ProfileAgentRouteImport.update({
-  id: '/profile/agent',
-  path: '/profile/agent',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const OpportunitiesIdRoute = OpportunitiesIdRouteImport.update({
-  id: '/opportunities/$id',
-  path: '/opportunities/$id',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MatchesIdRoute = MatchesIdRouteImport.update({
-  id: '/matches/$id',
-  path: '/matches/$id',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApplyStatusRoute = ApplyStatusRouteImport.update({
-  id: '/status',
-  path: '/status',
-  getParentRoute: () => ApplyRouteRoute,
-} as any)
-const AdminUsersRouteRoute = AdminUsersRouteRouteImport.update({
-  id: '/users',
-  path: '/users',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminApplicationsRouteRoute = AdminApplicationsRouteRouteImport.update({
@@ -191,44 +126,109 @@ const AdminApplicationsRouteRoute = AdminApplicationsRouteRouteImport.update({
   path: '/applications',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const OrgSlugIndexRoute = OrgSlugIndexRouteImport.update({
-  id: '/org/$slug/',
-  path: '/org/$slug/',
-  getParentRoute: () => rootRouteImport,
+const AdminUsersRouteRoute = AdminUsersRouteRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
+const ApplyIndexRoute = ApplyIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => AdminUsersRouteRoute,
+  getParentRoute: () => ApplyRouteRoute,
 } as any)
-const AdminOpportunitiesIndexRoute = AdminOpportunitiesIndexRouteImport.update({
+const ApplyStatusRoute = ApplyStatusRouteImport.update({
+  id: '/status',
+  path: '/status',
+  getParentRoute: () => ApplyRouteRoute,
+} as any)
+const MatchesIndexRoute = MatchesIndexRouteImport.update({
+  id: '/matches/',
+  path: '/matches/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MatchesIdRoute = MatchesIdRouteImport.update({
+  id: '/matches/$id',
+  path: '/matches/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OpportunitiesIndexRoute = OpportunitiesIndexRouteImport.update({
   id: '/opportunities/',
   path: '/opportunities/',
-  getParentRoute: () => AdminRouteRoute,
+  getParentRoute: () => rootRouteImport,
 } as any)
-const AdminCostsIndexRoute = AdminCostsIndexRouteImport.update({
-  id: '/costs/',
-  path: '/costs/',
-  getParentRoute: () => AdminRouteRoute,
+const OpportunitiesIdRoute = OpportunitiesIdRouteImport.update({
+  id: '/opportunities/$id',
+  path: '/opportunities/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OrgsIndexRoute = OrgsIndexRouteImport.update({
+  id: '/orgs/',
+  path: '/orgs/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfileIndexRoute = ProfileIndexRouteImport.update({
+  id: '/profile/',
+  path: '/profile/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfileAgentRoute = ProfileAgentRouteImport.update({
+  id: '/profile/agent',
+  path: '/profile/agent',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfileAttendanceRoute = ProfileAttendanceRouteImport.update({
+  id: '/profile/attendance',
+  path: '/profile/attendance',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfileEditRoute = ProfileEditRouteImport.update({
+  id: '/profile/edit',
+  path: '/profile/edit',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsIndexRoute = SettingsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SettingsRouteRoute,
 } as any)
 const AdminApplicationsIndexRoute = AdminApplicationsIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AdminApplicationsRouteRoute,
 } as any)
-const OrgSlugVisitRoute = OrgSlugVisitRouteImport.update({
-  id: '/org/$slug/visit',
-  path: '/org/$slug/visit',
+const AdminCostsIndexRoute = AdminCostsIndexRouteImport.update({
+  id: '/costs/',
+  path: '/costs/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminOpportunitiesIndexRoute = AdminOpportunitiesIndexRouteImport.update({
+  id: '/opportunities/',
+  path: '/opportunities/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminOpportunitiesNewRoute = AdminOpportunitiesNewRouteImport.update({
+  id: '/opportunities/new',
+  path: '/opportunities/new',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminUsersRouteRoute,
+} as any)
+const AdminUsersUserIdRoute = AdminUsersUserIdRouteImport.update({
+  id: '/$userId',
+  path: '/$userId',
+  getParentRoute: () => AdminUsersRouteRoute,
+} as any)
+const OrgSlugIndexRoute = OrgSlugIndexRouteImport.update({
+  id: '/org/$slug/',
+  path: '/org/$slug/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const OrgSlugProgramsRoute = OrgSlugProgramsRouteImport.update({
-  id: '/org/$slug/programs',
-  path: '/org/$slug/programs',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const OrgSlugJoinRoute = OrgSlugJoinRouteImport.update({
-  id: '/org/$slug/join',
-  path: '/org/$slug/join',
+const OrgSlugAdminRouteRoute = OrgSlugAdminRouteRouteImport.update({
+  id: '/org/$slug/admin',
+  path: '/org/$slug/admin',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OrgSlugEventsRoute = OrgSlugEventsRouteImport.update({
@@ -236,34 +236,66 @@ const OrgSlugEventsRoute = OrgSlugEventsRouteImport.update({
   path: '/org/$slug/events',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AdminUsersUserIdRoute = AdminUsersUserIdRouteImport.update({
-  id: '/$userId',
-  path: '/$userId',
-  getParentRoute: () => AdminUsersRouteRoute,
-} as any)
-const AdminOpportunitiesNewRoute = AdminOpportunitiesNewRouteImport.update({
-  id: '/opportunities/new',
-  path: '/opportunities/new',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
-const OrgSlugAdminRouteRoute = OrgSlugAdminRouteRouteImport.update({
-  id: '/org/$slug/admin',
-  path: '/org/$slug/admin',
+const OrgSlugJoinRoute = OrgSlugJoinRouteImport.update({
+  id: '/org/$slug/join',
+  path: '/org/$slug/join',
   getParentRoute: () => rootRouteImport,
 } as any)
-const OrgSlugSpaceIndexRoute = OrgSlugSpaceIndexRouteImport.update({
-  id: '/org/$slug/space/',
-  path: '/org/$slug/space/',
+const OrgSlugProgramsRoute = OrgSlugProgramsRouteImport.update({
+  id: '/org/$slug/programs',
+  path: '/org/$slug/programs',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OrgSlugVisitRoute = OrgSlugVisitRouteImport.update({
+  id: '/org/$slug/visit',
+  path: '/org/$slug/visit',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminOpportunitiesIdEditRoute =
+  AdminOpportunitiesIdEditRouteImport.update({
+    id: '/opportunities/$id/edit',
+    path: '/opportunities/$id/edit',
+    getParentRoute: () => AdminRouteRoute,
+  } as any)
 const OrgSlugAdminIndexRoute = OrgSlugAdminIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => OrgSlugAdminRouteRoute,
 } as any)
-const OrgSlugSpaceBookingsRoute = OrgSlugSpaceBookingsRouteImport.update({
-  id: '/org/$slug/space/bookings',
-  path: '/org/$slug/space/bookings',
+const OrgSlugAdminBookingsRoute = OrgSlugAdminBookingsRouteImport.update({
+  id: '/bookings',
+  path: '/bookings',
+  getParentRoute: () => OrgSlugAdminRouteRoute,
+} as any)
+const OrgSlugAdminGuestsRoute = OrgSlugAdminGuestsRouteImport.update({
+  id: '/guests',
+  path: '/guests',
+  getParentRoute: () => OrgSlugAdminRouteRoute,
+} as any)
+const OrgSlugAdminSettingsRoute = OrgSlugAdminSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => OrgSlugAdminRouteRoute,
+} as any)
+const OrgSlugAdminSetupRoute = OrgSlugAdminSetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
+  getParentRoute: () => OrgSlugAdminRouteRoute,
+} as any)
+const OrgSlugAdminSpaceRoute = OrgSlugAdminSpaceRouteImport.update({
+  id: '/space',
+  path: '/space',
+  getParentRoute: () => OrgSlugAdminRouteRoute,
+} as any)
+const OrgSlugApplyOpportunityIdRoute =
+  OrgSlugApplyOpportunityIdRouteImport.update({
+    id: '/org/$slug/apply/$opportunityId',
+    path: '/org/$slug/apply/$opportunityId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const OrgSlugEEventSlugRouteRoute = OrgSlugEEventSlugRouteRouteImport.update({
+  id: '/org/$slug/e/$eventSlug',
+  path: '/org/$slug/e/$eventSlug',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OrgSlugProgramProgramSlugRoute =
@@ -272,75 +304,36 @@ const OrgSlugProgramProgramSlugRoute =
     path: '/org/$slug/program/$programSlug',
     getParentRoute: () => rootRouteImport,
   } as any)
-const OrgSlugApplyOpportunityIdRoute =
-  OrgSlugApplyOpportunityIdRouteImport.update({
-    id: '/org/$slug/apply/$opportunityId',
-    path: '/org/$slug/apply/$opportunityId',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const OrgSlugAdminSpaceRoute = OrgSlugAdminSpaceRouteImport.update({
-  id: '/space',
-  path: '/space',
-  getParentRoute: () => OrgSlugAdminRouteRoute,
-} as any)
-const OrgSlugAdminSetupRoute = OrgSlugAdminSetupRouteImport.update({
-  id: '/setup',
-  path: '/setup',
-  getParentRoute: () => OrgSlugAdminRouteRoute,
-} as any)
-const OrgSlugAdminSettingsRoute = OrgSlugAdminSettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => OrgSlugAdminRouteRoute,
-} as any)
-const OrgSlugAdminGuestsRoute = OrgSlugAdminGuestsRouteImport.update({
-  id: '/guests',
-  path: '/guests',
-  getParentRoute: () => OrgSlugAdminRouteRoute,
-} as any)
-const OrgSlugAdminBookingsRoute = OrgSlugAdminBookingsRouteImport.update({
-  id: '/bookings',
-  path: '/bookings',
-  getParentRoute: () => OrgSlugAdminRouteRoute,
-} as any)
-const AdminOpportunitiesIdEditRoute =
-  AdminOpportunitiesIdEditRouteImport.update({
-    id: '/opportunities/$id/edit',
-    path: '/opportunities/$id/edit',
-    getParentRoute: () => AdminRouteRoute,
-  } as any)
-const OrgSlugEEventSlugRouteRoute = OrgSlugEEventSlugRouteRouteImport.update({
-  id: '/org/$slug/e/$eventSlug',
-  path: '/org/$slug/e/$eventSlug',
+const OrgSlugSpaceIndexRoute = OrgSlugSpaceIndexRouteImport.update({
+  id: '/org/$slug/space/',
+  path: '/org/$slug/space/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const OrgSlugSurveySurveyTokenIndexRoute =
-  OrgSlugSurveySurveyTokenIndexRouteImport.update({
-    id: '/org/$slug/survey/$surveyToken/',
-    path: '/org/$slug/survey/$surveyToken/',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const OrgSlugPollPollTokenIndexRoute =
-  OrgSlugPollPollTokenIndexRouteImport.update({
-    id: '/org/$slug/poll/$pollToken/',
-    path: '/org/$slug/poll/$pollToken/',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const OrgSlugEEventSlugIndexRoute = OrgSlugEEventSlugIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => OrgSlugEEventSlugRouteRoute,
+const OrgSlugSpaceBookingsRoute = OrgSlugSpaceBookingsRouteImport.update({
+  id: '/org/$slug/space/bookings',
+  path: '/org/$slug/space/bookings',
+  getParentRoute: () => rootRouteImport,
 } as any)
-const OrgSlugAdminProgramsIndexRoute =
-  OrgSlugAdminProgramsIndexRouteImport.update({
-    id: '/programs/',
-    path: '/programs/',
+const OrgSlugAdminApplicationsIndexRoute =
+  OrgSlugAdminApplicationsIndexRouteImport.update({
+    id: '/applications/',
+    path: '/applications/',
     getParentRoute: () => OrgSlugAdminRouteRoute,
   } as any)
-const OrgSlugAdminOpportunitiesIndexRoute =
-  OrgSlugAdminOpportunitiesIndexRouteImport.update({
-    id: '/opportunities/',
-    path: '/opportunities/',
+const OrgSlugAdminCrmIndexRoute = OrgSlugAdminCrmIndexRouteImport.update({
+  id: '/crm/',
+  path: '/crm/',
+  getParentRoute: () => OrgSlugAdminRouteRoute,
+} as any)
+const OrgSlugAdminEventsIndexRoute = OrgSlugAdminEventsIndexRouteImport.update({
+  id: '/events/',
+  path: '/events/',
+  getParentRoute: () => OrgSlugAdminRouteRoute,
+} as any)
+const OrgSlugAdminEventsEventIdRoute =
+  OrgSlugAdminEventsEventIdRouteImport.update({
+    id: '/events/$eventId',
+    path: '/events/$eventId',
     getParentRoute: () => OrgSlugAdminRouteRoute,
   } as any)
 const OrgSlugAdminMembersIndexRoute =
@@ -349,38 +342,33 @@ const OrgSlugAdminMembersIndexRoute =
     path: '/members/',
     getParentRoute: () => OrgSlugAdminRouteRoute,
   } as any)
-const OrgSlugAdminEventsIndexRoute = OrgSlugAdminEventsIndexRouteImport.update({
-  id: '/events/',
-  path: '/events/',
-  getParentRoute: () => OrgSlugAdminRouteRoute,
-} as any)
-const OrgSlugAdminCrmIndexRoute = OrgSlugAdminCrmIndexRouteImport.update({
-  id: '/crm/',
-  path: '/crm/',
-  getParentRoute: () => OrgSlugAdminRouteRoute,
-} as any)
-const OrgSlugAdminApplicationsIndexRoute =
-  OrgSlugAdminApplicationsIndexRouteImport.update({
-    id: '/applications/',
-    path: '/applications/',
+const OrgSlugAdminMembersUserIdRoute =
+  OrgSlugAdminMembersUserIdRouteImport.update({
+    id: '/members/$userId',
+    path: '/members/$userId',
     getParentRoute: () => OrgSlugAdminRouteRoute,
   } as any)
-const OrgSlugSurveySurveyTokenRespondentTokenRoute =
-  OrgSlugSurveySurveyTokenRespondentTokenRouteImport.update({
-    id: '/org/$slug/survey/$surveyToken/$respondentToken',
-    path: '/org/$slug/survey/$surveyToken/$respondentToken',
-    getParentRoute: () => rootRouteImport,
+const OrgSlugAdminOpportunitiesIndexRoute =
+  OrgSlugAdminOpportunitiesIndexRouteImport.update({
+    id: '/opportunities/',
+    path: '/opportunities/',
+    getParentRoute: () => OrgSlugAdminRouteRoute,
   } as any)
-const OrgSlugPollPollTokenRespondentTokenRoute =
-  OrgSlugPollPollTokenRespondentTokenRouteImport.update({
-    id: '/org/$slug/poll/$pollToken/$respondentToken',
-    path: '/org/$slug/poll/$pollToken/$respondentToken',
-    getParentRoute: () => rootRouteImport,
+const OrgSlugAdminProgramsIndexRoute =
+  OrgSlugAdminProgramsIndexRouteImport.update({
+    id: '/programs/',
+    path: '/programs/',
+    getParentRoute: () => OrgSlugAdminRouteRoute,
   } as any)
-const OrgSlugEEventSlugRequestsRoute =
-  OrgSlugEEventSlugRequestsRouteImport.update({
-    id: '/requests',
-    path: '/requests',
+const OrgSlugEEventSlugIndexRoute = OrgSlugEEventSlugIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => OrgSlugEEventSlugRouteRoute,
+} as any)
+const OrgSlugEEventSlugMeetingRoute =
+  OrgSlugEEventSlugMeetingRouteImport.update({
+    id: '/meeting',
+    path: '/meeting',
     getParentRoute: () => OrgSlugEEventSlugRouteRoute,
   } as any)
 const OrgSlugEEventSlugProfileRoute =
@@ -389,64 +377,40 @@ const OrgSlugEEventSlugProfileRoute =
     path: '/profile',
     getParentRoute: () => OrgSlugEEventSlugRouteRoute,
   } as any)
-const OrgSlugEEventSlugMeetingRoute =
-  OrgSlugEEventSlugMeetingRouteImport.update({
-    id: '/meeting',
-    path: '/meeting',
+const OrgSlugEEventSlugRequestsRoute =
+  OrgSlugEEventSlugRequestsRouteImport.update({
+    id: '/requests',
+    path: '/requests',
     getParentRoute: () => OrgSlugEEventSlugRouteRoute,
   } as any)
-const OrgSlugAdminMembersUserIdRoute =
-  OrgSlugAdminMembersUserIdRouteImport.update({
-    id: '/members/$userId',
-    path: '/members/$userId',
-    getParentRoute: () => OrgSlugAdminRouteRoute,
+const OrgSlugPollPollTokenIndexRoute =
+  OrgSlugPollPollTokenIndexRouteImport.update({
+    id: '/org/$slug/poll/$pollToken/',
+    path: '/org/$slug/poll/$pollToken/',
+    getParentRoute: () => rootRouteImport,
   } as any)
-const OrgSlugAdminEventsEventIdRoute =
-  OrgSlugAdminEventsEventIdRouteImport.update({
-    id: '/events/$eventId',
-    path: '/events/$eventId',
-    getParentRoute: () => OrgSlugAdminRouteRoute,
+const OrgSlugPollPollTokenRespondentTokenRoute =
+  OrgSlugPollPollTokenRespondentTokenRouteImport.update({
+    id: '/org/$slug/poll/$pollToken/$respondentToken',
+    path: '/org/$slug/poll/$pollToken/$respondentToken',
+    getParentRoute: () => rootRouteImport,
   } as any)
-const OrgSlugEEventSlugPeopleIndexRoute =
-  OrgSlugEEventSlugPeopleIndexRouteImport.update({
-    id: '/people/',
-    path: '/people/',
-    getParentRoute: () => OrgSlugEEventSlugRouteRoute,
+const OrgSlugSurveySurveyTokenIndexRoute =
+  OrgSlugSurveySurveyTokenIndexRouteImport.update({
+    id: '/org/$slug/survey/$surveyToken/',
+    path: '/org/$slug/survey/$surveyToken/',
+    getParentRoute: () => rootRouteImport,
   } as any)
-const OrgSlugAdminProgramsProgramIdIndexRoute =
-  OrgSlugAdminProgramsProgramIdIndexRouteImport.update({
-    id: '/programs/$programId/',
-    path: '/programs/$programId/',
-    getParentRoute: () => OrgSlugAdminRouteRoute,
+const OrgSlugSurveySurveyTokenRespondentTokenRoute =
+  OrgSlugSurveySurveyTokenRespondentTokenRouteImport.update({
+    id: '/org/$slug/survey/$surveyToken/$respondentToken',
+    path: '/org/$slug/survey/$surveyToken/$respondentToken',
+    getParentRoute: () => rootRouteImport,
   } as any)
-const OrgSlugAdminOpportunitiesOppIdIndexRoute =
-  OrgSlugAdminOpportunitiesOppIdIndexRouteImport.update({
-    id: '/opportunities/$oppId/',
-    path: '/opportunities/$oppId/',
-    getParentRoute: () => OrgSlugAdminRouteRoute,
-  } as any)
-const OrgSlugEEventSlugPeopleUserIdRoute =
-  OrgSlugEEventSlugPeopleUserIdRouteImport.update({
-    id: '/people/$userId',
-    path: '/people/$userId',
-    getParentRoute: () => OrgSlugEEventSlugRouteRoute,
-  } as any)
-const OrgSlugAdminProgramsProgramIdSessionRunnerRoute =
-  OrgSlugAdminProgramsProgramIdSessionRunnerRouteImport.update({
-    id: '/programs/$programId/session-runner',
-    path: '/programs/$programId/session-runner',
-    getParentRoute: () => OrgSlugAdminRouteRoute,
-  } as any)
-const OrgSlugAdminOpportunitiesOppIdEmailRoute =
-  OrgSlugAdminOpportunitiesOppIdEmailRouteImport.update({
-    id: '/opportunities/$oppId/email',
-    path: '/opportunities/$oppId/email',
-    getParentRoute: () => OrgSlugAdminRouteRoute,
-  } as any)
-const OrgSlugAdminEventsLumaLumaEventIdRoute =
-  OrgSlugAdminEventsLumaLumaEventIdRouteImport.update({
-    id: '/events/luma/$lumaEventId',
-    path: '/events/luma/$lumaEventId',
+const OrgSlugAdminCrmPeopleContactIdRoute =
+  OrgSlugAdminCrmPeopleContactIdRouteImport.update({
+    id: '/crm/people/$contactId',
+    path: '/crm/people/$contactId',
     getParentRoute: () => OrgSlugAdminRouteRoute,
   } as any)
 const OrgSlugAdminEventsEventIdCheckinRoute =
@@ -455,11 +419,47 @@ const OrgSlugAdminEventsEventIdCheckinRoute =
     path: '/events/$eventId/checkin',
     getParentRoute: () => OrgSlugAdminRouteRoute,
   } as any)
-const OrgSlugAdminCrmPeopleContactIdRoute =
-  OrgSlugAdminCrmPeopleContactIdRouteImport.update({
-    id: '/crm/people/$contactId',
-    path: '/crm/people/$contactId',
+const OrgSlugAdminEventsLumaLumaEventIdRoute =
+  OrgSlugAdminEventsLumaLumaEventIdRouteImport.update({
+    id: '/events/luma/$lumaEventId',
+    path: '/events/luma/$lumaEventId',
     getParentRoute: () => OrgSlugAdminRouteRoute,
+  } as any)
+const OrgSlugAdminOpportunitiesOppIdIndexRoute =
+  OrgSlugAdminOpportunitiesOppIdIndexRouteImport.update({
+    id: '/opportunities/$oppId/',
+    path: '/opportunities/$oppId/',
+    getParentRoute: () => OrgSlugAdminRouteRoute,
+  } as any)
+const OrgSlugAdminOpportunitiesOppIdEmailRoute =
+  OrgSlugAdminOpportunitiesOppIdEmailRouteImport.update({
+    id: '/opportunities/$oppId/email',
+    path: '/opportunities/$oppId/email',
+    getParentRoute: () => OrgSlugAdminRouteRoute,
+  } as any)
+const OrgSlugAdminProgramsProgramIdIndexRoute =
+  OrgSlugAdminProgramsProgramIdIndexRouteImport.update({
+    id: '/programs/$programId/',
+    path: '/programs/$programId/',
+    getParentRoute: () => OrgSlugAdminRouteRoute,
+  } as any)
+const OrgSlugAdminProgramsProgramIdSessionRunnerRoute =
+  OrgSlugAdminProgramsProgramIdSessionRunnerRouteImport.update({
+    id: '/programs/$programId/session-runner',
+    path: '/programs/$programId/session-runner',
+    getParentRoute: () => OrgSlugAdminRouteRoute,
+  } as any)
+const OrgSlugEEventSlugPeopleIndexRoute =
+  OrgSlugEEventSlugPeopleIndexRouteImport.update({
+    id: '/people/',
+    path: '/people/',
+    getParentRoute: () => OrgSlugEEventSlugRouteRoute,
+  } as any)
+const OrgSlugEEventSlugPeopleUserIdRoute =
+  OrgSlugEEventSlugPeopleUserIdRouteImport.update({
+    id: '/people/$userId',
+    path: '/people/$userId',
+    getParentRoute: () => OrgSlugEEventSlugRouteRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -926,39 +926,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/terms': {
-      id: '/terms'
-      path: '/terms'
-      fullPath: '/terms'
-      preLoaderRoute: typeof TermsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/privacy': {
-      id: '/privacy'
-      path: '/privacy'
-      fullPath: '/privacy'
-      preLoaderRoute: typeof PrivacyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/apply': {
-      id: '/apply'
-      path: '/apply'
-      fullPath: '/apply'
-      preLoaderRoute: typeof ApplyRouteRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin': {
@@ -968,109 +940,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/apply': {
+      id: '/apply'
+      path: '/apply'
+      fullPath: '/apply'
+      preLoaderRoute: typeof ApplyRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/settings/': {
-      id: '/settings/'
-      path: '/'
-      fullPath: '/settings/'
-      preLoaderRoute: typeof SettingsIndexRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
-    '/profile/': {
-      id: '/profile/'
-      path: '/profile'
-      fullPath: '/profile/'
-      preLoaderRoute: typeof ProfileIndexRouteImport
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/orgs/': {
-      id: '/orgs/'
-      path: '/orgs'
-      fullPath: '/orgs/'
-      preLoaderRoute: typeof OrgsIndexRouteImport
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/opportunities/': {
-      id: '/opportunities/'
-      path: '/opportunities'
-      fullPath: '/opportunities/'
-      preLoaderRoute: typeof OpportunitiesIndexRouteImport
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/matches/': {
-      id: '/matches/'
-      path: '/matches'
-      fullPath: '/matches/'
-      preLoaderRoute: typeof MatchesIndexRouteImport
+    '/terms': {
+      id: '/terms'
+      path: '/terms'
+      fullPath: '/terms'
+      preLoaderRoute: typeof TermsRouteImport
       parentRoute: typeof rootRouteImport
-    }
-    '/apply/': {
-      id: '/apply/'
-      path: '/'
-      fullPath: '/apply/'
-      preLoaderRoute: typeof ApplyIndexRouteImport
-      parentRoute: typeof ApplyRouteRoute
     }
     '/admin/': {
       id: '/admin/'
       path: '/'
       fullPath: '/admin/'
       preLoaderRoute: typeof AdminIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/profile/edit': {
-      id: '/profile/edit'
-      path: '/profile/edit'
-      fullPath: '/profile/edit'
-      preLoaderRoute: typeof ProfileEditRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/profile/attendance': {
-      id: '/profile/attendance'
-      path: '/profile/attendance'
-      fullPath: '/profile/attendance'
-      preLoaderRoute: typeof ProfileAttendanceRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/profile/agent': {
-      id: '/profile/agent'
-      path: '/profile/agent'
-      fullPath: '/profile/agent'
-      preLoaderRoute: typeof ProfileAgentRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/opportunities/$id': {
-      id: '/opportunities/$id'
-      path: '/opportunities/$id'
-      fullPath: '/opportunities/$id'
-      preLoaderRoute: typeof OpportunitiesIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/matches/$id': {
-      id: '/matches/$id'
-      path: '/matches/$id'
-      fullPath: '/matches/$id'
-      preLoaderRoute: typeof MatchesIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/apply/status': {
-      id: '/apply/status'
-      path: '/status'
-      fullPath: '/apply/status'
-      preLoaderRoute: typeof ApplyStatusRouteImport
-      parentRoute: typeof ApplyRouteRoute
-    }
-    '/admin/users': {
-      id: '/admin/users'
-      path: '/users'
-      fullPath: '/admin/users'
-      preLoaderRoute: typeof AdminUsersRouteRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/applications': {
@@ -1080,33 +989,96 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminApplicationsRouteRouteImport
       parentRoute: typeof AdminRouteRoute
     }
-    '/org/$slug/': {
-      id: '/org/$slug/'
-      path: '/org/$slug'
-      fullPath: '/org/$slug/'
-      preLoaderRoute: typeof OrgSlugIndexRouteImport
+    '/admin/users': {
+      id: '/admin/users'
+      path: '/users'
+      fullPath: '/admin/users'
+      preLoaderRoute: typeof AdminUsersRouteRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/apply/': {
+      id: '/apply/'
+      path: '/'
+      fullPath: '/apply/'
+      preLoaderRoute: typeof ApplyIndexRouteImport
+      parentRoute: typeof ApplyRouteRoute
+    }
+    '/apply/status': {
+      id: '/apply/status'
+      path: '/status'
+      fullPath: '/apply/status'
+      preLoaderRoute: typeof ApplyStatusRouteImport
+      parentRoute: typeof ApplyRouteRoute
+    }
+    '/matches/': {
+      id: '/matches/'
+      path: '/matches'
+      fullPath: '/matches/'
+      preLoaderRoute: typeof MatchesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/admin/users/': {
-      id: '/admin/users/'
-      path: '/'
-      fullPath: '/admin/users/'
-      preLoaderRoute: typeof AdminUsersIndexRouteImport
-      parentRoute: typeof AdminUsersRouteRoute
+    '/matches/$id': {
+      id: '/matches/$id'
+      path: '/matches/$id'
+      fullPath: '/matches/$id'
+      preLoaderRoute: typeof MatchesIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/admin/opportunities/': {
-      id: '/admin/opportunities/'
+    '/opportunities/': {
+      id: '/opportunities/'
       path: '/opportunities'
-      fullPath: '/admin/opportunities/'
-      preLoaderRoute: typeof AdminOpportunitiesIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
+      fullPath: '/opportunities/'
+      preLoaderRoute: typeof OpportunitiesIndexRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/admin/costs/': {
-      id: '/admin/costs/'
-      path: '/costs'
-      fullPath: '/admin/costs/'
-      preLoaderRoute: typeof AdminCostsIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
+    '/opportunities/$id': {
+      id: '/opportunities/$id'
+      path: '/opportunities/$id'
+      fullPath: '/opportunities/$id'
+      preLoaderRoute: typeof OpportunitiesIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/orgs/': {
+      id: '/orgs/'
+      path: '/orgs'
+      fullPath: '/orgs/'
+      preLoaderRoute: typeof OrgsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profile/': {
+      id: '/profile/'
+      path: '/profile'
+      fullPath: '/profile/'
+      preLoaderRoute: typeof ProfileIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profile/agent': {
+      id: '/profile/agent'
+      path: '/profile/agent'
+      fullPath: '/profile/agent'
+      preLoaderRoute: typeof ProfileAgentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profile/attendance': {
+      id: '/profile/attendance'
+      path: '/profile/attendance'
+      fullPath: '/profile/attendance'
+      preLoaderRoute: typeof ProfileAttendanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profile/edit': {
+      id: '/profile/edit'
+      path: '/profile/edit'
+      fullPath: '/profile/edit'
+      preLoaderRoute: typeof ProfileEditRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/': {
+      id: '/settings/'
+      path: '/'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof SettingsIndexRouteImport
+      parentRoute: typeof SettingsRouteRoute
     }
     '/admin/applications/': {
       id: '/admin/applications/'
@@ -1115,25 +1087,53 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminApplicationsIndexRouteImport
       parentRoute: typeof AdminApplicationsRouteRoute
     }
-    '/org/$slug/visit': {
-      id: '/org/$slug/visit'
-      path: '/org/$slug/visit'
-      fullPath: '/org/$slug/visit'
-      preLoaderRoute: typeof OrgSlugVisitRouteImport
+    '/admin/costs/': {
+      id: '/admin/costs/'
+      path: '/costs'
+      fullPath: '/admin/costs/'
+      preLoaderRoute: typeof AdminCostsIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/opportunities/': {
+      id: '/admin/opportunities/'
+      path: '/opportunities'
+      fullPath: '/admin/opportunities/'
+      preLoaderRoute: typeof AdminOpportunitiesIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/opportunities/new': {
+      id: '/admin/opportunities/new'
+      path: '/opportunities/new'
+      fullPath: '/admin/opportunities/new'
+      preLoaderRoute: typeof AdminOpportunitiesNewRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/users/': {
+      id: '/admin/users/'
+      path: '/'
+      fullPath: '/admin/users/'
+      preLoaderRoute: typeof AdminUsersIndexRouteImport
+      parentRoute: typeof AdminUsersRouteRoute
+    }
+    '/admin/users/$userId': {
+      id: '/admin/users/$userId'
+      path: '/$userId'
+      fullPath: '/admin/users/$userId'
+      preLoaderRoute: typeof AdminUsersUserIdRouteImport
+      parentRoute: typeof AdminUsersRouteRoute
+    }
+    '/org/$slug/': {
+      id: '/org/$slug/'
+      path: '/org/$slug'
+      fullPath: '/org/$slug/'
+      preLoaderRoute: typeof OrgSlugIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/org/$slug/programs': {
-      id: '/org/$slug/programs'
-      path: '/org/$slug/programs'
-      fullPath: '/org/$slug/programs'
-      preLoaderRoute: typeof OrgSlugProgramsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/org/$slug/join': {
-      id: '/org/$slug/join'
-      path: '/org/$slug/join'
-      fullPath: '/org/$slug/join'
-      preLoaderRoute: typeof OrgSlugJoinRouteImport
+    '/org/$slug/admin': {
+      id: '/org/$slug/admin'
+      path: '/org/$slug/admin'
+      fullPath: '/org/$slug/admin'
+      preLoaderRoute: typeof OrgSlugAdminRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/org/$slug/events': {
@@ -1143,88 +1143,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrgSlugEventsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/admin/users/$userId': {
-      id: '/admin/users/$userId'
-      path: '/$userId'
-      fullPath: '/admin/users/$userId'
-      preLoaderRoute: typeof AdminUsersUserIdRouteImport
-      parentRoute: typeof AdminUsersRouteRoute
+    '/org/$slug/join': {
+      id: '/org/$slug/join'
+      path: '/org/$slug/join'
+      fullPath: '/org/$slug/join'
+      preLoaderRoute: typeof OrgSlugJoinRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/admin/opportunities/new': {
-      id: '/admin/opportunities/new'
-      path: '/opportunities/new'
-      fullPath: '/admin/opportunities/new'
-      preLoaderRoute: typeof AdminOpportunitiesNewRouteImport
+    '/org/$slug/programs': {
+      id: '/org/$slug/programs'
+      path: '/org/$slug/programs'
+      fullPath: '/org/$slug/programs'
+      preLoaderRoute: typeof OrgSlugProgramsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/org/$slug/visit': {
+      id: '/org/$slug/visit'
+      path: '/org/$slug/visit'
+      fullPath: '/org/$slug/visit'
+      preLoaderRoute: typeof OrgSlugVisitRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/opportunities/$id/edit': {
+      id: '/admin/opportunities/$id/edit'
+      path: '/opportunities/$id/edit'
+      fullPath: '/admin/opportunities/$id/edit'
+      preLoaderRoute: typeof AdminOpportunitiesIdEditRouteImport
       parentRoute: typeof AdminRouteRoute
-    }
-    '/org/$slug/admin': {
-      id: '/org/$slug/admin'
-      path: '/org/$slug/admin'
-      fullPath: '/org/$slug/admin'
-      preLoaderRoute: typeof OrgSlugAdminRouteRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/org/$slug/space/': {
-      id: '/org/$slug/space/'
-      path: '/org/$slug/space'
-      fullPath: '/org/$slug/space/'
-      preLoaderRoute: typeof OrgSlugSpaceIndexRouteImport
-      parentRoute: typeof rootRouteImport
     }
     '/org/$slug/admin/': {
       id: '/org/$slug/admin/'
       path: '/'
       fullPath: '/org/$slug/admin/'
       preLoaderRoute: typeof OrgSlugAdminIndexRouteImport
-      parentRoute: typeof OrgSlugAdminRouteRoute
-    }
-    '/org/$slug/space/bookings': {
-      id: '/org/$slug/space/bookings'
-      path: '/org/$slug/space/bookings'
-      fullPath: '/org/$slug/space/bookings'
-      preLoaderRoute: typeof OrgSlugSpaceBookingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/org/$slug/program/$programSlug': {
-      id: '/org/$slug/program/$programSlug'
-      path: '/org/$slug/program/$programSlug'
-      fullPath: '/org/$slug/program/$programSlug'
-      preLoaderRoute: typeof OrgSlugProgramProgramSlugRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/org/$slug/apply/$opportunityId': {
-      id: '/org/$slug/apply/$opportunityId'
-      path: '/org/$slug/apply/$opportunityId'
-      fullPath: '/org/$slug/apply/$opportunityId'
-      preLoaderRoute: typeof OrgSlugApplyOpportunityIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/org/$slug/admin/space': {
-      id: '/org/$slug/admin/space'
-      path: '/space'
-      fullPath: '/org/$slug/admin/space'
-      preLoaderRoute: typeof OrgSlugAdminSpaceRouteImport
-      parentRoute: typeof OrgSlugAdminRouteRoute
-    }
-    '/org/$slug/admin/setup': {
-      id: '/org/$slug/admin/setup'
-      path: '/setup'
-      fullPath: '/org/$slug/admin/setup'
-      preLoaderRoute: typeof OrgSlugAdminSetupRouteImport
-      parentRoute: typeof OrgSlugAdminRouteRoute
-    }
-    '/org/$slug/admin/settings': {
-      id: '/org/$slug/admin/settings'
-      path: '/settings'
-      fullPath: '/org/$slug/admin/settings'
-      preLoaderRoute: typeof OrgSlugAdminSettingsRouteImport
-      parentRoute: typeof OrgSlugAdminRouteRoute
-    }
-    '/org/$slug/admin/guests': {
-      id: '/org/$slug/admin/guests'
-      path: '/guests'
-      fullPath: '/org/$slug/admin/guests'
-      preLoaderRoute: typeof OrgSlugAdminGuestsRouteImport
       parentRoute: typeof OrgSlugAdminRouteRoute
     }
     '/org/$slug/admin/bookings': {
@@ -1234,12 +1185,40 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrgSlugAdminBookingsRouteImport
       parentRoute: typeof OrgSlugAdminRouteRoute
     }
-    '/admin/opportunities/$id/edit': {
-      id: '/admin/opportunities/$id/edit'
-      path: '/opportunities/$id/edit'
-      fullPath: '/admin/opportunities/$id/edit'
-      preLoaderRoute: typeof AdminOpportunitiesIdEditRouteImport
-      parentRoute: typeof AdminRouteRoute
+    '/org/$slug/admin/guests': {
+      id: '/org/$slug/admin/guests'
+      path: '/guests'
+      fullPath: '/org/$slug/admin/guests'
+      preLoaderRoute: typeof OrgSlugAdminGuestsRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/admin/settings': {
+      id: '/org/$slug/admin/settings'
+      path: '/settings'
+      fullPath: '/org/$slug/admin/settings'
+      preLoaderRoute: typeof OrgSlugAdminSettingsRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/admin/setup': {
+      id: '/org/$slug/admin/setup'
+      path: '/setup'
+      fullPath: '/org/$slug/admin/setup'
+      preLoaderRoute: typeof OrgSlugAdminSetupRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/admin/space': {
+      id: '/org/$slug/admin/space'
+      path: '/space'
+      fullPath: '/org/$slug/admin/space'
+      preLoaderRoute: typeof OrgSlugAdminSpaceRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/apply/$opportunityId': {
+      id: '/org/$slug/apply/$opportunityId'
+      path: '/org/$slug/apply/$opportunityId'
+      fullPath: '/org/$slug/apply/$opportunityId'
+      preLoaderRoute: typeof OrgSlugApplyOpportunityIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/org/$slug/e/$eventSlug': {
       id: '/org/$slug/e/$eventSlug'
@@ -1248,53 +1227,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrgSlugEEventSlugRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/org/$slug/survey/$surveyToken/': {
-      id: '/org/$slug/survey/$surveyToken/'
-      path: '/org/$slug/survey/$surveyToken'
-      fullPath: '/org/$slug/survey/$surveyToken/'
-      preLoaderRoute: typeof OrgSlugSurveySurveyTokenIndexRouteImport
+    '/org/$slug/program/$programSlug': {
+      id: '/org/$slug/program/$programSlug'
+      path: '/org/$slug/program/$programSlug'
+      fullPath: '/org/$slug/program/$programSlug'
+      preLoaderRoute: typeof OrgSlugProgramProgramSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/org/$slug/poll/$pollToken/': {
-      id: '/org/$slug/poll/$pollToken/'
-      path: '/org/$slug/poll/$pollToken'
-      fullPath: '/org/$slug/poll/$pollToken/'
-      preLoaderRoute: typeof OrgSlugPollPollTokenIndexRouteImport
+    '/org/$slug/space/': {
+      id: '/org/$slug/space/'
+      path: '/org/$slug/space'
+      fullPath: '/org/$slug/space/'
+      preLoaderRoute: typeof OrgSlugSpaceIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/org/$slug/e/$eventSlug/': {
-      id: '/org/$slug/e/$eventSlug/'
-      path: '/'
-      fullPath: '/org/$slug/e/$eventSlug/'
-      preLoaderRoute: typeof OrgSlugEEventSlugIndexRouteImport
-      parentRoute: typeof OrgSlugEEventSlugRouteRoute
+    '/org/$slug/space/bookings': {
+      id: '/org/$slug/space/bookings'
+      path: '/org/$slug/space/bookings'
+      fullPath: '/org/$slug/space/bookings'
+      preLoaderRoute: typeof OrgSlugSpaceBookingsRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/org/$slug/admin/programs/': {
-      id: '/org/$slug/admin/programs/'
-      path: '/programs'
-      fullPath: '/org/$slug/admin/programs/'
-      preLoaderRoute: typeof OrgSlugAdminProgramsIndexRouteImport
-      parentRoute: typeof OrgSlugAdminRouteRoute
-    }
-    '/org/$slug/admin/opportunities/': {
-      id: '/org/$slug/admin/opportunities/'
-      path: '/opportunities'
-      fullPath: '/org/$slug/admin/opportunities/'
-      preLoaderRoute: typeof OrgSlugAdminOpportunitiesIndexRouteImport
-      parentRoute: typeof OrgSlugAdminRouteRoute
-    }
-    '/org/$slug/admin/members/': {
-      id: '/org/$slug/admin/members/'
-      path: '/members'
-      fullPath: '/org/$slug/admin/members/'
-      preLoaderRoute: typeof OrgSlugAdminMembersIndexRouteImport
-      parentRoute: typeof OrgSlugAdminRouteRoute
-    }
-    '/org/$slug/admin/events/': {
-      id: '/org/$slug/admin/events/'
-      path: '/events'
-      fullPath: '/org/$slug/admin/events/'
-      preLoaderRoute: typeof OrgSlugAdminEventsIndexRouteImport
+    '/org/$slug/admin/applications/': {
+      id: '/org/$slug/admin/applications/'
+      path: '/applications'
+      fullPath: '/org/$slug/admin/applications/'
+      preLoaderRoute: typeof OrgSlugAdminApplicationsIndexRouteImport
       parentRoute: typeof OrgSlugAdminRouteRoute
     }
     '/org/$slug/admin/crm/': {
@@ -1304,53 +1262,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrgSlugAdminCrmIndexRouteImport
       parentRoute: typeof OrgSlugAdminRouteRoute
     }
-    '/org/$slug/admin/applications/': {
-      id: '/org/$slug/admin/applications/'
-      path: '/applications'
-      fullPath: '/org/$slug/admin/applications/'
-      preLoaderRoute: typeof OrgSlugAdminApplicationsIndexRouteImport
-      parentRoute: typeof OrgSlugAdminRouteRoute
-    }
-    '/org/$slug/survey/$surveyToken/$respondentToken': {
-      id: '/org/$slug/survey/$surveyToken/$respondentToken'
-      path: '/org/$slug/survey/$surveyToken/$respondentToken'
-      fullPath: '/org/$slug/survey/$surveyToken/$respondentToken'
-      preLoaderRoute: typeof OrgSlugSurveySurveyTokenRespondentTokenRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/org/$slug/poll/$pollToken/$respondentToken': {
-      id: '/org/$slug/poll/$pollToken/$respondentToken'
-      path: '/org/$slug/poll/$pollToken/$respondentToken'
-      fullPath: '/org/$slug/poll/$pollToken/$respondentToken'
-      preLoaderRoute: typeof OrgSlugPollPollTokenRespondentTokenRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/org/$slug/e/$eventSlug/requests': {
-      id: '/org/$slug/e/$eventSlug/requests'
-      path: '/requests'
-      fullPath: '/org/$slug/e/$eventSlug/requests'
-      preLoaderRoute: typeof OrgSlugEEventSlugRequestsRouteImport
-      parentRoute: typeof OrgSlugEEventSlugRouteRoute
-    }
-    '/org/$slug/e/$eventSlug/profile': {
-      id: '/org/$slug/e/$eventSlug/profile'
-      path: '/profile'
-      fullPath: '/org/$slug/e/$eventSlug/profile'
-      preLoaderRoute: typeof OrgSlugEEventSlugProfileRouteImport
-      parentRoute: typeof OrgSlugEEventSlugRouteRoute
-    }
-    '/org/$slug/e/$eventSlug/meeting': {
-      id: '/org/$slug/e/$eventSlug/meeting'
-      path: '/meeting'
-      fullPath: '/org/$slug/e/$eventSlug/meeting'
-      preLoaderRoute: typeof OrgSlugEEventSlugMeetingRouteImport
-      parentRoute: typeof OrgSlugEEventSlugRouteRoute
-    }
-    '/org/$slug/admin/members/$userId': {
-      id: '/org/$slug/admin/members/$userId'
-      path: '/members/$userId'
-      fullPath: '/org/$slug/admin/members/$userId'
-      preLoaderRoute: typeof OrgSlugAdminMembersUserIdRouteImport
+    '/org/$slug/admin/events/': {
+      id: '/org/$slug/admin/events/'
+      path: '/events'
+      fullPath: '/org/$slug/admin/events/'
+      preLoaderRoute: typeof OrgSlugAdminEventsIndexRouteImport
       parentRoute: typeof OrgSlugAdminRouteRoute
     }
     '/org/$slug/admin/events/$eventId': {
@@ -1360,53 +1276,95 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrgSlugAdminEventsEventIdRouteImport
       parentRoute: typeof OrgSlugAdminRouteRoute
     }
-    '/org/$slug/e/$eventSlug/people/': {
-      id: '/org/$slug/e/$eventSlug/people/'
-      path: '/people'
-      fullPath: '/org/$slug/e/$eventSlug/people/'
-      preLoaderRoute: typeof OrgSlugEEventSlugPeopleIndexRouteImport
+    '/org/$slug/admin/members/': {
+      id: '/org/$slug/admin/members/'
+      path: '/members'
+      fullPath: '/org/$slug/admin/members/'
+      preLoaderRoute: typeof OrgSlugAdminMembersIndexRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/admin/members/$userId': {
+      id: '/org/$slug/admin/members/$userId'
+      path: '/members/$userId'
+      fullPath: '/org/$slug/admin/members/$userId'
+      preLoaderRoute: typeof OrgSlugAdminMembersUserIdRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/admin/opportunities/': {
+      id: '/org/$slug/admin/opportunities/'
+      path: '/opportunities'
+      fullPath: '/org/$slug/admin/opportunities/'
+      preLoaderRoute: typeof OrgSlugAdminOpportunitiesIndexRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/admin/programs/': {
+      id: '/org/$slug/admin/programs/'
+      path: '/programs'
+      fullPath: '/org/$slug/admin/programs/'
+      preLoaderRoute: typeof OrgSlugAdminProgramsIndexRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/e/$eventSlug/': {
+      id: '/org/$slug/e/$eventSlug/'
+      path: '/'
+      fullPath: '/org/$slug/e/$eventSlug/'
+      preLoaderRoute: typeof OrgSlugEEventSlugIndexRouteImport
       parentRoute: typeof OrgSlugEEventSlugRouteRoute
     }
-    '/org/$slug/admin/programs/$programId/': {
-      id: '/org/$slug/admin/programs/$programId/'
-      path: '/programs/$programId'
-      fullPath: '/org/$slug/admin/programs/$programId/'
-      preLoaderRoute: typeof OrgSlugAdminProgramsProgramIdIndexRouteImport
-      parentRoute: typeof OrgSlugAdminRouteRoute
-    }
-    '/org/$slug/admin/opportunities/$oppId/': {
-      id: '/org/$slug/admin/opportunities/$oppId/'
-      path: '/opportunities/$oppId'
-      fullPath: '/org/$slug/admin/opportunities/$oppId/'
-      preLoaderRoute: typeof OrgSlugAdminOpportunitiesOppIdIndexRouteImport
-      parentRoute: typeof OrgSlugAdminRouteRoute
-    }
-    '/org/$slug/e/$eventSlug/people/$userId': {
-      id: '/org/$slug/e/$eventSlug/people/$userId'
-      path: '/people/$userId'
-      fullPath: '/org/$slug/e/$eventSlug/people/$userId'
-      preLoaderRoute: typeof OrgSlugEEventSlugPeopleUserIdRouteImport
+    '/org/$slug/e/$eventSlug/meeting': {
+      id: '/org/$slug/e/$eventSlug/meeting'
+      path: '/meeting'
+      fullPath: '/org/$slug/e/$eventSlug/meeting'
+      preLoaderRoute: typeof OrgSlugEEventSlugMeetingRouteImport
       parentRoute: typeof OrgSlugEEventSlugRouteRoute
     }
-    '/org/$slug/admin/programs/$programId/session-runner': {
-      id: '/org/$slug/admin/programs/$programId/session-runner'
-      path: '/programs/$programId/session-runner'
-      fullPath: '/org/$slug/admin/programs/$programId/session-runner'
-      preLoaderRoute: typeof OrgSlugAdminProgramsProgramIdSessionRunnerRouteImport
-      parentRoute: typeof OrgSlugAdminRouteRoute
+    '/org/$slug/e/$eventSlug/profile': {
+      id: '/org/$slug/e/$eventSlug/profile'
+      path: '/profile'
+      fullPath: '/org/$slug/e/$eventSlug/profile'
+      preLoaderRoute: typeof OrgSlugEEventSlugProfileRouteImport
+      parentRoute: typeof OrgSlugEEventSlugRouteRoute
     }
-    '/org/$slug/admin/opportunities/$oppId/email': {
-      id: '/org/$slug/admin/opportunities/$oppId/email'
-      path: '/opportunities/$oppId/email'
-      fullPath: '/org/$slug/admin/opportunities/$oppId/email'
-      preLoaderRoute: typeof OrgSlugAdminOpportunitiesOppIdEmailRouteImport
-      parentRoute: typeof OrgSlugAdminRouteRoute
+    '/org/$slug/e/$eventSlug/requests': {
+      id: '/org/$slug/e/$eventSlug/requests'
+      path: '/requests'
+      fullPath: '/org/$slug/e/$eventSlug/requests'
+      preLoaderRoute: typeof OrgSlugEEventSlugRequestsRouteImport
+      parentRoute: typeof OrgSlugEEventSlugRouteRoute
     }
-    '/org/$slug/admin/events/luma/$lumaEventId': {
-      id: '/org/$slug/admin/events/luma/$lumaEventId'
-      path: '/events/luma/$lumaEventId'
-      fullPath: '/org/$slug/admin/events/luma/$lumaEventId'
-      preLoaderRoute: typeof OrgSlugAdminEventsLumaLumaEventIdRouteImport
+    '/org/$slug/poll/$pollToken/': {
+      id: '/org/$slug/poll/$pollToken/'
+      path: '/org/$slug/poll/$pollToken'
+      fullPath: '/org/$slug/poll/$pollToken/'
+      preLoaderRoute: typeof OrgSlugPollPollTokenIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/org/$slug/poll/$pollToken/$respondentToken': {
+      id: '/org/$slug/poll/$pollToken/$respondentToken'
+      path: '/org/$slug/poll/$pollToken/$respondentToken'
+      fullPath: '/org/$slug/poll/$pollToken/$respondentToken'
+      preLoaderRoute: typeof OrgSlugPollPollTokenRespondentTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/org/$slug/survey/$surveyToken/': {
+      id: '/org/$slug/survey/$surveyToken/'
+      path: '/org/$slug/survey/$surveyToken'
+      fullPath: '/org/$slug/survey/$surveyToken/'
+      preLoaderRoute: typeof OrgSlugSurveySurveyTokenIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/org/$slug/survey/$surveyToken/$respondentToken': {
+      id: '/org/$slug/survey/$surveyToken/$respondentToken'
+      path: '/org/$slug/survey/$surveyToken/$respondentToken'
+      fullPath: '/org/$slug/survey/$surveyToken/$respondentToken'
+      preLoaderRoute: typeof OrgSlugSurveySurveyTokenRespondentTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/org/$slug/admin/crm/people/$contactId': {
+      id: '/org/$slug/admin/crm/people/$contactId'
+      path: '/crm/people/$contactId'
+      fullPath: '/org/$slug/admin/crm/people/$contactId'
+      preLoaderRoute: typeof OrgSlugAdminCrmPeopleContactIdRouteImport
       parentRoute: typeof OrgSlugAdminRouteRoute
     }
     '/org/$slug/admin/events/$eventId_/checkin': {
@@ -1416,12 +1374,54 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrgSlugAdminEventsEventIdCheckinRouteImport
       parentRoute: typeof OrgSlugAdminRouteRoute
     }
-    '/org/$slug/admin/crm/people/$contactId': {
-      id: '/org/$slug/admin/crm/people/$contactId'
-      path: '/crm/people/$contactId'
-      fullPath: '/org/$slug/admin/crm/people/$contactId'
-      preLoaderRoute: typeof OrgSlugAdminCrmPeopleContactIdRouteImport
+    '/org/$slug/admin/events/luma/$lumaEventId': {
+      id: '/org/$slug/admin/events/luma/$lumaEventId'
+      path: '/events/luma/$lumaEventId'
+      fullPath: '/org/$slug/admin/events/luma/$lumaEventId'
+      preLoaderRoute: typeof OrgSlugAdminEventsLumaLumaEventIdRouteImport
       parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/admin/opportunities/$oppId/': {
+      id: '/org/$slug/admin/opportunities/$oppId/'
+      path: '/opportunities/$oppId'
+      fullPath: '/org/$slug/admin/opportunities/$oppId/'
+      preLoaderRoute: typeof OrgSlugAdminOpportunitiesOppIdIndexRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/admin/opportunities/$oppId/email': {
+      id: '/org/$slug/admin/opportunities/$oppId/email'
+      path: '/opportunities/$oppId/email'
+      fullPath: '/org/$slug/admin/opportunities/$oppId/email'
+      preLoaderRoute: typeof OrgSlugAdminOpportunitiesOppIdEmailRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/admin/programs/$programId/': {
+      id: '/org/$slug/admin/programs/$programId/'
+      path: '/programs/$programId'
+      fullPath: '/org/$slug/admin/programs/$programId/'
+      preLoaderRoute: typeof OrgSlugAdminProgramsProgramIdIndexRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/admin/programs/$programId/session-runner': {
+      id: '/org/$slug/admin/programs/$programId/session-runner'
+      path: '/programs/$programId/session-runner'
+      fullPath: '/org/$slug/admin/programs/$programId/session-runner'
+      preLoaderRoute: typeof OrgSlugAdminProgramsProgramIdSessionRunnerRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
+    '/org/$slug/e/$eventSlug/people/': {
+      id: '/org/$slug/e/$eventSlug/people/'
+      path: '/people'
+      fullPath: '/org/$slug/e/$eventSlug/people/'
+      preLoaderRoute: typeof OrgSlugEEventSlugPeopleIndexRouteImport
+      parentRoute: typeof OrgSlugEEventSlugRouteRoute
+    }
+    '/org/$slug/e/$eventSlug/people/$userId': {
+      id: '/org/$slug/e/$eventSlug/people/$userId'
+      path: '/people/$userId'
+      fullPath: '/org/$slug/e/$eventSlug/people/$userId'
+      preLoaderRoute: typeof OrgSlugEEventSlugPeopleUserIdRouteImport
+      parentRoute: typeof OrgSlugEEventSlugRouteRoute
     }
   }
 }
