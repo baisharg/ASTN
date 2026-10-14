@@ -6,15 +6,17 @@ import { useEffect } from 'react'
  * Extracts structured messages from ConvexError, shows dev-only stack traces.
  */
 export function ErrorDisplay({
-  error,
+  error: thrown,
   reset,
 }: {
-  error: Error
+  // The router types errors as unknown: anything can be thrown.
+  error: unknown
   reset: () => void
 }) {
+  const error = thrown instanceof Error ? thrown : new Error(String(thrown))
   useEffect(() => {
-    Sentry.captureException(error)
-  }, [error])
+    Sentry.captureException(thrown)
+  }, [thrown])
 
   // Extract user-friendly message from ConvexError if available
   let friendlyMessage: string | null = null
