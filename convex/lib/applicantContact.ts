@@ -2,7 +2,10 @@ import type { QueryCtx } from '../_generated/server'
 import type { Doc } from '../_generated/dataModel'
 import { getLegacyUserEmail } from './auth'
 import { extractApplicantEmailFromResponses } from './applicantEmail'
-import { resolveApplicantDisplayName } from './applicantName'
+import {
+  resolveApplicantDisplayName,
+  resolveApplicantNameParts,
+} from './applicantName'
 import type { FormField } from './formFields'
 
 /**
@@ -23,9 +26,15 @@ export async function resolveApplicantContact(
   app: Doc<'opportunityApplications'>,
   formFields: Array<FormField> | undefined,
   nameFallback: string,
-): Promise<{ name: string; email: string }> {
+): Promise<{
+  name: string
+  email: string
+  firstName: string
+  lastName: string
+}> {
   let email = app.contactEmailOverride?.trim() ?? ''
   let name: string
+  let profileName: string | undefined
 
   if (app.guestEmail) {
     if (!email) email = app.guestEmail
@@ -38,6 +47,7 @@ export async function resolveApplicantContact(
       .query('profiles')
       .withIndex('by_user', (q) => q.eq('userId', app.userId!))
       .first()
+    profileName = profile?.name
 
     name = resolveApplicantDisplayName({
       profileName: profile?.name,
@@ -46,7 +56,8 @@ export async function resolveApplicantContact(
     })
 
     if (!email)
-      email = profile?.email ?? (await getLegacyUserEmail(ctx, app.userId)) ?? ''
+      email =
+        profile?.email ?? (await getLegacyUserEmail(ctx, app.userId)) ?? ''
   } else {
     name = resolveApplicantDisplayName({
       responses: app.responses,
@@ -59,5 +70,9 @@ export async function resolveApplicantContact(
     email = extractApplicantEmailFromResponses(app.responses, formFields) ?? ''
   }
 
-  return { name, email }
+  return {
+    name,
+    email,
+    ...resolveApplicantNameParts({ profileName, responses: app.responses }),
+  }
 }

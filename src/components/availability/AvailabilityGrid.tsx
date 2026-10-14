@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { Fragment, useCallback, useRef, useState } from 'react'
 import { Button } from '~/components/ui/button'
 import { cn } from '~/lib/utils'
 import { weekdayShort } from '../../../convex/lib/availabilityWeek'
@@ -16,6 +16,11 @@ interface AvailabilityGridProps {
   onSlotsChange: (slots: Record<string, SlotStatus>) => void
   readOnly?: boolean
   finalizedSlot?: { day: number; startMinutes: number; endMinutes: number }
+  /**
+   * Stretch the grid to fill its parent's height and width, so the whole week
+   * is visible without scrolling. The parent must have a definite height.
+   */
+  fit?: boolean
 }
 
 const formatTime = (minutes: number) => {
@@ -64,6 +69,7 @@ export function AvailabilityGrid({
   onSlotsChange,
   readOnly = false,
   finalizedSlot,
+  fit = false,
 }: AvailabilityGridProps) {
   const [paintMode, setPaintMode] = useState<PaintMode>('available')
   const paintModeRef = useRef<PaintMode>(paintMode)
@@ -130,7 +136,7 @@ export function AvailabilityGrid({
   }, [])
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className={cn('flex flex-col gap-3', fit && 'h-full min-h-0 gap-2')}>
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -192,88 +198,104 @@ export function AvailabilityGrid({
         </div>
       )}
 
+      {/* A CSS grid rather than a table so that, in fit mode, the rows share
+          whatever height there is. The 1px gap on a grey background draws the
+          cell borders. */}
       <div
-        className="select-none overflow-x-auto max-w-full"
+        className={cn(
+          'select-none',
+          fit ? 'min-h-0 flex-1 overflow-y-auto' : 'max-w-full overflow-x-auto',
+        )}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
         onContextMenu={readOnly ? undefined : (e) => e.preventDefault()}
       >
-        <table className="w-full border-collapse">
-          <thead>
-            <tr>
-              <th className="sticky left-0 z-10 bg-background p-1" />
-              {days.map((day) => (
-                <th
-                  key={day}
-                  className="min-w-[60px] px-1 pb-1 text-center text-xs font-medium text-muted-foreground"
-                >
-                  <div>{weekdayShort(day)}</div>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {timeSlots.map((minutes) => (
-              <tr key={minutes}>
-                <td className="sticky left-0 z-10 bg-background pr-2 text-right text-xs whitespace-nowrap text-muted-foreground">
-                  {formatTime(minutes)}
-                </td>
-                {days.map((day) => {
-                  const key = `${day}|${minutes}`
-                  const hasSlot = key in slots
-                  const finalized = isFinalized(
-                    day,
-                    minutes,
-                    slotDurationMinutes,
-                    finalizedSlot,
-                  )
+        <div
+          className={cn('grid', fit && 'h-full')}
+          style={{
+            gridTemplateColumns: fit
+              ? `auto repeat(${days.length}, minmax(0, 1fr))`
+              : `auto repeat(${days.length}, minmax(60px, 1fr))`,
+            gridTemplateRows: fit
+              ? `auto repeat(${timeSlots.length}, minmax(14px, 1fr))`
+              : `auto repeat(${timeSlots.length}, 40px)`,
+          }}
+        >
+          <div className="sticky top-0 left-0 z-20 bg-background" />
+          {days.map((day) => (
+            <div
+              key={day}
+              className="sticky top-0 z-10 bg-background px-1 pb-1 text-center text-xs font-medium text-muted-foreground"
+            >
+              {weekdayShort(day)}
+            </div>
+          ))}
+          {timeSlots.map((minutes) => (
+            <Fragment key={minutes}>
+              <div
+                className={cn(
+                  'sticky left-0 z-10 bg-background pr-2 text-right text-xs whitespace-nowrap text-muted-foreground',
+                  fit && 'text-[11px] leading-none',
+                )}
+              >
+                {/* In fit mode rows can get short, so only label the hours. */}
+                {!fit || minutes % 60 === 0 || slotDurationMinutes >= 60
+                  ? formatTime(minutes)
+                  : ''}
+              </div>
+              {days.map((day) => {
+                const key = `${day}|${minutes}`
+                const hasSlot = key in slots
+                const finalized = isFinalized(
+                  day,
+                  minutes,
+                  slotDurationMinutes,
+                  finalizedSlot,
+                )
 
-                  let cellBg = 'bg-slate-100'
-                  if (finalized) {
-                    cellBg = 'bg-blue-400 ring-2 ring-blue-600'
-                  } else if (hasSlot) {
-                    cellBg =
-                      slots[key] === 'available'
-                        ? 'bg-green-400'
-                        : 'bg-amber-300'
-                  }
+                let cellBg = 'bg-slate-100'
+                if (finalized) {
+                  cellBg = 'bg-blue-400 ring-2 ring-inset ring-blue-600'
+                } else if (hasSlot) {
+                  cellBg =
+                    slots[key] === 'available' ? 'bg-green-400' : 'bg-amber-300'
+                }
 
-                  return (
-                    <td
-                      key={key}
-                      className={cn(
-                        'h-[40px] min-w-[60px] border border-slate-200',
-                        cellBg,
-                        !readOnly && 'cursor-pointer',
-                      )}
-                      onPointerDown={
-                        readOnly
-                          ? undefined
-                          : (e) => {
-                              handlePointerDown(key, e)
-                            }
-                      }
-                      onPointerEnter={
-                        readOnly
-                          ? undefined
-                          : () => {
-                              handlePointerEnter(key)
-                            }
-                      }
-                      onClick={
-                        readOnly
-                          ? undefined
-                          : () => {
-                              handleCellClick(key)
-                            }
-                      }
-                    />
-                  )
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                return (
+                  <div
+                    key={key}
+                    className={cn(
+                      'border-t border-l border-slate-200',
+                      cellBg,
+                      !readOnly && 'cursor-pointer',
+                    )}
+                    onPointerDown={
+                      readOnly
+                        ? undefined
+                        : (e) => {
+                            handlePointerDown(key, e)
+                          }
+                    }
+                    onPointerEnter={
+                      readOnly
+                        ? undefined
+                        : () => {
+                            handlePointerEnter(key)
+                          }
+                    }
+                    onClick={
+                      readOnly
+                        ? undefined
+                        : () => {
+                            handleCellClick(key)
+                          }
+                    }
+                  />
+                )
+              })}
+            </Fragment>
+          ))}
+        </div>
       </div>
     </div>
   )

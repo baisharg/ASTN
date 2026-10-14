@@ -10,11 +10,10 @@ import {
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
 import type { FormField } from '../../../convex/lib/formFields'
-import { nameRoleOfFieldKey } from '../../../convex/lib/applicantName'
 import { DynamicResponseViewer } from '~/components/opportunities/DynamicResponseViewer'
 import { Card } from '~/components/ui/card'
 import { Button } from '~/components/ui/button'
-import { Badge } from '~/components/ui/badge'
+import { cn } from '~/lib/utils'
 import { Spinner } from '~/components/ui/spinner'
 import {
   Select,
@@ -106,10 +105,6 @@ export function ApplicationsTable({
     await updateStatus({ applicationId, status: newStatus })
   }
 
-  // Derive summary columns from first 3 input fields
-  const inputFields = formFields.filter((f) => f.kind !== 'section_header')
-  const summaryFields = inputFields.slice(0, 3)
-
   return (
     <div>
       {/* Filters & Export */}
@@ -166,18 +161,14 @@ export function ApplicationsTable({
         </Card>
       ) : (
         <div className="space-y-2">
-          {/* Header — dynamic columns */}
+          {/* Header — fixed columns, the same for every opportunity */}
           <div
             className="grid gap-2 px-4 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider"
-            style={{
-              gridTemplateColumns: `${summaryFields.map(() => '1fr').join(' ')} 120px 150px 32px`,
-            }}
+            style={{ gridTemplateColumns: COLUMNS }}
           >
-            {summaryFields.map((f) => (
-              <span key={f.key} className="truncate">
-                {f.label}
-              </span>
-            ))}
+            <span>First name</span>
+            <span>Last name</span>
+            <span>Email</span>
             <span>Submitted</span>
             <span>Status</span>
             <span />
@@ -188,28 +179,33 @@ export function ApplicationsTable({
             const isExpanded = expandedId === app._id
             return (
               <Card key={app._id}>
-                <button
-                  type="button"
-                  className="w-full text-left"
+                {/* Clicking the row expands it; the status cell changes the
+                    status without expanding. */}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  className="w-full cursor-pointer text-left"
                   onClick={() => setExpandedId(isExpanded ? null : app._id)}
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setExpandedId(isExpanded ? null : app._id)
+                    }
+                  }}
                 >
                   <div
                     className="grid gap-2 items-center px-4 py-3 text-sm"
-                    style={{
-                      gridTemplateColumns: `${summaryFields.map(() => '1fr').join(' ')} 120px 150px 32px`,
-                    }}
+                    style={{ gridTemplateColumns: COLUMNS }}
                   >
-                    {(app.availabilityOnly
-                      ? incompleteSummaryCells(summaryFields, r)
-                      : summaryFields.map((f) => formatCellValue(r[f.key]))
-                    ).map((value, i) => (
-                      <span
-                        key={summaryFields[i].key}
-                        className="truncate text-muted-foreground"
-                      >
-                        {value}
-                      </span>
-                    ))}
+                    <span className="truncate">{app.firstName}</span>
+                    <span className="truncate">{app.lastName}</span>
+                    <span
+                      className="truncate text-muted-foreground"
+                      title={app.email}
+                    >
+                      {app.email}
+                    </span>
                     <span className="text-muted-foreground text-xs">
                       {new Date(app.submittedAt).toLocaleDateString()}
                       {app.availabilityOnly && (
@@ -221,15 +217,20 @@ export function ApplicationsTable({
                         </span>
                       )}
                     </span>
-                    <span>
-                      <Badge
-                        variant="outline"
-                        className={
-                          STATUS_COLORS[app.status as ApplicationStatus]
-                        }
-                      >
-                        {STATUS_LABELS[app.status as ApplicationStatus]}
-                      </Badge>
+                    {/* Stops clicks (also inside the dropdown, which React
+                        bubbles through its portal) from toggling the row. */}
+                    <span
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
+                      <StatusSelect
+                        value={app.status as ApplicationStatus}
+                        onChange={(next) => handleStatusChange(app._id, next)}
+                        className={cn(
+                          'h-7 w-[140px] px-2 text-xs',
+                          STATUS_COLORS[app.status as ApplicationStatus],
+                        )}
+                      />
                       {app.autoAcceptedFrom && (
                         <span
                           className="block text-[11px] text-green-700 mt-0.5"
@@ -255,7 +256,7 @@ export function ApplicationsTable({
                       <ChevronDown className="size-4 text-muted-foreground" />
                     )}
                   </div>
-                </button>
+                </div>
 
                 {isExpanded && (
                   <div className="border-t px-4 py-4">
@@ -285,40 +286,34 @@ export function ApplicationsTable({
   )
 }
 
-/**
- * An incomplete application (availability through the poll's generic link)
- * only stores firstName, lastName and email, whose keys rarely match the
- * form's own. Place them in the columns that ask for them, and if no column
- * does, show the name and email in the first two.
- */
-function incompleteSummaryCells(
-  summaryFields: Array<FormField>,
-  r: Record<string, unknown>,
-): Array<string> {
-  const first = typeof r.firstName === 'string' ? r.firstName : ''
-  const last = typeof r.lastName === 'string' ? r.lastName : ''
-  const email = typeof r.email === 'string' ? r.email : ''
-  const full = [first, last].filter(Boolean).join(' ')
-  const hasLastColumn = summaryFields.some(
-    (f) => nameRoleOfFieldKey(f.key) === 'last',
+const COLUMNS = '1fr 1fr 1.5fr 120px 150px 32px'
+
+function StatusSelect({
+  value,
+  onChange,
+  className,
+}: {
+  value: ApplicationStatus
+  onChange: (next: ApplicationStatus) => void
+  className?: string
+}) {
+  return (
+    <Select
+      value={value}
+      onValueChange={(val) => onChange(val as ApplicationStatus)}
+    >
+      <SelectTrigger className={className}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {(Object.keys(STATUS_LABELS) as Array<ApplicationStatus>).map((s) => (
+          <SelectItem key={s} value={s}>
+            {STATUS_LABELS[s]}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
-
-  const cells = summaryFields.map((f) => {
-    if (r[f.key] !== undefined) return formatCellValue(r[f.key])
-    if (f.kind === 'email' || /e-?mail|correo/i.test(f.key)) return email
-    const role = nameRoleOfFieldKey(f.key)
-    if (role === 'first') return hasLastColumn ? first : full
-    if (role === 'last') return last
-    if (role === 'full') return full
-    return ''
-  })
-
-  const showsName = summaryFields.some((f) => nameRoleOfFieldKey(f.key))
-  if (!showsName && cells.length > 0) {
-    cells[0] = full
-    if (cells.length > 1 && !cells.includes(email)) cells[1] = email
-  }
-  return cells
 }
 
 function formatCellValue(val: unknown): string {
@@ -356,26 +351,11 @@ function ApplicationDetail({
       {/* Status update */}
       <div className="flex items-center gap-3 pt-4 border-t">
         <span className="text-sm font-medium">Update status:</span>
-        <Select
+        <StatusSelect
           value={status}
-          onValueChange={(val) =>
-            onStatusChange(applicationId, val as ApplicationStatus)
-          }
-        >
-          <SelectTrigger className="w-[160px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="submitted">Submitted</SelectItem>
-            <SelectItem value="under_review">Under Review</SelectItem>
-            <SelectItem value="accepted">Accepted</SelectItem>
-            <SelectItem value="next_edition">Next edition</SelectItem>
-            <SelectItem value="rejected">Rejected</SelectItem>
-            <SelectItem value="redirected">Fit for another course</SelectItem>
-            <SelectItem value="waitlisted">Waitlisted</SelectItem>
-            <SelectItem value="participated">Participated</SelectItem>
-          </SelectContent>
-        </Select>
+          onChange={(next) => onStatusChange(applicationId, next)}
+          className="w-[160px]"
+        />
       </div>
     </div>
   )

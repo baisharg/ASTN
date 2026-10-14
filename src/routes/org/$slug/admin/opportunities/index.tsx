@@ -10,7 +10,6 @@ import {
   FileText,
   Link2,
   Loader2,
-  Pencil,
   Plus,
   Search,
   Shield,
@@ -115,6 +114,21 @@ function AdminOpportunitiesPage() {
   )
 
   const navigate = useNavigate()
+
+  // Cmd/Ctrl+click opens it in a new tab, like a link would.
+  const openOpportunity = (
+    oppId: string,
+    e: React.MouseEvent | React.KeyboardEvent,
+  ) => {
+    if (e.metaKey || e.ctrlKey) {
+      window.open(`/org/${slug}/admin/opportunities/${oppId}`, '_blank')
+      return
+    }
+    void navigate({
+      to: '/org/$slug/admin/opportunities/$oppId',
+      params: { slug, oppId },
+    })
+  }
   const duplicateOpp = useMutation(api.orgOpportunities.duplicate)
   const setArchived = useMutation(api.orgOpportunities.setArchived)
   const [confirmDuplicate, setConfirmDuplicate] = useState<{
@@ -390,7 +404,19 @@ function AdminOpportunitiesPage() {
                   ? (opp.formFields as Array<unknown>).length
                   : 0
                 return (
-                  <Card key={opp._id} className="px-4 py-3">
+                  // The whole card opens the opportunity; the buttons on the
+                  // right do their own thing without opening it.
+                  <Card
+                    key={opp._id}
+                    role="link"
+                    tabIndex={0}
+                    className="cursor-pointer px-4 py-3 transition-colors hover:bg-muted/50"
+                    onClick={(e) => openOpportunity(opp.slug ?? opp._id, e)}
+                    onKeyDown={(e) => {
+                      if (e.target === e.currentTarget && e.key === 'Enter')
+                        openOpportunity(opp.slug ?? opp._id, e)
+                    }}
+                  >
                     <div className="flex items-center gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
@@ -440,91 +466,87 @@ function AdminOpportunitiesPage() {
                         {opp.status}
                       </Badge>
 
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        title="Copy application link"
-                        onClick={async () => {
-                          // An outreach round once went out pointing at a
-                          // closed opportunity, so copying the link of
-                          // anything not `active` asks first.
-                          if (opp.status !== 'active') {
-                            setConfirmCopy({
+                      <div
+                        className="flex items-center gap-3"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title="Copy application link"
+                          onClick={async () => {
+                            // An outreach round once went out pointing at a
+                            // closed opportunity, so copying the link of
+                            // anything not `active` asks first.
+                            if (opp.status !== 'active') {
+                              setConfirmCopy({
+                                id: opp._id,
+                                title: opp.title,
+                                status: opp.status,
+                                key: opp.slug ?? opp._id,
+                              })
+                              return
+                            }
+                            const url = `${window.location.origin}/org/${slug}/apply/${opp.slug ?? opp._id}`
+                            try {
+                              await navigator.clipboard.writeText(url)
+                              toast.success('Application link copied')
+                            } catch {
+                              toast.error('Failed to copy link')
+                            }
+                          }}
+                        >
+                          <Link2 className="size-4" />
+                        </Button>
+
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title={
+                            opp.archivedAt
+                              ? 'Unarchive — put it back in the list'
+                              : 'Archive — take it out of the list, nothing is lost'
+                          }
+                          onClick={async () => {
+                            try {
+                              await setArchived({
+                                id: opp._id,
+                                archived: opp.archivedAt === undefined,
+                              })
+                              toast.success(
+                                opp.archivedAt ? 'Unarchived' : 'Archived',
+                              )
+                            } catch {
+                              toast.error("Couldn't archive the opportunity")
+                            }
+                          }}
+                        >
+                          {opp.archivedAt ? (
+                            <ArchiveRestore className="size-4" />
+                          ) : (
+                            <Archive className="size-4" />
+                          )}
+                        </Button>
+
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title="Duplicate — copies the setup into a new draft"
+                          disabled={duplicatingId === opp._id}
+                          onClick={() =>
+                            setConfirmDuplicate({
                               id: opp._id,
                               title: opp.title,
-                              status: opp.status,
-                              key: opp.slug ?? opp._id,
                             })
-                            return
                           }
-                          const url = `${window.location.origin}/org/${slug}/apply/${opp.slug ?? opp._id}`
-                          try {
-                            await navigator.clipboard.writeText(url)
-                            toast.success('Application link copied')
-                          } catch {
-                            toast.error('Failed to copy link')
-                          }
-                        }}
-                      >
-                        <Link2 className="size-4" />
-                      </Button>
-
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        title={
-                          opp.archivedAt
-                            ? 'Unarchive — put it back in the list'
-                            : 'Archive — take it out of the list, nothing is lost'
-                        }
-                        onClick={async () => {
-                          try {
-                            await setArchived({
-                              id: opp._id,
-                              archived: opp.archivedAt === undefined,
-                            })
-                            toast.success(
-                              opp.archivedAt ? 'Unarchived' : 'Archived',
-                            )
-                          } catch {
-                            toast.error("Couldn't archive the opportunity")
-                          }
-                        }}
-                      >
-                        {opp.archivedAt ? (
-                          <ArchiveRestore className="size-4" />
-                        ) : (
-                          <Archive className="size-4" />
-                        )}
-                      </Button>
-
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        title="Duplicate — copies the setup into a new draft"
-                        disabled={duplicatingId === opp._id}
-                        onClick={() =>
-                          setConfirmDuplicate({
-                            id: opp._id,
-                            title: opp.title,
-                          })
-                        }
-                      >
-                        {duplicatingId === opp._id ? (
-                          <Loader2 className="size-4 animate-spin" />
-                        ) : (
-                          <Copy className="size-4" />
-                        )}
-                      </Button>
-
-                      <Button variant="ghost" size="sm" asChild>
-                        <Link
-                          to="/org/$slug/admin/opportunities/$oppId"
-                          params={{ slug, oppId: opp.slug ?? opp._id }}
                         >
-                          <Pencil className="size-4" />
-                        </Link>
-                      </Button>
+                          {duplicatingId === opp._id ? (
+                            <Loader2 className="size-4 animate-spin" />
+                          ) : (
+                            <Copy className="size-4" />
+                          )}
+                        </Button>
+                      </div>
                     </div>
                   </Card>
                 )

@@ -203,32 +203,37 @@ function RespondentPollPage() {
 
   return (
     <GradientBg>
-      <main className="container mx-auto px-4 py-8">
-        <div className="max-w-3xl mx-auto">
-          <div className="mb-6">
+      {/* One screen high, like the generic link: the grid takes the room
+          that is left. */}
+      <main className="container mx-auto flex h-dvh flex-col px-4 py-4">
+        <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
+          <div className="mb-3">
             <p className="text-sm text-muted-foreground">{org.name}</p>
-            <h1 className="text-2xl font-display font-semibold text-foreground">
+            <h1 className="text-xl font-display font-semibold text-foreground">
               {poll.title}
             </h1>
-            <p className="text-sm text-muted-foreground mt-1">
+            <p className="text-sm text-muted-foreground">
               {opportunity.title} · Timezone: {poll.timezone.replace(/_/g, ' ')}
             </p>
-            <p className="text-sm text-foreground mt-2">
+            <p className="text-sm text-foreground mt-1">
               Responding as: <strong>{respondentName}</strong>
             </p>
           </div>
 
-          <AvailabilityGrid
-            days={poll.days}
-            startMinutes={poll.startMinutes}
-            endMinutes={poll.endMinutes}
-            slotDurationMinutes={poll.slotDurationMinutes}
-            timezone={poll.timezone}
-            slots={slots}
-            onSlotsChange={handleSlotsChange}
-          />
+          <div className="min-h-0 flex-1">
+            <AvailabilityGrid
+              days={poll.days}
+              startMinutes={poll.startMinutes}
+              endMinutes={poll.endMinutes}
+              slotDurationMinutes={poll.slotDurationMinutes}
+              timezone={poll.timezone}
+              slots={slots}
+              onSlotsChange={handleSlotsChange}
+              fit
+            />
+          </div>
 
-          <div className="flex items-center justify-end mt-4 text-sm text-muted-foreground">
+          <div className="flex h-5 items-center justify-end mt-2 text-sm text-muted-foreground">
             {saveStatus === 'saving' && (
               <span className="flex items-center gap-1.5">
                 <Loader2 className="size-3.5 animate-spin" />

@@ -61,18 +61,40 @@ function readByKeys(
 }
 
 /**
- * Which part of a person's name a form field asks for, judging by its key.
+ * First and last name for showing them in separate columns: the form's own
+ * first/last name answers, else a full name split at its first space (from
+ * the form, else from the profile).
  */
-export function nameRoleOfFieldKey(
-  key: string,
-): 'first' | 'last' | 'full' | null {
-  const k = normalizeKey(key)
-  const matches = (keys: Array<string>) =>
-    keys.some((candidate) => normalizeKey(candidate) === k)
-  if (matches(FIRST_NAME_KEYS)) return 'first'
-  if (matches(LAST_NAME_KEYS)) return 'last'
-  if (matches(FULL_NAME_KEYS)) return 'full'
-  return null
+export function resolveApplicantNameParts({
+  profileName,
+  responses,
+}: {
+  profileName?: string
+  responses: unknown
+}): { firstName: string; lastName: string } {
+  const valuesByNormalizedKey = new Map<string, unknown>()
+  if (responses && typeof responses === 'object' && !Array.isArray(responses)) {
+    for (const [key, value] of Object.entries(
+      responses as Record<string, unknown>,
+    )) {
+      valuesByNormalizedKey.set(normalizeKey(key), value)
+    }
+  }
+
+  const firstName = readByKeys(valuesByNormalizedKey, FIRST_NAME_KEYS)
+  const lastName = readByKeys(valuesByNormalizedKey, LAST_NAME_KEYS)
+  if (firstName && lastName) return { firstName, lastName }
+
+  const full =
+    firstName ??
+    lastName ??
+    readByKeys(valuesByNormalizedKey, FULL_NAME_KEYS) ??
+    toNameCandidate(profileName)
+  if (!full) return { firstName: '', lastName: '' }
+  const space = full.indexOf(' ')
+  return space === -1
+    ? { firstName: full, lastName: '' }
+    : { firstName: full.slice(0, space), lastName: full.slice(space + 1) }
 }
 
 export function extractApplicantNameFromResponses(

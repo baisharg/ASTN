@@ -608,6 +608,10 @@ export const listByOpportunity = query({
       autoAcceptedFrom: v.optional(v.id('opportunityApplications')),
       autoAcceptSeenBy: v.optional(v.array(v.string())),
       nextEditionAcceptedIn: v.optional(v.id('orgOpportunities')),
+      // Resolved for the list's fixed columns, whatever the form's keys.
+      firstName: v.string(),
+      lastName: v.string(),
+      email: v.string(),
     }),
   ),
   handler: async (ctx, { opportunityId, statusFilter }) => {
@@ -629,21 +633,32 @@ export const listByOpportunity = query({
       throw new ConvexError('Admin access required')
     }
 
-    if (statusFilter) {
-      return await ctx.db
-        .query('opportunityApplications')
-        .withIndex('by_opportunity_and_status', (q) =>
-          q.eq('opportunityId', opportunityId).eq('status', statusFilter),
-        )
-        .collect()
-    }
+    const applications = statusFilter
+      ? await ctx.db
+          .query('opportunityApplications')
+          .withIndex('by_opportunity_and_status', (q) =>
+            q.eq('opportunityId', opportunityId).eq('status', statusFilter),
+          )
+          .collect()
+      : await ctx.db
+          .query('opportunityApplications')
+          .withIndex('by_opportunity_and_status', (q) =>
+            q.eq('opportunityId', opportunityId),
+          )
+          .collect()
 
-    return await ctx.db
-      .query('opportunityApplications')
-      .withIndex('by_opportunity_and_status', (q) =>
-        q.eq('opportunityId', opportunityId),
-      )
-      .collect()
+    const formFields = opportunity.formFields as Array<FormField> | undefined
+    return await Promise.all(
+      applications.map(async (app) => {
+        const { firstName, lastName, email } = await resolveApplicantContact(
+          ctx,
+          app,
+          formFields,
+          '',
+        )
+        return { ...app, firstName, lastName, email }
+      }),
+    )
   },
 })
 

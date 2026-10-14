@@ -190,7 +190,9 @@ function OpenAvailabilityForm({
 
   return (
     <GradientBg>
-      <main className="container mx-auto px-4 py-8">
+      {/* One screen high: the grid takes whatever room is left, so the whole
+          page is visible without scrolling. */}
+      <main className="container mx-auto flex h-dvh flex-col px-4 py-4">
         <form
           onSubmit={handleSubmit}
           // Only the Send button submits: Enter in a field does not.
@@ -199,19 +201,19 @@ function OpenAvailabilityForm({
               e.preventDefault()
             }
           }}
-          className="max-w-3xl mx-auto"
+          className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col"
         >
-          <div className="mb-6">
+          <div className="mb-3">
             <p className="text-sm text-muted-foreground">{org.name}</p>
-            <h1 className="text-2xl font-display font-semibold text-foreground">
+            <h1 className="text-xl font-display font-semibold text-foreground">
               {poll.title}
             </h1>
-            <p className="text-sm text-muted-foreground mt-1">
+            <p className="text-sm text-muted-foreground">
               {opportunity.title} · Timezone: {poll.timezone.replace(/_/g, ' ')}
             </p>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-3 mb-6">
+          <div className="grid gap-3 sm:grid-cols-3 mb-3">
             <div className="space-y-1">
               <Label htmlFor="firstName">First name</Label>
               <Input
@@ -242,17 +244,20 @@ function OpenAvailabilityForm({
             </div>
           </div>
 
-          <AvailabilityGrid
-            days={poll.days}
-            startMinutes={poll.startMinutes}
-            endMinutes={poll.endMinutes}
-            slotDurationMinutes={poll.slotDurationMinutes}
-            timezone={poll.timezone}
-            slots={slots}
-            onSlotsChange={setSlots}
-          />
+          <div className="min-h-0 flex-1">
+            <AvailabilityGrid
+              days={poll.days}
+              startMinutes={poll.startMinutes}
+              endMinutes={poll.endMinutes}
+              slotDurationMinutes={poll.slotDurationMinutes}
+              timezone={poll.timezone}
+              slots={slots}
+              onSlotsChange={setSlots}
+              fit
+            />
+          </div>
 
-          <div className="flex flex-col items-end gap-2 mt-4">
+          <div className="flex items-center justify-end gap-3 mt-3">
             {error && <p className="text-sm text-destructive">{error}</p>}
             <Button type="submit" disabled={submitting}>
               {submitting && <Loader2 className="size-4 mr-2 animate-spin" />}
