@@ -15,7 +15,7 @@ import { writeFileSync } from 'node:fs'
 
 const CONVEX_URL =
   process.env.CONVEX_URL ?? 'https://brainy-civet-624.convex.cloud'
-const STATIC_PATHS = ['/', '/orgs', '/org/baish', '/opportunities']
+const STATIC_PATHS = ['/']
 const ERROR_MARKER = 'Something went wrong'
 const ATTEMPTS = 2
 const TIMEOUT_MS = 30_000
