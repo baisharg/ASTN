@@ -1,0 +1,71 @@
+# Checks that production's public pages work, after every deploy and hourly.
+#
+# Vercel deploys main in parallel to CI, so a broken release can reach
+# production while CI is still running or green. This loads the live pages,
+# including the application link of every active opportunity (read at run time),
+# and fails the job (GitHub emails the pusher) when any is not HTTP 200 or shows
+# the error page. If the SLACK_WEBHOOK_URL secret exists it also posts to Slack.
+name: Production check
+
+on:
+  # Vercel's GitHub integration reports each deploy as a deployment_status
+  # event; production ones carry environment "Production".
+  deployment_status:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check safetytalent.org
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'deployment_status' ||
+      (github.event.deployment_status.state == 'success' &&
+      github.event.deployment.environment == 'Production')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # Vercel reports success a moment before the production alias settles.
+      - name: Wait for the deploy to settle
+        if: github.event_name == 'deployment_status'
+        run: sleep 30
+
+      - name: Check public pages
+        run: node scripts/smoke-pages.mjs https://safetytalent.org --all-links --json-out smoke-result.json
+
+      - name: Notify Slack
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          COMMIT: ${{ github.event.deployment.sha || github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo 'SLACK_WEBHOOK_URL is not set, skipping the Slack post.'
+            exit 0
+          fi
+          # The script writes the file only after checking every page, so a
+          # missing one means the check itself crashed (e.g. Convex unreachable).
+          [ -s smoke-result.json ] || echo '{"failures":[]}' > smoke-result.json
+          jq -n --arg commit "${COMMIT:0:7}" --arg run "$RUN_URL" \
+            --slurpfile r smoke-result.json '{
+              text: (
+                ":rotating_light: safetytalent.org check failed (commit \($commit))\n"
+                + (if ($r[0].failures | length) > 0
+                   then ([$r[0].failures[] | "• \(.url): \(.reason)"] | join("\n"))
+                   else "The check did not finish, see the run log." end)
+                + "\n<\($run)|Run details>"
+              )
+            }' | curl -fsS -X POST -H 'content-type: application/json' --data @- "$SLACK_WEBHOOK_URL"

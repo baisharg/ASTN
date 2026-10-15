@@ -49,8 +49,31 @@ jobs:
       - name: Typecheck Convex backend
         run: pnpm exec tsc -p convex/tsconfig.json --noEmit
 
+      # The values below are public (they ship in the client bundle). The
+      # smoke test needs them baked into the build, or the router throws on
+      # every request.
       - name: Build
         run: pnpm run build
+        env:
+          VITE_CONVEX_URL: https://brainy-civet-624.convex.cloud
+          VITE_CLERK_PUBLISHABLE_KEY: pk_live_Y2xlcmsuc2FmZXR5dGFsZW50Lm9yZyQ
+
+      # Loads real pages from the built server. Lint, types and unit tests
+      # passed while a router upgrade made every route with a server-side
+      # loader return HTTP 500, so nothing else here would have caught it.
+      # SSR reads the production Convex deployment, read-only.
+      - name: Smoke test built pages
+        run: |
+          node scripts/serve-build.mjs 3000 > serve.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -s -o /dev/null http://localhost:3000/ && break
+            sleep 1
+          done
+          node scripts/smoke-pages.mjs http://localhost:3000 || {
+            echo '--- server log ---'
+            tail -n 60 serve.log
+            exit 1
+          }
 
       # The existing tests are written for Bun's test runner.
       - name: Setup Bun
