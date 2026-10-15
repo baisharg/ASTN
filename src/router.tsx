@@ -1,7 +1,7 @@
 import * as Sentry from '@sentry/tanstackstart-react'
 import { createRouter } from '@tanstack/react-router'
 import { QueryClient } from '@tanstack/react-query'
-import { routerWithQueryClient } from '@tanstack/react-router-with-query'
+import { setupRouterSsrQueryIntegration } from '@tanstack/react-router-ssr-query'
 import { ConvexQueryClient } from '@convex-dev/react-query'
 import { ClerkProvider, useAuth } from '@clerk/clerk-react'
 import { ConvexProviderWithClerk } from 'convex/react-clerk'
@@ -56,34 +56,32 @@ export function getRouter() {
   })
   convexQueryClient.connect(queryClient)
 
-  const router = routerWithQueryClient(
-    createRouter({
-      routeTree,
-      defaultPreload: 'intent',
-      context: { queryClient },
-      scrollRestoration: true,
-      defaultPreloadStaleTime: 0, // Let React Query handle all caching
-      defaultViewTransition: true, // Enable View Transitions API for smooth page navigation
-      defaultErrorComponent: DefaultErrorComponent,
-      defaultNotFoundComponent: () => <p>not found</p>,
-      Wrap: ({ children }) => (
-        <ClerkProvider
-          publishableKey={import.meta.env.VITE_CLERK_PUBLISHABLE_KEY}
+  const router = createRouter({
+    routeTree,
+    defaultPreload: 'intent',
+    context: { queryClient },
+    scrollRestoration: true,
+    defaultPreloadStaleTime: 0, // Let React Query handle all caching
+    defaultViewTransition: true, // Enable View Transitions API for smooth page navigation
+    defaultErrorComponent: DefaultErrorComponent,
+    defaultNotFoundComponent: () => <p>not found</p>,
+    Wrap: ({ children }) => (
+      <ClerkProvider
+        publishableKey={import.meta.env.VITE_CLERK_PUBLISHABLE_KEY}
+      >
+        <ConvexProviderWithClerk
+          client={convexQueryClient.convexClient}
+          useAuth={useAuth}
         >
-          <ConvexProviderWithClerk
-            client={convexQueryClient.convexClient}
-            useAuth={useAuth}
-          >
-            <Authenticated>
-              <UserMigration />
-            </Authenticated>
-            {children}
-          </ConvexProviderWithClerk>
-        </ClerkProvider>
-      ),
-    }),
-    queryClient,
-  )
+          <Authenticated>
+            <UserMigration />
+          </Authenticated>
+          {children}
+        </ConvexProviderWithClerk>
+      </ClerkProvider>
+    ),
+  })
+  setupRouterSsrQueryIntegration({ router, queryClient })
 
   if (!router.isServer) {
     Sentry.init({
