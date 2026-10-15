@@ -75,11 +75,11 @@ async function checkOnce(url) {
     if (res.status !== 200)
       return { status: res.status, reason: `HTTP ${res.status}` }
     if (html.includes(ERROR_MARKER)) {
-      return { status: res.status, reason: `HTML contains "${ERROR_MARKER}"` }
+      return { status: res.status, reason: `el HTML dice "${ERROR_MARKER}"` }
     }
     return { status: res.status }
   } catch (error) {
-    return { status: 0, reason: `request failed: ${error.message}` }
+    return { status: 0, reason: `falló el request: ${error.message}` }
   }
 }
 
