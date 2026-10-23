@@ -83,12 +83,18 @@ export function ApplicationsTable({
   const handleExport = async () => {
     setIsExporting(true)
     try {
-      const csv = await exportCsv({ opportunityId })
+      const csv = await exportCsv({
+        opportunityId,
+        statusFilter:
+          statusFilter !== 'all'
+            ? (statusFilter as ApplicationStatus)
+            : undefined,
+      })
       const blob = new Blob([csv], { type: 'text/csv' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `applications-${opportunityTitle.toLowerCase().replace(/\s+/g, '-')}.csv`
+      a.download = `applications-${opportunityTitle.toLowerCase().replace(/\s+/g, '-')}${statusFilter !== 'all' ? `-${statusFilter}` : ''}.csv`
       a.click()
       URL.revokeObjectURL(url)
     } catch (err) {
@@ -161,6 +167,16 @@ export function ApplicationsTable({
         </Card>
       ) : (
         <div className="space-y-2">
+          <ResultCount
+            total={applications.length}
+            incomplete={applications.filter((a) => a.availabilityOnly).length}
+            status={
+              statusFilter !== 'all'
+                ? (statusFilter as ApplicationStatus)
+                : undefined
+            }
+          />
+
           {/* Header — fixed columns, the same for every opportunity */}
           <div
             className="grid gap-2 px-4 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider"
@@ -287,6 +303,28 @@ export function ApplicationsTable({
 }
 
 const COLUMNS = '1fr 1fr 1.5fr 120px 150px 32px'
+
+// Counts what the table shows, so it follows the status filter.
+function ResultCount({
+  total,
+  incomplete,
+  status,
+}: {
+  total: number
+  incomplete: number
+  status?: ApplicationStatus
+}) {
+  const noun = total === 1 ? 'application' : 'applications'
+  return (
+    <p className="px-4 text-sm text-muted-foreground">
+      <span className="font-medium text-foreground">{total}</span>{' '}
+      {status ? `${noun} with status "${STATUS_LABELS[status]}"` : noun}
+      {incomplete > 0 && (
+        <span className="text-amber-700"> · {incomplete} incomplete</span>
+      )}
+    </p>
+  )
+}
 
 function StatusSelect({
   value,

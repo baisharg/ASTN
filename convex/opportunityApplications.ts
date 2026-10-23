@@ -945,9 +945,24 @@ export const listForExport = internalQuery({
 // Admin: export applications as CSV (returns string for client-side download)
 // Dynamically generates columns from the opportunity's formFields.
 export const exportApplications = action({
-  args: { opportunityId: v.id('orgOpportunities') },
+  args: {
+    opportunityId: v.id('orgOpportunities'),
+    // Same filter as listByOpportunity, so the CSV matches the table.
+    statusFilter: v.optional(
+      v.union(
+        v.literal('submitted'),
+        v.literal('under_review'),
+        v.literal('accepted'),
+        v.literal('next_edition'),
+        v.literal('rejected'),
+        v.literal('redirected'),
+        v.literal('waitlisted'),
+        v.literal('participated'),
+      ),
+    ),
+  },
   returns: v.string(),
-  handler: async (ctx, { opportunityId }): Promise<string> => {
+  handler: async (ctx, { opportunityId, statusFilter }): Promise<string> => {
     const identity = await ctx.auth.getUserIdentity()
     if (!identity) throw new ConvexError('Not authenticated')
 
@@ -1005,14 +1020,16 @@ export const exportApplications = action({
       'Status',
     ]
 
-    const rows = applications.map((app) => {
-      const r = app.responses
-      return [
-        ...inputFields.map((f) => formatCell(r[f.key])),
-        new Date(app.submittedAt).toISOString(),
-        app.status,
-      ].map((cell) => escapeCSV(cell))
-    })
+    const rows = applications
+      .filter((app) => !statusFilter || app.status === statusFilter)
+      .map((app) => {
+        const r = app.responses
+        return [
+          ...inputFields.map((f) => formatCell(r[f.key])),
+          new Date(app.submittedAt).toISOString(),
+          app.status,
+        ].map((cell) => escapeCSV(cell))
+      })
 
     return [
       headers.map((h) => escapeCSV(h)).join(','),
