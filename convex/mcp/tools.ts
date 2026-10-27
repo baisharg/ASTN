@@ -300,9 +300,10 @@ export const TOOL_DEFS = [
       'Only allowlisted fields can be changed (see astn_resources). For applications you ' +
       'can set `status` (submitted/under_review/accepted/next_edition/rejected/redirected/waitlisted/participated) and ' +
       '`reviewNotes`; this records the decision inside ASTN and never emails the applicant. ' +
-      'For opportunities and surveys you can also replace `formFields` — the application form and ' +
-      'the survey questions respectively. Pass the whole array (astn_get returns the current one); ' +
-      'keys are sanitised on write. Adding questions is always allowed, at any status: a published ' +
+      'For surveys you can also replace `formFields`, the survey questions. Application forms are ' +
+      'not editable here: each opportunity copies the org canonical form when created, and the ' +
+      'canonical is edited by hand in the web admin. Pass the whole array (astn_get returns the ' +
+      'current one); keys are sanitised on write. Adding questions is always allowed, at any status: a published ' +
       'survey is not frozen. Removing or renaming a question that people already answered is refused ' +
       'the first time, with the count of answers it would strand, and goes through on a repeat call ' +
       'with confirmDiscardsAnswers: true. ' +
@@ -324,7 +325,7 @@ export const TOOL_DEFS = [
         confirmDiscardsAnswers: {
           type: 'boolean',
           description:
-            'For formFields on opportunities and surveys. Acknowledges that the new form drops ' +
+            'For formFields on surveys. Acknowledges that the new form drops ' +
             'questions people already answered, stranding those answers. The error you get ' +
             'without it tells you exactly how many.',
         },
@@ -537,8 +538,10 @@ const PLATFORM_FIELD_HINTS: Record<string, string> = {
     'create requires: programId, dayNumber, title, date. optional: morningStartTime, afternoonStartTime, lumaUrl.',
   opportunities:
     'create requires: title, description, type (course|fellowship|job|other). optional: status ' +
-    '(defaults to draft), deadline (ms), externalUrl, featured, tags, isEOI, formFields (the ' +
-    'application form). A readable slug and the default availability poll are created for you.',
+    '(defaults to draft), deadline (ms), externalUrl, featured, tags, isEOI, courseName (fills ' +
+    '{{course}} in the form). The application form is a copy of the org canonical form (the EOI ' +
+    'one when isEOI) and cannot be passed. A readable slug and the default availability poll are ' +
+    'created for you.',
   surveys:
     'create requires: opportunityId, title, formFields (the questions). optional: description, ' +
     'applicantStatuses (which applicants get a personal link, e.g. ["accepted"]), anonymous. ' +
@@ -559,8 +562,8 @@ const PLATFORM_FIELD_HINTS: Record<string, string> = {
 const PLATFORM_UPDATE_HINTS: Record<string, string> = {
   opportunities:
     'archived: true|false takes it out of / back into the admin list without touching anything ' +
-    'that references it — use it for finished cohorts and for mistakes. formFields replaces the ' +
-    'application form (pass the whole array). astn_delete only works on an opportunity with ' +
+    'that references it — use it for finished cohorts and for mistakes. The application form ' +
+    'is not editable here (it comes from the canonical form). astn_delete only works on an opportunity with ' +
     'nothing attached: no applications, surveys, extra polls or sent emails.',
   surveys:
     'status ∈ draft|open|closed. Opening publishes it — and an identified survey and an anonymous ' +
@@ -908,6 +911,13 @@ export async function callTool(
         })
       }
       if (resource === 'opportunities') {
+        if (args.fields && 'formFields' in (args.fields as object)) {
+          throw new Error(
+            'formFields cannot be passed: the application form is a copy of the org canonical ' +
+              'form, edited by hand in the web admin. Drop formFields (and pass courseName if ' +
+              'the form uses {{course}}).',
+          )
+        }
         return await ctx.runMutation(internal.mcp.platform.createOpportunity, {
           userId,
           orgSlug: org,

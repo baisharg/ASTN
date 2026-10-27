@@ -7,6 +7,7 @@ import {
   Calendar,
   CalendarCheck,
   CalendarDays,
+  ClipboardList,
   Database,
   FileText,
   FolderPlus,
@@ -281,6 +282,13 @@ function OrgAdminDashboard() {
               <Link to="/org/$slug/admin/opportunities" params={{ slug }}>
                 <Briefcase className="size-5 mr-2" />
                 Opportunities
+              </Link>
+            </Button>
+
+            <Button variant="outline" className="h-auto py-4" asChild>
+              <Link to="/org/$slug/admin/forms" params={{ slug }}>
+                <ClipboardList className="size-5 mr-2" />
+                Canonical forms
               </Link>
             </Button>
 

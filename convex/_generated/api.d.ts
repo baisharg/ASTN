@@ -37,6 +37,7 @@ import type * as attendance_scheduler from "../attendance/scheduler.js";
 import type * as availabilityPolls from "../availabilityPolls.js";
 import type * as baishImport from "../baishImport.js";
 import type * as baishImportMutations from "../baishImportMutations.js";
+import type * as canonicalForms from "../canonicalForms.js";
 import type * as careerActions_compute from "../careerActions/compute.js";
 import type * as careerActions_mutations from "../careerActions/mutations.js";
 import type * as careerActions_prompts from "../careerActions/prompts.js";
@@ -237,6 +238,7 @@ declare const fullApi: ApiFromModules<{
   availabilityPolls: typeof availabilityPolls;
   baishImport: typeof baishImport;
   baishImportMutations: typeof baishImportMutations;
+  canonicalForms: typeof canonicalForms;
   "careerActions/compute": typeof careerActions_compute;
   "careerActions/mutations": typeof careerActions_mutations;
   "careerActions/prompts": typeof careerActions_prompts;

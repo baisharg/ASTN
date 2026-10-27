@@ -381,6 +381,20 @@ function FieldEditor({
           <span className="text-sm">Required</span>
         </label>
       )}
+
+      {field.kind === 'checkbox' && (
+        <label className="flex items-center gap-2 cursor-pointer">
+          <Checkbox
+            checked={field.consent ?? false}
+            onCheckedChange={(checked) =>
+              onChange({ consent: checked === true || undefined })
+            }
+          />
+          <span className="text-sm">
+            Consent (shown in the form&apos;s terms and consents block)
+          </span>
+        </label>
+      )}
     </div>
   )
 }

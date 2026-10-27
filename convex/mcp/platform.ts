@@ -8,7 +8,6 @@ import { assertFormFieldsShape, sanitizeFormFieldKeys } from '../lib/formFields'
 import type { FormField } from '../lib/formFields'
 import {
   describeImpact,
-  impactOnApplications,
   impactOnSurveyResponses,
 } from '../lib/formFieldChanges'
 import {
@@ -132,12 +131,10 @@ export const UPDATE_FIELDS: Record<string, Set<string>> = {
     'externalUrl',
     'featured',
     'tags',
-    // Writable since 2026-08-17. Excluding it did not remove the risk, it moved
-    // it: building a form by hand in the UI is slow enough that the team was
-    // pasting JSON straight into the Convex dashboard, which skips every
-    // validation this path applies. The guard is now on the consequence — see
-    // the formFields block in the handler — not on the field name.
-    'formFields',
+    'courseName',
+    // formFields is deliberately absent (since 2026-10-27): an edition's form
+    // is a copy of the org's canonical form, made when the opportunity is
+    // created, and the canonical is edited by hand from the admin only.
     // Pseudo-field: `archived: true|false` maps to the archivedAt timestamp.
     // Reads better from the agent side than asking it to invent a timestamp.
     'archived',
@@ -788,8 +785,10 @@ export const update = internalMutation({
         )
     }
 
-    // Surveys: same rule as opportunities below, over the survey's own answers
-    // (both response tables — the anonymous one counts too).
+    // Surveys: a form is free to grow, but shrinking it strands answers people
+    // already submitted (in both response tables — the anonymous one counts
+    // too). Refuse once, with the count, and let the caller repeat the call
+    // meaning it.
     if (args.resource === 'surveys' && 'formFields' in patch) {
       const sanitized = sanitizeFormFieldKeys(
         assertFormFieldsShape(patch.formFields),
@@ -799,28 +798,6 @@ export const update = internalMutation({
         id as Id<'feedbackSurveys'>,
         ((doc as any).formFields ?? []) as Array<FormField>,
         sanitized,
-      )
-      if (impact.affectedResponses > 0 && !args.confirmDiscardsAnswers) {
-        throw new Error(
-          `${describeImpact(impact)} Pass confirmDiscardsAnswers: true to go ahead, ` +
-            `or keep the removed keys in the form to preserve them.`,
-        )
-      }
-      patch.formFields = sanitized
-    }
-
-    // Opportunities: an application form is free to grow, but shrinking it
-    // strands answers people already submitted. Refuse once, with the count and
-    // the question names, and let the caller repeat the call meaning it.
-    if (args.resource === 'opportunities' && 'formFields' in patch) {
-      const sanitized = sanitizeFormFieldKeys(
-        assertFormFieldsShape(patch.formFields),
-      )
-      const impact = await impactOnApplications(
-        ctx,
-        id as Id<'orgOpportunities'>,
-        ((doc as any).formFields ?? []) as Array<FormField>,
-        (Array.isArray(sanitized) ? sanitized : []) as Array<FormField>,
       )
       if (impact.affectedResponses > 0 && !args.confirmDiscardsAnswers) {
         throw new Error(
@@ -1108,9 +1085,9 @@ export const createOpportunity = internalMutation({
     deadline: v.optional(v.number()),
     externalUrl: v.optional(v.string()),
     featured: v.optional(v.boolean()),
-    formFields: v.optional(v.any()),
     tags: v.optional(v.array(v.string())),
     isEOI: v.optional(v.boolean()),
+    courseName: v.optional(v.string()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -1126,9 +1103,9 @@ export const createOpportunity = internalMutation({
       deadline: args.deadline,
       externalUrl: args.externalUrl,
       featured: args.featured ?? false,
-      formFields: args.formFields,
       tags: args.tags,
       isEOI: args.isEOI,
+      courseName: args.courseName,
     })
     const created = await ctx.db.get(id)
     return { id, slug: created?.slug ?? null, status: created?.status }

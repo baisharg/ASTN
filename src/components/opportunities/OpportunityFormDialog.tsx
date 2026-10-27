@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation } from 'convex/react'
+import { ConvexError } from 'convex/values'
 import { Loader2 } from 'lucide-react'
 import { useNavigate } from '@tanstack/react-router'
 import { api } from '../../../convex/_generated/api'
@@ -51,13 +52,17 @@ export function OpportunityFormDialog({
   const [deadlineStr, setDeadlineStr] = useState('')
   const [externalUrl, setExternalUrl] = useState('')
   const [featured, setFeatured] = useState(false)
+  const [isEOI, setIsEOI] = useState(false)
+  const [courseName, setCourseName] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const canSave = title.trim() && description.trim()
 
   const handleSave = async () => {
     if (!canSave || isSaving) return
     setIsSaving(true)
+    setError(null)
     try {
       const deadline = deadlineStr ? new Date(deadlineStr).getTime() : undefined
       const newId = await createOpp({
@@ -69,6 +74,8 @@ export function OpportunityFormDialog({
         deadline,
         externalUrl: externalUrl.trim() || undefined,
         featured,
+        isEOI,
+        courseName: courseName.trim() || undefined,
       })
       onOpenChange(false)
       void navigate({
@@ -77,6 +84,11 @@ export function OpportunityFormDialog({
       })
     } catch (err) {
       console.error('Failed to create opportunity:', err)
+      setError(
+        err instanceof ConvexError && typeof err.data === 'string'
+          ? err.data
+          : 'Could not create the opportunity. Please try again.',
+      )
     } finally {
       setIsSaving(false)
     }
@@ -88,8 +100,8 @@ export function OpportunityFormDialog({
         <DialogHeader>
           <DialogTitle>New Opportunity</DialogTitle>
           <DialogDescription>
-            Create a new opportunity. You can add application form fields after
-            creation.
+            Create a new opportunity. Its application form is a copy of the
+            org&apos;s canonical form (Admin → Canonical forms).
           </DialogDescription>
         </DialogHeader>
 
@@ -177,6 +189,30 @@ export function OpportunityFormDialog({
             </div>
           </div>
 
+          <div className="space-y-1">
+            <Label htmlFor="opp-course-name">Course name</Label>
+            <Input
+              id="opp-course-name"
+              value={courseName}
+              onChange={(e) => setCourseName(e.target.value)}
+              placeholder="e.g. Technical AI Safety"
+            />
+            <p className="text-xs text-muted-foreground">
+              Fills {'{{course}}'} in the canonical form&apos;s questions.
+            </p>
+          </div>
+
+          <label className="flex items-center gap-2 cursor-pointer">
+            <Checkbox
+              checked={isEOI}
+              onCheckedChange={(checked) => setIsEOI(checked === true)}
+            />
+            <span className="text-sm">
+              Expression of interest (uses the EOI canonical form, no
+              availability)
+            </span>
+          </label>
+
           <label className="flex items-center gap-2 cursor-pointer">
             <Checkbox
               checked={featured}
@@ -186,6 +222,7 @@ export function OpportunityFormDialog({
               Featured opportunity (shown on org landing page)
             </span>
           </label>
+          {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
 
         <DialogFooter>

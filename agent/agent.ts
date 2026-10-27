@@ -65,7 +65,7 @@ export function createAdminAgent(
     '- get_member_engagement(userId): Get engagement level, history, and override status',
     '- list_opportunities: List all opportunities (active, closed, draft)',
     '- get_opportunity(opportunityId): Get full details of a specific opportunity',
-    '- create_opportunity(...): Create a new opportunity with title, description, type, status, deadline, formFields, etc.',
+    '- create_opportunity(...): Create a new opportunity with title, description, type, status, deadline, isEOI, courseName, etc. Its application form is a copy of the org canonical form and cannot be set or edited by the agent.',
     '- update_opportunity(opportunityId, ...): Update fields on an existing opportunity — change status, deadline, set redirect, etc.',
     '- duplicate_opportunity(sourceOpportunityId, overrides?, redirectOldToNew?): Duplicate an existing opportunity. Copies all fields including form config. Great for creating an EOI or new iteration. Set redirectOldToNew=true to close the old one and redirect visitors to the new one.',
     '- list_applications(opportunityId): List applications for an opportunity (includes quality score if set)',

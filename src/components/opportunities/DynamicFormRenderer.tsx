@@ -2,6 +2,7 @@ import { useMutation } from 'convex/react'
 import { useState } from 'react'
 import { api } from '../../../convex/_generated/api'
 import type { FormField } from '../../../convex/lib/formFields'
+import { Button } from '~/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '~/components/ui/card'
 import { Input } from '~/components/ui/input'
 import { Label } from '~/components/ui/label'
@@ -71,6 +72,11 @@ export function DynamicFormRenderer({
     sections.push(current)
   }
 
+  // Consent checkboxes are shown together, in one block where the first of
+  // them sits, instead of one by one.
+  const consentFields = formFields.filter(isConsentField)
+  const firstConsentKey = consentFields[0]?.key
+
   return (
     <div className="space-y-6">
       {sections.map((section, sIdx) => (
@@ -88,18 +94,116 @@ export function DynamicFormRenderer({
           <CardContent
             className={section.title ? 'space-y-4' : 'space-y-4 pt-6'}
           >
-            {section.fields.map((field) => (
-              <FieldRenderer
-                key={field.key}
-                field={field}
-                value={responses[field.key]}
-                onChange={(val) => onChange(field.key, val)}
-                uploadToken={uploadToken}
-              />
-            ))}
+            {section.fields.map((field) =>
+              isConsentField(field) ? (
+                field.key === firstConsentKey && (
+                  <ConsentBlock
+                    key={field.key}
+                    fields={consentFields}
+                    responses={responses}
+                    onChange={onChange}
+                  />
+                )
+              ) : (
+                <FieldRenderer
+                  key={field.key}
+                  field={field}
+                  value={responses[field.key]}
+                  onChange={(val) => onChange(field.key, val)}
+                  uploadToken={uploadToken}
+                />
+              ),
+            )}
           </CardContent>
         </Card>
       ))}
+    </div>
+  )
+}
+
+function isConsentField(field: FormField) {
+  return field.kind === 'checkbox' && field.consent === true
+}
+
+/**
+ * All the form's consents in one block. Nothing comes pre-checked: Argentina's
+ * data protection law (Ley 25.326) asks for express consent, which a box ticked
+ * in advance is not. "Accept all" keeps it one click for whoever agrees to
+ * everything, and the details stay one click away for whoever does not.
+ */
+function ConsentBlock({
+  fields,
+  responses,
+  onChange,
+}: {
+  fields: Array<FormField>
+  responses: Record<string, unknown>
+  onChange: (key: string, value: unknown) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const accepted = fields.filter((f) => responses[f.key] === true).length
+  const anyRequired = fields.some((f) => f.required)
+
+  return (
+    <div className="space-y-3 rounded-md border p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-medium">
+            Terms and consents
+            {anyRequired && <span className="text-red-500"> *</span>}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {accepted} of {fields.length} accepted
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setOpen((o) => !o)}
+          >
+            {open ? 'Hide details' : 'Show details'}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={accepted === fields.length}
+            onClick={() => {
+              for (const f of fields) onChange(f.key, true)
+            }}
+          >
+            Accept all
+          </Button>
+        </div>
+      </div>
+      {open && (
+        <div className="space-y-4 border-t pt-3">
+          {fields.map((field) => (
+            <label
+              key={field.key}
+              className="flex items-start gap-2 cursor-pointer"
+            >
+              <Checkbox
+                checked={responses[field.key] === true}
+                onCheckedChange={(checked) =>
+                  onChange(field.key, checked === true)
+                }
+                className="mt-0.5"
+              />
+              <span className="text-sm">
+                {field.label}
+                {field.required && <span className="text-red-500"> *</span>}
+                {field.description && (
+                  <span className="block text-xs text-muted-foreground whitespace-pre-line">
+                    {field.description}
+                  </span>
+                )}
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

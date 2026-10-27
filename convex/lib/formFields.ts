@@ -28,6 +28,9 @@ export interface FormField {
   options?: Array<string>
   maxSelections?: number
   rows?: number
+  // Checkbox only: shown inside the form's single terms-and-consents block
+  // instead of on its own (see DynamicFormRenderer).
+  consent?: boolean
 }
 
 // --- Convex Validators ---
@@ -55,6 +58,7 @@ export const formFieldValidator = v.object({
   options: v.optional(v.array(v.string())),
   maxSelections: v.optional(v.number()),
   rows: v.optional(v.number()),
+  consent: v.optional(v.boolean()),
 })
 
 export const formFieldsValidator = v.array(formFieldValidator)
@@ -331,4 +335,58 @@ export function labelToKey(label: string): string {
     )
     .join('')
   return /^[a-z]/.test(camel) ? camel : ''
+}
+
+// --- Canonical forms ---
+
+/**
+ * Placeholder the canonical forms use for the course an edition belongs to,
+ * e.g. "¿Por qué te interesa {{course}}?".
+ */
+export const COURSE_PLACEHOLDER = '{{course}}'
+
+/**
+ * Fill the canonical form's placeholders for one edition. Done once, when the
+ * edition copies the canonical, so the stored questions, the answers saved
+ * against them, the admin view and the CSV export all read the same text.
+ */
+export function fillFormPlaceholders(
+  fields: Array<FormField>,
+  values: { course: string },
+): Array<FormField> {
+  const fill = (text: string) =>
+    text.split(COURSE_PLACEHOLDER).join(values.course)
+  return fields.map((f) => ({
+    ...f,
+    label: fill(f.label),
+    ...(f.description !== undefined && { description: fill(f.description) }),
+    ...(f.placeholder !== undefined && { placeholder: fill(f.placeholder) }),
+    ...(f.options !== undefined && { options: f.options.map(fill) }),
+  }))
+}
+
+// Every canonical form asks for these, required, under these keys: the
+// applicant list, pre-fill, emails and the cohort tools all read them.
+export const CANONICAL_IDENTITY_FIELDS = [
+  { key: 'firstName', kind: 'text', label: 'first name' },
+  { key: 'lastName', kind: 'text', label: 'last name' },
+  { key: 'email', kind: 'email', label: 'email' },
+] as const
+
+/** Returns what is missing for `fields` to be a valid canonical form, if anything. */
+export function canonicalFormProblems(fields: Array<FormField>): Array<string> {
+  const problems: Array<string> = []
+  for (const id of CANONICAL_IDENTITY_FIELDS) {
+    const field = fields.find((f) => f.key === id.key)
+    if (!field) {
+      problems.push(
+        `Add a required ${id.kind} question for the ${id.label}, with key "${id.key}".`,
+      )
+    } else if (field.kind !== id.kind) {
+      problems.push(`The "${id.key}" question must be of type ${id.kind}.`)
+    } else if (!field.required) {
+      problems.push(`The "${id.key}" question must be required.`)
+    }
+  }
+  return problems
 }

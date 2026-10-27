@@ -1445,6 +1445,10 @@ export default defineSchema({
     // Explicit expression-of-interest marker (replaces title/tag inference).
     // EOIs default the on-apply confirmation email to OFF.
     isEOI: v.optional(v.boolean()),
+    // What fills {{course}} in the canonical form when this edition copies it
+    // (e.g. "Technical AI Safety"). Kept so a duplicate or a reset to the
+    // canonical fills it the same way.
+    courseName: v.optional(v.string()),
     // Email template set this opportunity inherits (issue #20). When set, the
     // outbox system handles decision emails and legacy auto-emails are skipped.
     emailTemplateSetId: v.optional(v.id('emailTemplateSets')),
@@ -1930,6 +1934,18 @@ export default defineSchema({
   // a library you load from and save to, rather than copying an old course's
   // form. Loading a template copies its questions — the two are not linked
   // afterwards, so editing one never rewrites the other.
+  // The org's canonical application forms: one for course editions, one for
+  // expressions of interest. Every new opportunity copies the one for its
+  // kind (see convex/canonicalForms.ts). Edited only from the web admin,
+  // never through the MCP.
+  canonicalForms: defineTable({
+    orgId: v.id('organizations'),
+    kind: v.union(v.literal('course'), v.literal('eoi')),
+    formFields: v.any(), // Array<FormField> — see convex/lib/formFields.ts
+    updatedBy: v.string(),
+    updatedAt: v.number(),
+  }).index('by_org_and_kind', ['orgId', 'kind']),
+
   formTemplates: defineTable({
     orgId: v.id('organizations'),
     name: v.string(),

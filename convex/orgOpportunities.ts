@@ -14,9 +14,8 @@ import {
   type BaishCourseOpportunityContract,
 } from './lib/baishCourseOpportunities'
 import { getUserId, requireOrgAdmin } from './lib/auth'
-import { assertFormFieldsShape, sanitizeFormFieldKeys } from './lib/formFields'
-import type { FormField } from './lib/formFields'
-import { describeImpact, impactOnApplications } from './lib/formFieldChanges'
+import { sanitizeFormFieldKeys } from './lib/formFields'
+import { copyCanonicalForm } from './canonicalForms'
 import { createDefaultPollForOpportunity } from './availabilityPolls'
 
 /**
@@ -139,6 +138,7 @@ const opportunityReturnValidator = v.object({
   slug: v.optional(v.string()),
   tags: v.optional(v.array(v.string())),
   isEOI: v.optional(v.boolean()),
+  courseName: v.optional(v.string()),
   emailTemplateSetId: v.optional(v.id('emailTemplateSets')),
   sendApplicationReceivedEmail: v.optional(v.boolean()),
   redirectOpportunityId: v.optional(v.id('orgOpportunities')),
@@ -628,7 +628,8 @@ export const remove = mutation({
  * pre-fills a returning applicant's answers — neither copies the setup.
  *
  * What carries over is the configuration: title (suffixed), description, type,
- * tags, form fields, the EOI flag and the linked email template set. What does
+ * tags, the EOI flag, the course name and the linked email template set. The
+ * form comes fresh from the canonical. What does
  * not is everything tied to the run that just happened — applications, polls
  * (the copy gets a fresh default one), surveys, the deadline, the featured flag
  * and the redirect target. The copy is
@@ -655,9 +656,16 @@ export const duplicate = mutation({
       type: source.type,
       status: 'draft',
       featured: false,
-      formFields: source.formFields,
+      // From the canonical, not from the source: an edition never inherits
+      // another edition's form.
+      formFields: await copyCanonicalForm(ctx, {
+        orgId: source.orgId,
+        isEOI: source.isEOI,
+        courseName: source.courseName,
+      }),
       tags: source.tags,
       isEOI: source.isEOI,
+      courseName: source.courseName,
       emailTemplateSetId: source.emailTemplateSetId,
       // Inherit the on-apply kill switch so a duplicated EOI does not start
       // emailing people the original deliberately kept quiet.
@@ -701,9 +709,9 @@ export const backfillSlugs = internalMutation({
 })
 
 /**
- * Create an opportunity with the invariants the web form enforces: sanitised
- * question keys, normalised tags, a unique readable slug, and the default
- * availability poll every opportunity ships with.
+ * Create an opportunity with the invariants the web form enforces: the form
+ * copied from the canonical for its kind, normalised tags, a unique readable
+ * slug, and the default availability poll every opportunity ships with.
  *
  * Extracted so the MCP creates opportunities through exactly this code — a
  * generic insert would leave one with no slug and no poll.
@@ -720,11 +728,16 @@ export async function createOpportunityFor(
     deadline?: number
     externalUrl?: string
     featured: boolean
-    formFields?: unknown
     tags?: Array<string>
     isEOI?: boolean
+    courseName?: string
   },
 ): Promise<Id<'orgOpportunities'>> {
+  const formFields = await copyCanonicalForm(ctx, {
+    orgId: args.orgId,
+    isEOI: args.isEOI,
+    courseName: args.courseName,
+  })
   const now = Date.now()
   const opportunityId = await ctx.db.insert('orgOpportunities', {
     orgId: args.orgId,
@@ -735,11 +748,10 @@ export async function createOpportunityFor(
     deadline: args.deadline,
     externalUrl: args.externalUrl,
     featured: args.featured,
-    ...(args.formFields !== undefined && {
-      formFields: sanitizeFormFieldKeys(assertFormFieldsShape(args.formFields)),
-    }),
+    formFields,
     ...(args.tags !== undefined && { tags: normalizeTags(args.tags) }),
     isEOI: args.isEOI,
+    courseName: args.courseName?.trim() || undefined,
     slug: await uniqueSlug(ctx, args.orgId, args.title),
     createdAt: now,
     updatedAt: now,
@@ -823,8 +835,9 @@ export const create = mutation({
     deadline: v.optional(v.number()),
     externalUrl: v.optional(v.string()),
     featured: v.boolean(),
-    formFields: v.optional(v.any()),
     tags: v.optional(v.array(v.string())),
+    isEOI: v.optional(v.boolean()),
+    courseName: v.optional(v.string()),
   },
   returns: v.id('orgOpportunities'),
   handler: async (ctx, args) => {
@@ -853,12 +866,10 @@ export const update = mutation({
     deadline: v.optional(v.number()),
     externalUrl: v.optional(v.string()),
     featured: v.optional(v.boolean()),
-    formFields: v.optional(v.any()),
-    // Required only when the new form drops questions people already answered.
-    confirmDiscardsAnswers: v.optional(v.boolean()),
     slug: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
     isEOI: v.optional(v.boolean()),
+    courseName: v.optional(v.string()),
     redirectOpportunityId: v.optional(
       v.union(v.id('orgOpportunities'), v.null()),
     ),
@@ -869,13 +880,7 @@ export const update = mutation({
   returns: v.null(),
   handler: async (
     ctx,
-    {
-      id,
-      redirectOpportunityId,
-      sourceOpportunityId,
-      confirmDiscardsAnswers,
-      ...updates
-    },
+    { id, redirectOpportunityId, sourceOpportunityId, ...updates },
   ) => {
     const userId = await getUserId(ctx)
     if (!userId) throw new ConvexError('Not authenticated')
@@ -913,25 +918,9 @@ export const update = mutation({
       ...updates,
       updatedAt: Date.now(),
     }
-    if (updates.formFields !== undefined) {
-      const sanitized = sanitizeFormFieldKeys(
-        assertFormFieldsShape(updates.formFields),
-      )
-      // Same rule the MCP applies: growing a form is free, shrinking it strands
-      // answers already submitted. Say how many rather than either refusing
-      // structural edits outright or dropping the data in silence.
-      const impact = await impactOnApplications(
-        ctx,
-        id,
-        (opportunity.formFields ?? []) as Array<FormField>,
-        (Array.isArray(sanitized) ? sanitized : []) as Array<FormField>,
-      )
-      if (impact.affectedResponses > 0 && !confirmDiscardsAnswers) {
-        throw new ConvexError(describeImpact(impact))
-      }
-      patch.formFields = sanitized
-    }
     if (updates.tags !== undefined) patch.tags = normalizeTags(updates.tags)
+    if (updates.courseName !== undefined)
+      patch.courseName = updates.courseName.trim() || undefined
     if (updates.slug !== undefined) {
       // Blank clears the alias; the id keeps working either way. A collision
       // gets suffixed rather than rejected — the admin is renaming a link, not
@@ -944,6 +933,40 @@ export const update = mutation({
     if (source.set) patch.sourceOpportunityId = source.value
 
     await ctx.db.patch('orgOpportunities', id, patch)
+    return null
+  },
+})
+
+/**
+ * Replace an opportunity's form with a fresh copy of the canonical, e.g. after
+ * the canonical changed or the course name was fixed. Only while nobody has
+ * applied: swapping questions under existing answers would strand them.
+ */
+export const resetFormToCanonical = mutation({
+  args: { id: v.id('orgOpportunities') },
+  returns: v.null(),
+  handler: async (ctx, { id }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', id)
+    if (!opportunity) throw new ConvexError('Opportunity not found')
+    await requireOrgAdmin(ctx, opportunity.orgId)
+
+    const applied = await ctx.db
+      .query('opportunityApplications')
+      .withIndex('by_opportunity_and_status', (q) => q.eq('opportunityId', id))
+      .first()
+    if (applied) {
+      throw new ConvexError(
+        'People already applied with this form, so it cannot be replaced.',
+      )
+    }
+    await ctx.db.patch('orgOpportunities', id, {
+      formFields: await copyCanonicalForm(ctx, {
+        orgId: opportunity.orgId,
+        isEOI: opportunity.isEOI,
+        courseName: opportunity.courseName,
+      }),
+      updatedAt: Date.now(),
+    })
     return null
   },
 })

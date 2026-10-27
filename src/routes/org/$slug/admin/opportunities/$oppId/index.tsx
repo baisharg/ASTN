@@ -17,7 +17,7 @@ import {
   Trash2,
   Users,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../../../convex/_generated/dataModel'
@@ -27,8 +27,7 @@ import type { AvailabilityResponse } from '~/components/availability/Availabilit
 import { AvailabilityHeatmap } from '~/components/availability/AvailabilityHeatmap'
 import { PollCreationForm } from '~/components/availability/PollCreationForm'
 import { ScheduleAnalysis } from '~/components/availability/ScheduleAnalysis'
-import { FormFieldsEditor } from '~/components/opportunities/FormFieldsEditor'
-import { FormTemplateBar } from '~/components/opportunities/FormTemplateBar'
+import { DynamicFormRenderer } from '~/components/opportunities/DynamicFormRenderer'
 import { TagsInput } from '~/components/opportunities/TagsInput'
 import { ApplicationsTable } from '~/components/opportunities/ApplicationsTable'
 import { SurveyTab } from '~/components/surveys/SurveyTab'
@@ -106,6 +105,7 @@ function OpportunityDetailsForm({
   const [externalUrl, setExternalUrl] = useState(opportunity.externalUrl ?? '')
   const [featured, setFeatured] = useState(opportunity.featured)
   const [isEOI, setIsEOI] = useState(opportunity.isEOI ?? false)
+  const [courseName, setCourseName] = useState(opportunity.courseName ?? '')
   const [redirectOpportunityId, setRedirectOpportunityId] = useState<
     string | null
   >(opportunity.redirectOpportunityId ?? null)
@@ -131,6 +131,7 @@ function OpportunityDetailsForm({
         externalUrl: externalUrl.trim() || undefined,
         featured,
         isEOI,
+        courseName,
         redirectOpportunityId: redirectOpportunityId
           ? (redirectOpportunityId as Id<'orgOpportunities'>)
           : null,
@@ -233,6 +234,20 @@ function OpportunityDetailsForm({
             placeholder="https://..."
           />
         </div>
+      </div>
+
+      <div className="space-y-1">
+        <Label htmlFor="opp-course-name">Course name</Label>
+        <Input
+          id="opp-course-name"
+          value={courseName}
+          onChange={(e) => setCourseName(e.target.value)}
+          placeholder="e.g. Technical AI Safety"
+        />
+        <p className="text-xs text-muted-foreground">
+          Fills {'{{course}}'} in the canonical form. Changing it later only
+          affects the form if you replace it with the canonical again.
+        </p>
       </div>
 
       <div className="space-y-1">
@@ -365,8 +380,6 @@ function OpportunityEditPage() {
       : 'skip',
   )
 
-  const updateOpp = useMutation(api.orgOpportunities.update)
-
   // Redirect target options: active opportunities in this org (excluding current)
   const activeOpportunities = useQuery(
     api.orgOpportunities.listByOrg,
@@ -387,25 +400,9 @@ function OpportunityEditPage() {
     new Set((allOpportunities ?? []).flatMap((o) => o.tags ?? [])),
   ).sort((a, b) => a.localeCompare(b))
 
-  // Form state — form fields
-  const [formFields, setFormFields] = useState<Array<FormField>>([])
-
-  const [isSavingFields, setIsSavingFields] = useState(false)
-  const [discardWarning, setDiscardWarning] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
 
   const exportCsv = useAction(api.opportunityApplications.exportApplications)
-
-  // Populate form-fields editor when opportunity loads. (Detail fields are
-  // owned by OpportunityDetailsForm, which initializes from props at mount —
-  // see the note there on why this must not go through a post-mount effect.)
-  useEffect(() => {
-    if (opportunity) {
-      setFormFields(
-        (opportunity.formFields as Array<FormField> | undefined) ?? [],
-      )
-    }
-  }, [opportunity])
 
   // Loading
   if (
@@ -499,34 +496,6 @@ function OpportunityEditPage() {
       toast.error('Failed to export applications')
     } finally {
       setIsExporting(false)
-    }
-  }
-
-  // Removing a question people already answered strands their answers, so the
-  // backend refuses the first attempt and says how many. We surface that and
-  // turn the button into an explicit "save anyway" rather than hiding it behind
-  // a dialog nobody reads.
-  const handleSaveFields = async (confirmDiscardsAnswers = false) => {
-    setIsSavingFields(true)
-    try {
-      const validFields = formFields.filter((f) => f.label.trim())
-      await updateOpp({
-        id: opportunity._id,
-        formFields: validFields.length > 0 ? validFields : undefined,
-        ...(confirmDiscardsAnswers ? { confirmDiscardsAnswers: true } : {}),
-      })
-      toast.success('Form fields saved')
-      setDiscardWarning(null)
-    } catch (err) {
-      console.error('Failed to save form fields:', err)
-      if (err instanceof ConvexError && typeof err.data === 'string') {
-        setDiscardWarning(err.data)
-        toast.error('Some answers would be lost', { description: err.data })
-      } else {
-        toast.error('Failed to save form fields')
-      }
-    } finally {
-      setIsSavingFields(false)
     }
   }
 
@@ -647,67 +616,8 @@ function OpportunityEditPage() {
                   </CardContent>
                 </Card>
 
-                {/* Card 2: Application Form Fields */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Application Form Fields</CardTitle>
-                    <CardDescription>
-                      Define the fields applicants will fill out. Leave empty
-                      for no in-app form.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <FormTemplateBar
-                      orgId={opportunity.orgId}
-                      kind="application"
-                      fields={formFields}
-                      onLoad={setFormFields}
-                    />
-
-                    <FormFieldsEditor
-                      fields={formFields}
-                      onChange={setFormFields}
-                    />
-
-                    {discardWarning && (
-                      <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                        {discardWarning}
-                      </div>
-                    )}
-
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        type="button"
-                        onClick={() => void handleSaveFields()}
-                        disabled={isSavingFields}
-                      >
-                        {isSavingFields ? (
-                          <>
-                            <Loader2 className="size-4 mr-2 animate-spin" />
-                            Saving...
-                          </>
-                        ) : (
-                          <>
-                            <Save className="size-4 mr-2" />
-                            Save Form Fields
-                          </>
-                        )}
-                      </Button>
-
-                      {discardWarning && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="text-red-600"
-                          onClick={() => void handleSaveFields(true)}
-                          disabled={isSavingFields}
-                        >
-                          Save anyway
-                        </Button>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
+                {/* Card 2: the application form, read-only */}
+                <ApplicationFormCard opportunity={opportunity} slug={slug} />
 
                 {/* Card 3: destructive actions, deliberately last. Deleting is
                     rare and irreversible, so it does not belong next to the
@@ -1405,5 +1315,103 @@ function OpportunityDeleteButton({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  )
+}
+
+/**
+ * The edition's application form, read-only: it is a copy of the canonical
+ * form made when the opportunity was created. While nobody has applied it can
+ * be replaced with the current canonical (after the canonical or the course
+ * name changed); after that the form stays as people answered it.
+ */
+function ApplicationFormCard({
+  opportunity,
+  slug,
+}: {
+  opportunity: Doc<'orgOpportunities'>
+  slug: string
+}) {
+  const applicationCount = useQuery(
+    api.opportunityApplications.getApplicationCount,
+    { opportunityId: opportunity._id },
+  )
+  const resetForm = useMutation(api.orgOpportunities.resetFormToCanonical)
+  const [preview, setPreview] = useState<Record<string, unknown>>({})
+  const [isResetting, setIsResetting] = useState(false)
+
+  const fields = (opportunity.formFields as Array<FormField> | undefined) ?? []
+  const hasApplications = (applicationCount ?? 0) > 0
+
+  const handleReset = async () => {
+    setIsResetting(true)
+    try {
+      await resetForm({ id: opportunity._id })
+      toast.success('Form replaced with the current canonical form')
+    } catch (err) {
+      toast.error("Couldn't replace the form", {
+        description:
+          err instanceof ConvexError && typeof err.data === 'string'
+            ? err.data
+            : 'Please try again.',
+      })
+    } finally {
+      setIsResetting(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Application Form</CardTitle>
+        <CardDescription>
+          A copy of the canonical{' '}
+          {opportunity.isEOI ? 'expression of interest' : 'course'} form, made
+          when this opportunity was created. Questions are written in{' '}
+          <Link
+            to="/org/$slug/admin/forms"
+            params={{ slug }}
+            className="underline"
+          >
+            Canonical forms
+          </Link>
+          , not here.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void handleReset()}
+            disabled={
+              hasApplications || applicationCount === undefined || isResetting
+            }
+          >
+            {isResetting && <Loader2 className="size-4 mr-2 animate-spin" />}
+            Replace with the current canonical form
+          </Button>
+          {hasApplications && (
+            <p className="text-xs text-muted-foreground">
+              People already applied with this form, so it stays as they
+              answered it.
+            </p>
+          )}
+        </div>
+
+        {fields.length > 0 ? (
+          <DynamicFormRenderer
+            formFields={fields}
+            responses={preview}
+            onChange={(key, value) =>
+              setPreview((prev) => ({ ...prev, [key]: value }))
+            }
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            This opportunity has no application form.
+          </p>
+        )}
+      </CardContent>
+    </Card>
   )
 }

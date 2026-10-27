@@ -633,11 +633,15 @@ export function createOpportunityTools(
           .boolean()
           .optional()
           .describe('Whether to feature this opportunity (default false)'),
-        formFields: z
-          .any()
+        isEOI: z
+          .boolean()
+          .optional()
+          .describe('Whether this is an expression of interest'),
+        courseName: z
+          .string()
           .optional()
           .describe(
-            'Form field configuration (JSON). Copy from an existing opportunity via get_opportunity to reuse its form.',
+            'Course name that fills {{course}} in the form. The application form itself is a copy of the org canonical form and cannot be set here.',
           ),
       },
       async (args) => {
@@ -690,7 +694,8 @@ export function createOpportunityTools(
               : undefined,
             externalUrl: args.externalUrl,
             featured: args.featured ?? false,
-            formFields: args.formFields,
+            isEOI: args.isEOI,
+            courseName: args.courseName,
           })
 
           return {
@@ -734,7 +739,6 @@ export function createOpportunityTools(
           .describe('New deadline as ISO date string, or "none" to remove'),
         externalUrl: z.string().optional().describe('New external URL'),
         featured: z.boolean().optional().describe('Whether to feature'),
-        formFields: z.any().optional().describe('New form field configuration'),
         redirectOpportunityId: z
           .string()
           .optional()
@@ -775,8 +779,6 @@ export function createOpportunityTools(
           if (args.externalUrl !== undefined)
             changes.externalUrl = args.externalUrl
           if (args.featured !== undefined) changes.featured = args.featured
-          if (args.formFields !== undefined)
-            changes.formFields = args.formFields
           if (args.redirectOpportunityId !== undefined) {
             changes.redirectOpportunityId =
               args.redirectOpportunityId === 'none'
@@ -1022,10 +1024,6 @@ export function createOpportunityTools(
               .optional()
               .describe('Override external URL'),
             featured: z.boolean().optional().describe('Override featured flag'),
-            formFields: z
-              .any()
-              .optional()
-              .describe('Override form fields (otherwise copied from source)'),
           })
           .optional()
           .describe('Fields to override on the duplicate'),
@@ -1101,7 +1099,9 @@ export function createOpportunityTools(
               : undefined,
             externalUrl: overrides.externalUrl ?? source.externalUrl,
             featured: overrides.featured ?? false,
-            formFields: overrides.formFields ?? source.formFields,
+            // The form comes from the canonical, never from the source.
+            isEOI: source.isEOI,
+            courseName: source.courseName,
           })
 
           if (args.redirectOldToNew) {
