@@ -105,6 +105,7 @@ function OpportunityDetailsForm({
   const [slugValue, setSlugValue] = useState(opportunity.slug ?? '')
   const [externalUrl, setExternalUrl] = useState(opportunity.externalUrl ?? '')
   const [featured, setFeatured] = useState(opportunity.featured)
+  const [isEOI, setIsEOI] = useState(opportunity.isEOI ?? false)
   const [redirectOpportunityId, setRedirectOpportunityId] = useState<
     string | null
   >(opportunity.redirectOpportunityId ?? null)
@@ -129,6 +130,7 @@ function OpportunityDetailsForm({
         deadline,
         externalUrl: externalUrl.trim() || undefined,
         featured,
+        isEOI,
         redirectOpportunityId: redirectOpportunityId
           ? (redirectOpportunityId as Id<'orgOpportunities'>)
           : null,
@@ -269,6 +271,22 @@ function OpportunityDetailsForm({
         />
         <span className="text-sm">
           Featured opportunity (shown on org landing page)
+        </span>
+      </label>
+
+      <label className="flex items-start gap-2 cursor-pointer">
+        <Checkbox
+          className="mt-0.5"
+          checked={isEOI}
+          onCheckedChange={(checked) => setIsEOI(checked === true)}
+        />
+        <span className="text-sm">
+          Expression of interest
+          <span className="block text-xs text-muted-foreground">
+            The form does not ask for availability, and no confirmation email
+            goes out on submit unless you turn it on in Emails. Leave it off for
+            course editions: their form asks for availability.
+          </span>
         </span>
       </label>
 

@@ -1,7 +1,7 @@
 import { ConvexError, v } from 'convex/values'
 import { action, internalQuery, mutation, query } from './_generated/server'
-import type { MutationCtx } from './_generated/server'
-import type { Id } from './_generated/dataModel'
+import type { MutationCtx, QueryCtx } from './_generated/server'
+import type { Doc, Id } from './_generated/dataModel'
 import { internal } from './_generated/api'
 import { getUserId } from './lib/auth'
 import {
@@ -14,7 +14,10 @@ import { rateLimiter } from './lib/rateLimiter'
 import type { FormField } from './lib/formFields'
 import { maybeAutoAcceptFromNextEdition } from './lib/nextEdition'
 
-const slotValueValidator = v.union(v.literal('available'), v.literal('maybe'))
+export const slotValueValidator = v.union(
+  v.literal('available'),
+  v.literal('maybe'),
+)
 
 const pollReturnValidator = v.object({
   _id: v.id('availabilityPolls'),
@@ -128,6 +131,161 @@ export async function createDefaultPollForOpportunity(
   }
   return pollId
 }
+
+// ─── Availability inside the application form ───
+
+/**
+ * The poll an application form has to collect availability for: the
+ * opportunity's open poll, unless it is an expression of interest, which never
+ * asks. Null means the form asks for no availability.
+ */
+export async function getApplicationPoll(
+  ctx: Pick<QueryCtx, 'db'>,
+  opportunity: Doc<'orgOpportunities'>,
+): Promise<Doc<'availabilityPolls'> | null> {
+  if (opportunity.isEOI) return null
+  return await ctx.db
+    .query('availabilityPolls')
+    .withIndex('by_opportunity', (q) => q.eq('opportunityId', opportunity._id))
+    .filter((q) => q.eq(q.field('status'), 'open'))
+    .first()
+}
+
+export function assertAvailabilityGiven(
+  poll: Doc<'availabilityPolls'> | null,
+  slots: Record<string, unknown> | undefined,
+) {
+  if (poll && (!slots || Object.keys(slots).length === 0))
+    throw new ConvexError('Mark at least one time you are available')
+}
+
+/**
+ * Save the availability given inside an application form: the respondent row
+ * that personal links and the heatmap hang off (created if missing) and its
+ * response (replaced if it exists).
+ */
+export async function saveApplicationAvailability(
+  ctx: MutationCtx,
+  opts: {
+    poll: Doc<'availabilityPolls'>
+    applicationId: Id<'opportunityApplications'>
+    slots: Record<string, 'available' | 'maybe'>
+  },
+) {
+  const application = await ctx.db.get(
+    'opportunityApplications',
+    opts.applicationId,
+  )
+  if (!application) throw new ConvexError('Application not found')
+  const respondentName = await resolveApplicantDisplayNameFromApplication(
+    ctx.db,
+    application,
+    'Applicant',
+  )
+
+  let respondent = await ctx.db
+    .query('pollRespondents')
+    .withIndex('by_poll_and_application', (q) =>
+      q.eq('pollId', opts.poll._id).eq('applicationId', application._id),
+    )
+    .first()
+  if (!respondent) {
+    const respondentId = await ctx.db.insert('pollRespondents', {
+      pollId: opts.poll._id,
+      applicationId: application._id,
+      respondentToken: crypto.randomUUID(),
+      respondentName,
+    })
+    respondent = await ctx.db.get('pollRespondents', respondentId)
+    if (!respondent) throw new ConvexError('Could not save your availability')
+  }
+
+  const now = Date.now()
+  const existing = await ctx.db
+    .query('availabilityResponses')
+    .withIndex('by_poll_and_respondent', (q) =>
+      q.eq('pollId', opts.poll._id).eq('respondentId', respondent._id),
+    )
+    .first()
+  if (existing) {
+    await ctx.db.patch('availabilityResponses', existing._id, {
+      respondentName,
+      slots: opts.slots,
+      updatedAt: now,
+    })
+    return
+  }
+  await ctx.db.insert('availabilityResponses', {
+    pollId: opts.poll._id,
+    respondentId: respondent._id,
+    respondentName,
+    slots: opts.slots,
+    updatedAt: now,
+  })
+}
+
+/**
+ * The grid the application form shows, or null when it asks for no
+ * availability. `slots` is what the logged-in person already marked, so an
+ * edit starts from their week instead of an empty one.
+ */
+export const getApplicationAvailability = query({
+  args: { opportunityId: v.id('orgOpportunities') },
+  returns: v.union(
+    v.object({
+      days: v.array(v.number()),
+      startMinutes: v.number(),
+      endMinutes: v.number(),
+      slotDurationMinutes: v.number(),
+      timezone: v.string(),
+      slots: v.union(v.record(v.string(), slotValueValidator), v.null()),
+    }),
+    v.null(),
+  ),
+  handler: async (ctx, { opportunityId }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) return null
+    const poll = await getApplicationPoll(ctx, opportunity)
+    if (!poll) return null
+
+    let slots: Record<string, 'available' | 'maybe'> | null = null
+    const userId = await getUserId(ctx)
+    if (userId) {
+      const application = await ctx.db
+        .query('opportunityApplications')
+        .withIndex('by_user_and_opportunity', (q) =>
+          q.eq('userId', userId).eq('opportunityId', opportunityId),
+        )
+        .first()
+      const respondent =
+        application &&
+        (await ctx.db
+          .query('pollRespondents')
+          .withIndex('by_poll_and_application', (q) =>
+            q.eq('pollId', poll._id).eq('applicationId', application._id),
+          )
+          .first())
+      const response =
+        respondent &&
+        (await ctx.db
+          .query('availabilityResponses')
+          .withIndex('by_poll_and_respondent', (q) =>
+            q.eq('pollId', poll._id).eq('respondentId', respondent._id),
+          )
+          .first())
+      slots = response?.slots ?? null
+    }
+
+    return {
+      days: poll.days,
+      startMinutes: poll.startMinutes,
+      endMinutes: poll.endMinutes,
+      slotDurationMinutes: poll.slotDurationMinutes,
+      timezone: poll.timezone,
+      slots,
+    }
+  },
+})
 
 // ─── Admin mutations ───
 

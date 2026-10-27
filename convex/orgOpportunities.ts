@@ -14,10 +14,7 @@ import {
   type BaishCourseOpportunityContract,
 } from './lib/baishCourseOpportunities'
 import { getUserId, requireOrgAdmin } from './lib/auth'
-import {
-  assertFormFieldsShape,
-  sanitizeFormFieldKeys,
-} from './lib/formFields'
+import { assertFormFieldsShape, sanitizeFormFieldKeys } from './lib/formFields'
 import type { FormField } from './lib/formFields'
 import { describeImpact, impactOnApplications } from './lib/formFieldChanges'
 import { createDefaultPollForOpportunity } from './availabilityPolls'
@@ -477,7 +474,12 @@ export const getInternal = internalQuery({
 export async function opportunityAttachments(
   ctx: QueryCtx,
   id: Id<'orgOpportunities'>,
-): Promise<{ applications: number; polls: number; surveys: number; emailsSent: number }> {
+): Promise<{
+  applications: number
+  polls: number
+  surveys: number
+  emailsSent: number
+}> {
   const [applications, polls, surveys, emailsSent] = await Promise.all([
     ctx.db
       .query('opportunityApplications')
@@ -500,8 +502,9 @@ export async function opportunityAttachments(
     applications: applications.length,
     // The default poll every opportunity ships with does not count as content:
     // it is ours, empty, and created automatically.
-    polls: polls.filter((p) => p.status !== 'open' || p.title !== 'Availability')
-      .length,
+    polls: polls.filter(
+      (p) => p.status !== 'open' || p.title !== 'Availability',
+    ).length,
     surveys: surveys.length,
     emailsSent: emailsSent.length,
   }
@@ -557,7 +560,9 @@ export const remove = mutation({
       throw new ConvexError(
         `Cannot delete: this opportunity has ${blocking
           .map(([k, n]) => `${n} ${k}`)
-          .join(', ')}. Archive it instead — nothing is lost and it leaves the list.`,
+          .join(
+            ', ',
+          )}. Archive it instead — nothing is lost and it leaves the list.`,
       )
     }
 
@@ -586,7 +591,8 @@ export const remove = mutation({
       .collect()
     for (const s of siblings) {
       const patch: Record<string, unknown> = {}
-      if (s.redirectOpportunityId === id) patch.redirectOpportunityId = undefined
+      if (s.redirectOpportunityId === id)
+        patch.redirectOpportunityId = undefined
       if (s.sourceOpportunityId === id) patch.sourceOpportunityId = undefined
       if (Object.keys(patch).length > 0)
         await ctx.db.patch('orgOpportunities', s._id, patch)
@@ -605,8 +611,9 @@ export const remove = mutation({
  *
  * What carries over is the configuration: title (suffixed), description, type,
  * tags, form fields, the EOI flag and the linked email template set. What does
- * not is everything tied to the run that just happened — applications, polls,
- * surveys, the deadline, the featured flag and the redirect target. The copy is
+ * not is everything tied to the run that just happened — applications, polls
+ * (the copy gets a fresh default one), surveys, the deadline, the featured flag
+ * and the redirect target. The copy is
  * born as a `draft` so nothing can go live by accident, and it records the
  * original in `sourceOpportunityId`, which is also what pre-fills answers for
  * applicants who already applied to the previous edition.
@@ -618,11 +625,11 @@ export const duplicate = mutation({
     const source = await ctx.db.get('orgOpportunities', id)
     if (!source) throw new ConvexError('Opportunity not found')
 
-    await requireOrgAdmin(ctx, source.orgId)
+    const userId = await requireOrgAdmin(ctx, source.orgId)
 
     const now = Date.now()
     const title = `${source.title} (copy)`
-    return await ctx.db.insert('orgOpportunities', {
+    const copyId = await ctx.db.insert('orgOpportunities', {
       orgId: source.orgId,
       title,
       slug: await uniqueSlug(ctx, source.orgId, title),
@@ -642,6 +649,14 @@ export const duplicate = mutation({
       createdAt: now,
       updatedAt: now,
     })
+    // The original's poll stays with its run, but the copy needs one of its
+    // own: the application form asks for availability through it.
+    await createDefaultPollForOpportunity(ctx, {
+      opportunityId: copyId,
+      orgId: source.orgId,
+      createdBy: userId,
+    })
+    return copyId
   },
 })
 
@@ -734,9 +749,7 @@ export async function createOpportunityFor(
  */
 export const migrateLegacyFormFieldShape = internalMutation({
   args: {},
-  returns: v.array(
-    v.object({ title: v.string(), converted: v.number() }),
-  ),
+  returns: v.array(v.object({ title: v.string(), converted: v.number() })),
   handler: async (ctx) => {
     const all = await ctx.db.query('orgOpportunities').collect()
     const out: Array<{ title: string; converted: number }> = []
@@ -827,7 +840,7 @@ export const update = mutation({
     confirmDiscardsAnswers: v.optional(v.boolean()),
     slug: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
-      isEOI: v.optional(v.boolean()),
+    isEOI: v.optional(v.boolean()),
     redirectOpportunityId: v.optional(
       v.union(v.id('orgOpportunities'), v.null()),
     ),

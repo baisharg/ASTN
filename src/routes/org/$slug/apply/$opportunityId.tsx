@@ -4,6 +4,7 @@ import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useSuspenseQuery } from '@tanstack/react-query'
 import { convexQuery } from '@convex-dev/react-query'
 import { useConvexAuth, useMutation, useQuery } from 'convex/react'
+import { ConvexError } from 'convex/values'
 import { useState } from 'react'
 import {
   ArrowLeft,
@@ -21,6 +22,7 @@ import {
   validateResponses,
 } from '../../../../../convex/lib/formFields'
 import type { FormField } from '../../../../../convex/lib/formFields'
+import { AvailabilityGrid } from '~/components/availability/AvailabilityGrid'
 import { AuthHeader } from '~/components/layout/auth-header'
 import { GradientBg } from '~/components/layout/GradientBg'
 import { DynamicFormRenderer } from '~/components/opportunities/DynamicFormRenderer'
@@ -117,6 +119,11 @@ function ApplyPage() {
     api.profiles.getOrCreateProfile,
     isAuthenticated ? {} : 'skip',
   )
+  // The weekly grid every application asks for, except EOIs. Null: no grid.
+  const availabilityPoll = useQuery(
+    api.availabilityPolls.getApplicationAvailability,
+    opportunity ? { opportunityId: opportunity._id } : 'skip',
+  )
   const submitApplication = useMutation(api.opportunityApplications.submit)
   const submitGuestApplication = useMutation(
     api.opportunityApplications.submitGuest,
@@ -128,6 +135,15 @@ function ApplyPage() {
   const [wasEditingAtSubmit, setWasEditingAtSubmit] = useState(false)
   const [preFilled, setPreFilled] = useState(false)
   const [responses, setResponses] = useState<Record<string, unknown>>({})
+  const [slots, setSlots] = useState<Record<string, 'available' | 'maybe'>>({})
+  const [slotsFilled, setSlotsFilled] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+
+  // Someone editing their application starts from the week they already gave.
+  if (availabilityPoll && !slotsFilled) {
+    if (availabilityPoll.slots) setSlots(availabilityPoll.slots)
+    setSlotsFilled(true)
+  }
 
   const formFields = (opportunity?.formFields ?? []) as Array<FormField>
   const deadline = opportunity?.deadline
@@ -351,7 +367,16 @@ function ApplyPage() {
   }
 
   const validationErrors = validateResponses(formFields, responses)
-  const isValid = validationErrors.length === 0
+  const asksAvailability = !!availabilityPoll
+  const missingAvailability =
+    asksAvailability && Object.keys(slots).length === 0
+  // Wait for the availability query too, so nobody submits before the grid
+  // shows up and skips it.
+  const isValid =
+    validationErrors.length === 0 &&
+    availabilityPoll !== undefined &&
+    !missingAvailability
+  const availability = asksAvailability ? slots : undefined
 
   const handleChange = (key: string, value: unknown) => {
     setResponses((prev) => ({ ...prev, [key]: value }))
@@ -360,6 +385,7 @@ function ApplyPage() {
   const handleSubmit = async () => {
     if (!isValid || isSubmitting) return
     setIsSubmitting(true)
+    setSubmitError(null)
     const editingAtSubmit = isEditing
     setWasEditingAtSubmit(editingAtSubmit)
     try {
@@ -368,6 +394,7 @@ function ApplyPage() {
         await submitApplication({
           opportunityId: opportunity._id,
           responses,
+          availability,
         })
         setSubmitted(true)
       } else {
@@ -381,6 +408,7 @@ function ApplyPage() {
           opportunityId: opportunity._id,
           guestEmail: email,
           responses,
+          availability,
         })
         setSubmitted(true)
         setSubmittedAsGuest(true)
@@ -399,6 +427,11 @@ function ApplyPage() {
     } catch (err) {
       console.error('Failed to submit application:', err)
       posthog.captureException(err)
+      setSubmitError(
+        err instanceof ConvexError && typeof err.data === 'string'
+          ? err.data
+          : 'Could not submit your application. Please try again.',
+      )
     } finally {
       setIsSubmitting(false)
     }
@@ -507,6 +540,41 @@ function ApplyPage() {
             responses={responses}
             onChange={handleChange}
           />
+
+          {asksAvailability && (
+            <section className="mt-8 space-y-2">
+              <h2 className="text-lg font-semibold text-foreground">
+                Your availability <span className="text-red-500">*</span>
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Mark every time you could attend in a regular week. We use it to
+                build the groups. Timezone:{' '}
+                {availabilityPoll.timezone.replace(/_/g, ' ')}.
+              </p>
+              {/* Fit mode keeps the whole week on one screen. */}
+              <div className="h-[75dvh] min-h-96">
+                <AvailabilityGrid
+                  days={availabilityPoll.days}
+                  startMinutes={availabilityPoll.startMinutes}
+                  endMinutes={availabilityPoll.endMinutes}
+                  slotDurationMinutes={availabilityPoll.slotDurationMinutes}
+                  timezone={availabilityPoll.timezone}
+                  slots={slots}
+                  onSlotsChange={setSlots}
+                  fit
+                />
+              </div>
+              {missingAvailability && (
+                <p className="text-sm text-muted-foreground">
+                  Mark at least one time to submit.
+                </p>
+              )}
+            </section>
+          )}
+
+          {submitError && (
+            <p className="pt-4 text-sm text-destructive">{submitError}</p>
+          )}
 
           {/* Submit */}
           <div className="flex items-center justify-between pt-6 pb-8">

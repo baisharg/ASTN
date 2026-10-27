@@ -13,6 +13,12 @@ import type { Id } from './_generated/dataModel'
 import { isOutboxActive, syncOutboxOnStatusChange } from './emails/outbox'
 import { maybeAutoAcceptFromNextEdition } from './lib/nextEdition'
 import {
+  assertAvailabilityGiven,
+  getApplicationPoll,
+  saveApplicationAvailability,
+  slotValueValidator,
+} from './availabilityPolls'
+import {
   PROFILE_PREFILL_KEYS,
   sanitizeResponsesForForm,
   type FormField,
@@ -87,9 +93,12 @@ export const submit = mutation({
   args: {
     opportunityId: v.id('orgOpportunities'),
     responses: v.any(),
+    // Required whenever the opportunity has an open poll and is not an EOI
+    // (see getApplicationPoll).
+    availability: v.optional(v.record(v.string(), slotValueValidator)),
   },
   returns: v.id('opportunityApplications'),
-  handler: async (ctx, { opportunityId, responses }) => {
+  handler: async (ctx, { opportunityId, responses, availability }) => {
     const userId = await getUserId(ctx)
     if (!userId) throw new ConvexError('Not authenticated')
 
@@ -106,6 +115,8 @@ export const submit = mutation({
         'This opportunity is no longer accepting applications',
       )
     }
+    const poll = await getApplicationPoll(ctx, opportunity)
+    assertAvailabilityGiven(poll, availability)
 
     // Auto-join org if not already a member
     const membership = await ctx.db
@@ -139,8 +150,24 @@ export const submit = mutation({
       }
       await ctx.db.patch(existing._id, {
         responses,
+        // A row created by the poll's generic link becomes a full application.
+        availabilityOnly: undefined,
         updatedAt: Date.now(),
       })
+      if (poll && availability) {
+        await saveApplicationAvailability(ctx, {
+          poll,
+          applicationId: existing._id,
+          slots: availability,
+        })
+      }
+      if (existing.availabilityOnly && isOutboxActive(opportunity)) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.emails.outboxSend.sendApplicationReceivedEmail,
+          { applicationId: existing._id },
+        )
+      }
       return existing._id
     }
 
@@ -166,6 +193,13 @@ export const submit = mutation({
       profileName: profile?.name,
       responses,
     })
+    if (poll && availability) {
+      await saveApplicationAvailability(ctx, {
+        poll,
+        applicationId,
+        slots: availability,
+      })
+    }
     await maybeAutoAcceptFromNextEdition(ctx, applicationId)
     if (isOutboxActive(opportunity)) {
       // On-apply confirmation (issue #20). All preconditions (kill switch,
@@ -189,9 +223,14 @@ export const submitGuest = mutation({
     opportunityId: v.id('orgOpportunities'),
     guestEmail: v.string(),
     responses: v.any(),
+    // Same rule as `submit`.
+    availability: v.optional(v.record(v.string(), slotValueValidator)),
   },
   returns: v.id('opportunityApplications'),
-  handler: async (ctx, { opportunityId, guestEmail, responses }) => {
+  handler: async (
+    ctx,
+    { opportunityId, guestEmail, responses, availability },
+  ) => {
     await rateLimiter.limit(ctx, 'guestApplication', {
       key: guestEmail.trim().toLowerCase(),
       throws: true,
@@ -207,6 +246,8 @@ export const submitGuest = mutation({
         'This opportunity is no longer accepting applications',
       )
     }
+    const poll = await getApplicationPoll(ctx, opportunity)
+    assertAvailabilityGiven(poll, availability)
 
     // Idempotent: check if guest already applied with this email
     const existing = await ctx.db
@@ -216,7 +257,51 @@ export const submitGuest = mutation({
       )
       .first()
 
-    if (existing) return existing._id
+    if (existing && !existing.availabilityOnly) return existing._id
+
+    // Someone who gave their availability through the poll's generic link
+    // first already has a row here, holding only name and email. The form
+    // completes that row instead of being dropped. An availability they
+    // already gave is kept: like the generic link, a form that asks for no
+    // login never overwrites someone's week.
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        responses,
+        availabilityOnly: undefined,
+        updatedAt: Date.now(),
+      })
+      if (poll && availability) {
+        const respondent = await ctx.db
+          .query('pollRespondents')
+          .withIndex('by_poll_and_application', (q) =>
+            q.eq('pollId', poll._id).eq('applicationId', existing._id),
+          )
+          .first()
+        const response =
+          respondent &&
+          (await ctx.db
+            .query('availabilityResponses')
+            .withIndex('by_poll_and_respondent', (q) =>
+              q.eq('pollId', poll._id).eq('respondentId', respondent._id),
+            )
+            .first())
+        if (!response) {
+          await saveApplicationAvailability(ctx, {
+            poll,
+            applicationId: existing._id,
+            slots: availability,
+          })
+        }
+      }
+      if (isOutboxActive(opportunity)) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.emails.outboxSend.sendApplicationReceivedEmail,
+          { applicationId: existing._id },
+        )
+      }
+      return existing._id
+    }
 
     const applicationId = await ctx.db.insert('opportunityApplications', {
       opportunityId,
@@ -232,6 +317,13 @@ export const submitGuest = mutation({
       applicationId,
       responses,
     })
+    if (poll && availability) {
+      await saveApplicationAvailability(ctx, {
+        poll,
+        applicationId,
+        slots: availability,
+      })
+    }
     await maybeAutoAcceptFromNextEdition(ctx, applicationId)
     if (isOutboxActive(opportunity)) {
       // On-apply confirmation (issue #20): see the authenticated path above.
