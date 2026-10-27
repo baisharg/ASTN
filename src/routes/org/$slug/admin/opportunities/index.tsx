@@ -81,20 +81,47 @@ const SORT_LABELS: Record<SortKey, string> = {
 // Order for the "status" sort: live ones first, then drafts, then closed.
 const STATUS_ORDER: Record<string, number> = { active: 0, draft: 1, closed: 2 }
 
-// Preferred display order for the tag filter chips. Tags not listed here fall
-// after these, sorted alphabetically.
-const TAG_ORDER = [
+// Tags that say which course an opportunity belongs to. Every opportunity has
+// at most one, so the filter picks one at a time; they also set the order of
+// their own row of chips.
+const TYPE_TAGS = [
   'TAIS Course',
   'TAIS Projects',
-  'EOI',
   'Governance',
-  'Feedback',
-  'Intensive',
-  'Part-time',
+  'AGI Strategy',
+  'Biosecurity',
 ]
+
+// Preferred display order for the rest of the tag chips. Tags not listed here
+// fall after these, sorted alphabetically.
+const TAG_ORDER = ['EOI', 'Part-time', 'Intensive', 'Feedback']
 const tagRank = (tag: string) => {
   const i = TAG_ORDER.indexOf(tag)
   return i === -1 ? TAG_ORDER.length : i
+}
+
+function TagChip({
+  tag,
+  active,
+  onClick,
+}: {
+  tag: string
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`text-xs rounded-full border px-2.5 py-1 transition-colors ${
+        active
+          ? 'bg-primary text-primary-foreground border-primary'
+          : 'border-input text-muted-foreground hover:bg-muted hover:text-foreground'
+      }`}
+    >
+      {tag}
+    </button>
+  )
 }
 
 function AdminOpportunitiesPage() {
@@ -147,17 +174,29 @@ function AdminOpportunitiesPage() {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<SortKey>('recent')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [selectedType, setSelectedType] = useState<string | null>(null)
   const [selectedTags, setSelectedTags] = useState<Array<string>>([])
 
-  // All tags in use across the org's opportunities, in the preferred order.
-  const allTags = Array.from(
-    new Set((opportunities ?? []).flatMap((o) => o.tags ?? [])),
-  ).sort((a, b) => tagRank(a) - tagRank(b) || a.localeCompare(b))
+  // Tags in use across the org's opportunities, split into the course-type
+  // row and everything else, each in its preferred order.
+  const tagsInUse = new Set((opportunities ?? []).flatMap((o) => o.tags ?? []))
+  const typeTags = TYPE_TAGS.filter((t) => tagsInUse.has(t))
+  const otherTags = Array.from(tagsInUse)
+    .filter((t) => !TYPE_TAGS.includes(t))
+    .sort((a, b) => tagRank(a) - tagRank(b) || a.localeCompare(b))
+
+  const toggleType = (tag: string) =>
+    setSelectedType((prev) => (prev === tag ? null : tag))
 
   const toggleTag = (tag: string) =>
     setSelectedTags((prev) =>
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
     )
+
+  const clearTags = () => {
+    setSelectedType(null)
+    setSelectedTags([])
+  }
 
   // Filter (search + selected tags) then sort.
   const q = search.trim().toLowerCase()
@@ -178,13 +217,11 @@ function AdminOpportunitiesPage() {
           .toLowerCase()
         if (!haystack.includes(q)) return false
       }
-      // Every selected tag must be present, not just one (Gonzalo, 17-ago):
-      // picking EOI + Governance should narrow to the intersection, which is
-      // what you want when tags describe different axes of the same thing.
-      if (selectedTags.length > 0) {
-        const tags = opp.tags ?? []
-        if (!selectedTags.every((t) => tags.includes(t))) return false
-      }
+      // One course type at most, plus every selected other tag (Gonzalo,
+      // 17-ago): picking Governance + EOI narrows to the intersection.
+      const tags = opp.tags ?? []
+      if (selectedType && !tags.includes(selectedType)) return false
+      if (!selectedTags.every((t) => tags.includes(t))) return false
       return true
     })
     .sort((a, b) => {
@@ -340,29 +377,34 @@ function AdminOpportunitiesPage() {
                 </Select>
               </div>
 
-              {allTags.length > 0 && (
+              {typeTags.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1.5">
-                  {allTags.map((tag) => {
-                    const active = selectedTags.includes(tag)
-                    return (
-                      <button
-                        key={tag}
-                        type="button"
-                        onClick={() => toggleTag(tag)}
-                        className={`text-xs rounded-full border px-2.5 py-1 transition-colors ${
-                          active
-                            ? 'bg-primary text-primary-foreground border-primary'
-                            : 'border-input text-muted-foreground hover:bg-muted hover:text-foreground'
-                        }`}
-                      >
-                        {tag}
-                      </button>
-                    )
-                  })}
-                  {selectedTags.length > 0 && (
+                  {typeTags.map((tag) => (
+                    <TagChip
+                      key={tag}
+                      tag={tag}
+                      active={selectedType === tag}
+                      onClick={() => toggleType(tag)}
+                    />
+                  ))}
+                </div>
+              )}
+              {(otherTags.length > 0 ||
+                selectedType !== null ||
+                selectedTags.length > 0) && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {otherTags.map((tag) => (
+                    <TagChip
+                      key={tag}
+                      tag={tag}
+                      active={selectedTags.includes(tag)}
+                      onClick={() => toggleTag(tag)}
+                    />
+                  ))}
+                  {(selectedType !== null || selectedTags.length > 0) && (
                     <button
                       type="button"
-                      onClick={() => setSelectedTags([])}
+                      onClick={clearTags}
                       className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
                     >
                       <X className="size-3" /> Clear
