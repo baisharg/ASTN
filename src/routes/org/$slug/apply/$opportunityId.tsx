@@ -55,16 +55,16 @@ export const Route = createFileRoute('/org/$slug/apply/$opportunityId')({
     const result = loaderData?.result
     const opportunity = result?.opportunity
     const orgName = org?.name ?? 'Organization'
-    const isRedirect = result?.kind === 'redirect'
+    const isInterest = isInterestRedirect(result)
     const title = opportunity
-      ? isRedirect
+      ? isInterest
         ? `Express Interest — ${opportunity.title} at ${orgName}`
         : `${opportunity.title} — Apply at ${orgName}`
       : `Apply — ${orgName}`
     const rawDesc = opportunity?.description ?? ''
     const description =
       rawDesc.length > 155 ? rawDesc.slice(0, 152) + '...' : rawDesc
-    const fallback = isRedirect
+    const fallback = isInterest
       ? `Express interest in future cohorts at ${orgName} on AI Safety Talent Network.`
       : `Apply for this opportunity at ${orgName} on AI Safety Talent Network.`
     const url = `https://safetytalent.org/org/${params.slug}/apply/${params.opportunityId}`
@@ -84,6 +84,21 @@ export const Route = createFileRoute('/org/$slug/apply/$opportunityId')({
   component: ApplyPage,
 })
 
+/**
+ * Whether the page collects interest in future cohorts rather than an
+ * application. A backend that predates `purpose` only ever redirected for
+ * interest, so a missing value means that.
+ */
+function isInterestRedirect(
+  result:
+    | { kind: 'direct' }
+    | { kind: 'redirect'; purpose?: 'interest' | 'apply' }
+    | null
+    | undefined,
+): boolean {
+  return result?.kind === 'redirect' && result.purpose !== 'apply'
+}
+
 function ApplyPage() {
   const { slug, opportunityId } = Route.useParams()
   const navigate = useNavigate()
@@ -101,6 +116,7 @@ function ApplyPage() {
     }),
   )
   const isRedirect = result?.kind === 'redirect'
+  const isInterest = isInterestRedirect(result)
   const opportunity = result?.opportunity ?? null
   const originalTitle = isRedirect ? result.originalTitle : null
   const existingApplication = useQuery(
@@ -245,7 +261,7 @@ function ApplyPage() {
   const justEdited = submitted && wasEditingAtSubmit
   const successHeading = justEdited
     ? 'Application Updated'
-    : isRedirect
+    : isInterest
       ? 'Expression of Interest Submitted'
       : 'Application Submitted'
   const successBody = justEdited ? (
@@ -253,7 +269,7 @@ function ApplyPage() {
       Your updated application for <strong>{opportunity.title}</strong> has been
       saved.
     </>
-  ) : isRedirect ? (
+  ) : isInterest ? (
     <>
       You&apos;ve expressed interest in future cohorts of{' '}
       <strong>{originalTitle}</strong>. You&apos;ll be notified when the next
@@ -421,6 +437,7 @@ function ApplyPage() {
         org_name: org.name,
         is_guest: isGuest,
         is_redirect: isRedirect,
+        ...(isRedirect && { redirect_purpose: result.purpose ?? 'interest' }),
         is_edit: editingAtSubmit,
         ...(isRedirect && { original_opportunity_id: opportunityId }),
       })
@@ -479,7 +496,7 @@ function ApplyPage() {
           </div>
 
           {/* Redirect / EOI banner */}
-          {isRedirect && (
+          {isInterest && (
             <div className="rounded-lg bg-amber-50 border border-amber-200 p-4 mb-6">
               <h3 className="font-medium text-amber-900">
                 Applications for {originalTitle} have closed
@@ -487,6 +504,15 @@ function ApplyPage() {
               <p className="text-sm text-amber-800 mt-1">
                 Submit your interest below to be notified about future cohorts.
               </p>
+            </div>
+          )}
+          {isRedirect && !isInterest && (
+            <div className="flex items-start gap-2 rounded-lg bg-blue-50 border border-blue-200 p-3 mb-6 text-sm text-blue-800">
+              <Info className="size-4 mt-0.5 shrink-0" />
+              <span>
+                You followed the link for <strong>{originalTitle}</strong>.
+                Applications are now open: this is the application form.
+              </span>
             </div>
           )}
 
@@ -595,7 +621,7 @@ function ApplyPage() {
                 </>
               ) : isEditing ? (
                 'Update Application'
-              ) : isRedirect ? (
+              ) : isInterest ? (
                 'Submit Expression of Interest'
               ) : (
                 'Submit Application'
