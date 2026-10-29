@@ -290,9 +290,9 @@ function OpportunityDetailsForm({
         </span>
       </label>
 
-      {status === 'closed' && (
+      {(status === 'closed' || isEOI) && (
         <div className="space-y-1">
-          <Label>Redirect to (Expression of Interest)</Label>
+          <Label>Redirect to</Label>
           <Select
             value={redirectOpportunityId ?? 'none'}
             onValueChange={(v) =>
@@ -312,8 +312,9 @@ function OpportunityDetailsForm({
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            When set, visitors to this opportunity&apos;s apply page will see
-            the target&apos;s form as an Expression of Interest.
+            {isEOI
+              ? "While the target is active, this expression of interest's link shows the target's application form. When the target closes, the link shows this form again."
+              : "When set, visitors to this opportunity's apply page will see the target's form as an Expression of Interest."}
           </p>
         </div>
       )}

@@ -232,6 +232,14 @@ export const getByKey = query({
   },
 })
 
+// Why the apply page shows another opportunity's form. `interest`: this one
+// closed and points at an EOI for future cohorts. `apply`: this is an EOI whose
+// link went out before the real application opened, and that form is open now.
+const redirectPurposeValidator = v.union(
+  v.literal('interest'),
+  v.literal('apply'),
+)
+
 const withRedirectReturnValidator = v.union(
   v.object({
     kind: v.literal('direct'),
@@ -239,6 +247,7 @@ const withRedirectReturnValidator = v.union(
   }),
   v.object({
     kind: v.literal('redirect'),
+    purpose: redirectPurposeValidator,
     originalTitle: v.string(),
     originalDescription: v.string(),
     opportunity: opportunityReturnValidator,
@@ -289,6 +298,7 @@ export const getWithRedirect = query({
     }),
     v.object({
       kind: v.literal('redirect'),
+      purpose: redirectPurposeValidator,
       originalTitle: v.string(),
       originalDescription: v.string(),
       opportunity: opportunityReturnValidator,
@@ -303,9 +313,15 @@ export const getWithRedirect = query({
 })
 
 /**
- * Shared body of the apply-page resolvers: serve an active opportunity, follow
- * one level of EOI redirect from a closed one, and otherwise fall through to
- * admin-only access so an admin can preview a draft.
+ * Shared body of the apply-page resolvers: follow one level of redirect while
+ * its target is active, otherwise serve an active opportunity, and otherwise
+ * fall through to admin-only access so an admin can preview a draft.
+ *
+ * A closed opportunity redirects (to an EOI for future cohorts). So does an
+ * active EOI, to the application it was collecting interest for: its link may
+ * already be on WhatsApp, and when that application closes the same link shows
+ * the EOI again. Any other active opportunity serves itself, even with a
+ * leftover redirect from a time it was closed.
  */
 async function resolveRedirect(
   ctx: QueryCtx,
@@ -314,17 +330,14 @@ async function resolveRedirect(
   | { kind: 'direct'; opportunity: Doc<'orgOpportunities'> }
   | {
       kind: 'redirect'
+      purpose: 'interest' | 'apply'
       originalTitle: string
       originalDescription: string
       opportunity: Doc<'orgOpportunities'>
     }
   | null
 > {
-  if (opp.status === 'active') {
-    return { kind: 'direct' as const, opportunity: opp }
-  }
-
-  if (opp.redirectOpportunityId) {
+  if (opp.redirectOpportunityId && (opp.status !== 'active' || opp.isEOI)) {
     const target = await ctx.db.get(
       'orgOpportunities',
       opp.redirectOpportunityId,
@@ -332,11 +345,16 @@ async function resolveRedirect(
     if (target && target.status === 'active' && target.orgId === opp.orgId) {
       return {
         kind: 'redirect' as const,
+        purpose: opp.isEOI && !target.isEOI ? 'apply' : 'interest',
         originalTitle: opp.title,
         originalDescription: opp.description,
         opportunity: target,
       }
     }
+  }
+
+  if (opp.status === 'active') {
+    return { kind: 'direct' as const, opportunity: opp }
   }
 
   const userId = await getUserId(ctx)
