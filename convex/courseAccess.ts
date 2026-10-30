@@ -1,5 +1,5 @@
 import { ConvexError, v } from 'convex/values'
-import { mutation, query } from './_generated/server'
+import { internalMutation, mutation, query } from './_generated/server'
 import { getUserId } from './lib/auth'
 import {
   canManagePermissions,
@@ -185,6 +185,25 @@ export const setOwner = mutation({
     await ctx.db.patch('orgMemberships', membershipId, {
       isOwner: owner || undefined,
     })
+    return null
+  },
+})
+
+/**
+ * Make an admin an owner from the CLI (`npx convex run`), for when no owner
+ * can do it from the page: e.g. someone removed their own ownership before
+ * that was blocked. Internal, so neither the web nor the MCP can call it.
+ */
+export const forceOwner = internalMutation({
+  args: { membershipId: v.id('orgMemberships') },
+  returns: v.null(),
+  handler: async (ctx, { membershipId }) => {
+    const target = await ctx.db.get('orgMemberships', membershipId)
+    if (!target) throw new ConvexError('Membership not found')
+    if (target.role !== 'admin') {
+      throw new ConvexError('Only an admin can be an owner.')
+    }
+    await ctx.db.patch('orgMemberships', membershipId, { isOwner: true })
     return null
   },
 })
