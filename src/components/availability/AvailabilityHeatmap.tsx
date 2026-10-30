@@ -381,9 +381,10 @@ export function AvailabilityHeatmap({
         &quot;3 +1?&quot; means 3 can make it and 1 more only if needed.
       </p>
 
-      {/* Who coincides in the cell last tapped or clicked */}
+      {/* Who coincides in the cell last tapped or clicked; sticks to the
+          bottom of the screen so it stays in view on a long grid */}
       {inspected && inspectedData && (
-        <div className="rounded-lg border bg-white px-3 py-2 text-sm space-y-1">
+        <div className="sticky bottom-3 z-20 rounded-lg border bg-white px-3 py-2 text-sm space-y-1 shadow-lg">
           <div className="flex items-center justify-between gap-2">
             <span className="font-medium text-slate-800">
               {weekdayShort(inspected.day)}{' '}
