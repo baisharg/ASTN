@@ -204,7 +204,7 @@ export function OpportunityFormDialog({
               id="opp-course-name"
               value={courseName}
               onChange={(e) => setCourseName(e.target.value)}
-              placeholder="e.g. Technical AI Safety"
+              placeholder="e.g. el Curso de Technical AI Safety"
             />
             <p className="text-xs text-muted-foreground">
               Fills {'{{course}}'} in the canonical form&apos;s questions.
@@ -256,9 +256,9 @@ export function OpportunityFormDialog({
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              Course editions and EOIs copy their canonical form. A custom
-              form starts with name and email and is written on the
-              opportunity, for exceptions such as a feedback form or a job.
+              Course editions and EOIs copy their canonical form. A custom form
+              starts with name and email and is written on the opportunity, for
+              exceptions such as a feedback form or a job.
             </p>
           </div>
 

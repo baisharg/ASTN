@@ -641,7 +641,7 @@ export function createOpportunityTools(
           .string()
           .optional()
           .describe(
-            'Course name that fills {{course}} in the form. The application form itself is a copy of the org canonical form and cannot be set here.',
+            'Course name, with its article, that fills {{course}} in the form (e.g. "el Curso de Technical AI Safety"). The application form itself is a copy of the org canonical form and cannot be set here.',
           ),
         courseArea: z
           .string()

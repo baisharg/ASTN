@@ -247,7 +247,7 @@ function OpportunityDetailsForm({
           id="opp-course-name"
           value={courseName}
           onChange={(e) => setCourseName(e.target.value)}
-          placeholder="e.g. Technical AI Safety"
+          placeholder="e.g. el Curso de Technical AI Safety"
         />
         <p className="text-xs text-muted-foreground">
           Fills {'{{course}}'} in the canonical form. Changing it later only
