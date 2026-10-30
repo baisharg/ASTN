@@ -5,6 +5,7 @@ import { Loader2 } from 'lucide-react'
 import { useNavigate } from '@tanstack/react-router'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
+import type { FormSource } from '../../../convex/canonicalForms'
 import {
   Dialog,
   DialogContent,
@@ -53,6 +54,11 @@ export function OpportunityFormDialog({
   const [externalUrl, setExternalUrl] = useState('')
   const [featured, setFeatured] = useState(false)
   const [isEOI, setIsEOI] = useState(false)
+  // null until picked: follows the EOI checkbox.
+  const [pickedFormSource, setPickedFormSource] = useState<FormSource | null>(
+    null,
+  )
+  const formSource = pickedFormSource ?? (isEOI ? 'eoi' : 'course')
   const [courseName, setCourseName] = useState('')
   const [courseArea, setCourseArea] = useState('')
   const [isSaving, setIsSaving] = useState(false)
@@ -76,6 +82,7 @@ export function OpportunityFormDialog({
         externalUrl: externalUrl.trim() || undefined,
         featured,
         isEOI,
+        formSource,
         courseName: courseName.trim() || undefined,
         courseArea: courseArea.trim() || undefined,
       })
@@ -223,10 +230,37 @@ export function OpportunityFormDialog({
               onCheckedChange={(checked) => setIsEOI(checked === true)}
             />
             <span className="text-sm">
-              Expression of interest (uses the EOI canonical form, no
-              availability)
+              Expression of interest (no availability)
             </span>
           </label>
+
+          <div className="space-y-1">
+            <Label htmlFor="opp-form-source">Application form</Label>
+            <Select
+              value={formSource}
+              onValueChange={(value) =>
+                setPickedFormSource(value as FormSource)
+              }
+            >
+              <SelectTrigger id="opp-form-source">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="course">Course canonical form</SelectItem>
+                <SelectItem value="eoi">
+                  Expression of interest canonical form
+                </SelectItem>
+                <SelectItem value="custom">
+                  Custom form (not a course edition)
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Course editions and EOIs copy their canonical form. A custom
+              form starts with name and email and is written on the
+              opportunity, for exceptions such as a feedback form or a job.
+            </p>
+          </div>
 
           <label className="flex items-center gap-2 cursor-pointer">
             <Checkbox

@@ -15,7 +15,13 @@ import {
 } from './lib/baishCourseOpportunities'
 import { getUserId, requireOrgAdmin } from './lib/auth'
 import { sanitizeFormFieldKeys } from './lib/formFields'
-import { copyCanonicalForm } from './canonicalForms'
+import {
+  cleanAdminForm,
+  copyCanonicalForm,
+  formSourceOf,
+  formSourceValidator,
+} from './canonicalForms'
+import type { FormSource } from './canonicalForms'
 import { createDefaultPollForOpportunity } from './availabilityPolls'
 
 /**
@@ -140,6 +146,7 @@ const opportunityReturnValidator = v.object({
   isEOI: v.optional(v.boolean()),
   courseName: v.optional(v.string()),
   courseArea: v.optional(v.string()),
+  formSource: v.optional(formSourceValidator),
   emailTemplateSetId: v.optional(v.id('emailTemplateSets')),
   sendApplicationReceivedEmail: v.optional(v.boolean()),
   redirectOpportunityId: v.optional(v.id('orgOpportunities')),
@@ -658,13 +665,17 @@ export const duplicate = mutation({
       status: 'draft',
       featured: false,
       // From the canonical, not from the source: an edition never inherits
-      // another edition's form.
-      formFields: await copyCanonicalForm(ctx, {
-        orgId: source.orgId,
-        isEOI: source.isEOI,
-        courseName: source.courseName,
-        courseArea: source.courseArea,
-      }),
+      // another edition's form. Only a custom form (not an edition) is copied.
+      formFields:
+        formSourceOf(source) === 'custom'
+          ? source.formFields
+          : await copyCanonicalForm(ctx, {
+              orgId: source.orgId,
+              source: formSourceOf(source),
+              courseName: source.courseName,
+              courseArea: source.courseArea,
+            }),
+      formSource: formSourceOf(source),
       tags: source.tags,
       isEOI: source.isEOI,
       courseName: source.courseName,
@@ -735,11 +746,13 @@ export async function createOpportunityFor(
     isEOI?: boolean
     courseName?: string
     courseArea?: string
+    formSource?: FormSource
   },
 ): Promise<Id<'orgOpportunities'>> {
+  const formSource = args.formSource ?? (args.isEOI ? 'eoi' : 'course')
   const formFields = await copyCanonicalForm(ctx, {
     orgId: args.orgId,
-    isEOI: args.isEOI,
+    source: formSource,
     courseName: args.courseName,
     courseArea: args.courseArea,
   })
@@ -754,6 +767,7 @@ export async function createOpportunityFor(
     externalUrl: args.externalUrl,
     featured: args.featured,
     formFields,
+    formSource,
     ...(args.tags !== undefined && { tags: normalizeTags(args.tags) }),
     isEOI: args.isEOI,
     courseName: args.courseName?.trim() || undefined,
@@ -845,6 +859,7 @@ export const create = mutation({
     isEOI: v.optional(v.boolean()),
     courseName: v.optional(v.string()),
     courseArea: v.optional(v.string()),
+    formSource: v.optional(formSourceValidator),
   },
   returns: v.id('orgOpportunities'),
   handler: async (ctx, args) => {
@@ -947,35 +962,70 @@ export const update = mutation({
   },
 })
 
+async function assertNoApplications(
+  ctx: MutationCtx,
+  opportunityId: Id<'orgOpportunities'>,
+) {
+  const applied = await ctx.db
+    .query('opportunityApplications')
+    .withIndex('by_opportunity_and_status', (q) =>
+      q.eq('opportunityId', opportunityId),
+    )
+    .first()
+  if (applied) {
+    throw new ConvexError(
+      'People already applied with this form, so it cannot be changed.',
+    )
+  }
+}
+
 /**
- * Replace an opportunity's form with a fresh copy of the canonical, e.g. after
- * the canonical changed or the course name was fixed. Only while nobody has
- * applied: swapping questions under existing answers would strand them.
+ * Give an opportunity a fresh form from `source`: a new copy of that
+ * canonical (e.g. after the canonical changed or the course name was fixed),
+ * or the bare start of a custom form. Only while nobody has applied: swapping
+ * questions under existing answers would strand them.
  */
-export const resetFormToCanonical = mutation({
-  args: { id: v.id('orgOpportunities') },
+export const replaceForm = mutation({
+  args: { id: v.id('orgOpportunities'), source: formSourceValidator },
   returns: v.null(),
-  handler: async (ctx, { id }) => {
+  handler: async (ctx, { id, source }) => {
     const opportunity = await ctx.db.get('orgOpportunities', id)
     if (!opportunity) throw new ConvexError('Opportunity not found')
     await requireOrgAdmin(ctx, opportunity.orgId)
-
-    const applied = await ctx.db
-      .query('opportunityApplications')
-      .withIndex('by_opportunity_and_status', (q) => q.eq('opportunityId', id))
-      .first()
-    if (applied) {
-      throw new ConvexError(
-        'People already applied with this form, so it cannot be replaced.',
-      )
-    }
+    await assertNoApplications(ctx, id)
     await ctx.db.patch('orgOpportunities', id, {
       formFields: await copyCanonicalForm(ctx, {
         orgId: opportunity.orgId,
-        isEOI: opportunity.isEOI,
+        source,
         courseName: opportunity.courseName,
         courseArea: opportunity.courseArea,
       }),
+      formSource: source,
+      updatedAt: Date.now(),
+    })
+    return null
+  },
+})
+
+/**
+ * Save the questions of a custom form, the only kind written on the
+ * opportunity itself. Only while nobody has applied.
+ */
+export const saveCustomForm = mutation({
+  args: { id: v.id('orgOpportunities'), formFields: v.any() },
+  returns: v.null(),
+  handler: async (ctx, { id, formFields }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', id)
+    if (!opportunity) throw new ConvexError('Opportunity not found')
+    await requireOrgAdmin(ctx, opportunity.orgId)
+    if (formSourceOf(opportunity) !== 'custom') {
+      throw new ConvexError(
+        'This form is a copy of a canonical form: edit the canonical instead.',
+      )
+    }
+    await assertNoApplications(ctx, id)
+    await ctx.db.patch('orgOpportunities', id, {
+      formFields: cleanAdminForm(formFields),
       updatedAt: Date.now(),
     })
     return null

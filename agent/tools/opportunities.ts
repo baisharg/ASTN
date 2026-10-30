@@ -649,6 +649,12 @@ export function createOpportunityTools(
           .describe(
             'Area that fills {{area}} in the form, e.g. "la seguridad en IA".',
           ),
+        formSource: z
+          .enum(['course', 'eoi', 'custom'])
+          .optional()
+          .describe(
+            'Which canonical form to copy: course, eoi, or custom (no canonical: only name and email, for opportunities that are not course editions). Defaults to eoi when isEOI, else course.',
+          ),
       },
       async (args) => {
         console.log('[tool] create_opportunity', args.title)
@@ -703,6 +709,7 @@ export function createOpportunityTools(
             isEOI: args.isEOI,
             courseName: args.courseName,
             courseArea: args.courseArea,
+            formSource: args.formSource,
           })
 
           return {
@@ -1110,6 +1117,7 @@ export function createOpportunityTools(
             isEOI: source.isEOI,
             courseName: source.courseName,
             courseArea: source.courseArea,
+            formSource: source.formSource,
           })
 
           if (args.redirectOldToNew) {

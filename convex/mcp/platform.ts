@@ -6,6 +6,7 @@ import { requireOrgAdminFor } from '../lib/auth'
 import { isOutboxActive, syncOutboxOnStatusChange } from '../emails/outbox'
 import { assertFormFieldsShape, sanitizeFormFieldKeys } from '../lib/formFields'
 import type { FormField } from '../lib/formFields'
+import { formSourceValidator } from '../canonicalForms'
 import {
   describeImpact,
   impactOnSurveyResponses,
@@ -1090,6 +1091,7 @@ export const createOpportunity = internalMutation({
     isEOI: v.optional(v.boolean()),
     courseName: v.optional(v.string()),
     courseArea: v.optional(v.string()),
+    formSource: v.optional(formSourceValidator),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -1109,6 +1111,7 @@ export const createOpportunity = internalMutation({
       isEOI: args.isEOI,
       courseName: args.courseName,
       courseArea: args.courseArea,
+      formSource: args.formSource,
     })
     const created = await ctx.db.get(id)
     return { id, slug: created?.slug ?? null, status: created?.status }

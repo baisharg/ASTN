@@ -1451,6 +1451,12 @@ export default defineSchema({
     courseName: v.optional(v.string()),
     // Fills {{area}} in the canonical form (e.g. "la seguridad en IA").
     courseArea: v.optional(v.string()),
+    // Which canonical the form was copied from, or 'custom' for the
+    // exceptions whose form is written on the opportunity itself. Unset on
+    // opportunities created before 2026-10-30: they follow isEOI.
+    formSource: v.optional(
+      v.union(v.literal('course'), v.literal('eoi'), v.literal('custom')),
+    ),
     // Email template set this opportunity inherits (issue #20). When set, the
     // outbox system handles decision emails and legacy auto-emails are skipped.
     emailTemplateSetId: v.optional(v.id('emailTemplateSets')),

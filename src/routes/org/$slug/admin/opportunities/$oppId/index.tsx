@@ -21,13 +21,16 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../../../convex/_generated/dataModel'
+import { canonicalFormProblems } from '../../../../../../../convex/lib/formFields'
 import type { FormField } from '../../../../../../../convex/lib/formFields'
+import type { FormSource } from '../../../../../../../convex/canonicalForms'
 import { weekdayShort } from '../../../../../../../convex/lib/availabilityWeek'
 import type { AvailabilityResponse } from '~/components/availability/AvailabilityHeatmap'
 import { AvailabilityHeatmap } from '~/components/availability/AvailabilityHeatmap'
 import { PollCreationForm } from '~/components/availability/PollCreationForm'
 import { ScheduleAnalysis } from '~/components/availability/ScheduleAnalysis'
 import { DynamicFormRenderer } from '~/components/opportunities/DynamicFormRenderer'
+import { FormFieldsEditor } from '~/components/opportunities/FormFieldsEditor'
 import { TagsInput } from '~/components/opportunities/TagsInput'
 import { ApplicationsTable } from '~/components/opportunities/ApplicationsTable'
 import { SurveyTab } from '~/components/surveys/SurveyTab'
@@ -1339,6 +1342,12 @@ function OpportunityDeleteButton({
  * be replaced with the current canonical (after the canonical or the course
  * name changed); after that the form stays as people answered it.
  */
+const FORM_SOURCE_LABELS: Record<FormSource, string> = {
+  course: 'Course canonical form',
+  eoi: 'Expression of interest canonical form',
+  custom: 'Custom form',
+}
+
 function ApplicationFormCard({
   opportunity,
   slug,
@@ -1350,28 +1359,66 @@ function ApplicationFormCard({
     api.opportunityApplications.getApplicationCount,
     { opportunityId: opportunity._id },
   )
-  const resetForm = useMutation(api.orgOpportunities.resetFormToCanonical)
+  const replaceForm = useMutation(api.orgOpportunities.replaceForm)
+  const saveCustomForm = useMutation(api.orgOpportunities.saveCustomForm)
+  const source: FormSource =
+    opportunity.formSource ?? (opportunity.isEOI ? 'eoi' : 'course')
+  const [nextSource, setNextSource] = useState<FormSource>(source)
   const [preview, setPreview] = useState<Record<string, unknown>>({})
-  const [isResetting, setIsResetting] = useState(false)
+  const [draft, setDraft] = useState<Array<FormField> | null>(null)
+  const [isWorking, setIsWorking] = useState(false)
 
   const fields = (opportunity.formFields as Array<FormField> | undefined) ?? []
   const hasApplications = (applicationCount ?? 0) > 0
+  const locked = hasApplications || applicationCount === undefined
+  const editable = source === 'custom' && !locked
+  const draftProblems = draft
+    ? canonicalFormProblems(draft.filter((f) => f.label.trim()))
+    : []
 
-  const handleReset = async () => {
-    setIsResetting(true)
+  const run = async (action: () => Promise<unknown>, success: string) => {
+    setIsWorking(true)
     try {
-      await resetForm({ id: opportunity._id })
-      toast.success('Form replaced with the current canonical form')
+      await action()
+      toast.success(success)
+      return true
     } catch (err) {
-      toast.error("Couldn't replace the form", {
+      toast.error("Couldn't change the form", {
         description:
           err instanceof ConvexError && typeof err.data === 'string'
             ? err.data
             : 'Please try again.',
       })
+      return false
     } finally {
-      setIsResetting(false)
+      setIsWorking(false)
     }
+  }
+
+  const handleReplace = async () => {
+    const message =
+      nextSource === 'custom'
+        ? 'Replace this form with a blank custom form (name and email only)?'
+        : `Replace this form with a fresh copy of the ${FORM_SOURCE_LABELS[nextSource].toLowerCase()}?`
+    if (!window.confirm(message)) return
+    const ok = await run(
+      () => replaceForm({ id: opportunity._id, source: nextSource }),
+      'Form replaced',
+    )
+    if (ok) setDraft(null)
+  }
+
+  const handleSaveCustom = async () => {
+    if (!draft || draftProblems.length > 0) return
+    const ok = await run(
+      () =>
+        saveCustomForm({
+          id: opportunity._id,
+          formFields: draft.filter((f) => f.label.trim()),
+        }),
+      'Form saved',
+    )
+    if (ok) setDraft(null)
   }
 
   return (
@@ -1379,31 +1426,57 @@ function ApplicationFormCard({
       <CardHeader>
         <CardTitle>Application Form</CardTitle>
         <CardDescription>
-          A copy of the canonical{' '}
-          {opportunity.isEOI ? 'expression of interest' : 'course'} form, made
-          when this opportunity was created. Questions are written in{' '}
-          <Link
-            to="/org/$slug/admin/forms"
-            params={{ slug }}
-            className="underline"
-          >
-            Canonical forms
-          </Link>
-          , not here.
+          {source === 'custom' ? (
+            <>
+              A custom form, written here because this opportunity is not a
+              course edition.
+            </>
+          ) : (
+            <>
+              A copy of the {FORM_SOURCE_LABELS[source].toLowerCase()}, made
+              when this opportunity was created. Questions are written in{' '}
+              <Link
+                to="/org/$slug/admin/forms"
+                params={{ slug }}
+                className="underline"
+              >
+                Canonical forms
+              </Link>
+              , not here.
+            </>
+          )}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
+          <Select
+            value={nextSource}
+            onValueChange={(value) => setNextSource(value as FormSource)}
+            disabled={locked || isWorking}
+          >
+            <SelectTrigger className="w-auto min-w-64">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(FORM_SOURCE_LABELS) as Array<FormSource>).map(
+                (s) => (
+                  <SelectItem key={s} value={s}>
+                    {FORM_SOURCE_LABELS[s]}
+                  </SelectItem>
+                ),
+              )}
+            </SelectContent>
+          </Select>
           <Button
             type="button"
             variant="outline"
-            onClick={() => void handleReset()}
-            disabled={
-              hasApplications || applicationCount === undefined || isResetting
-            }
+            onClick={() => void handleReplace()}
+            disabled={locked || isWorking}
           >
-            {isResetting && <Loader2 className="size-4 mr-2 animate-spin" />}
-            Replace with the current canonical form
+            {isWorking && <Loader2 className="size-4 mr-2 animate-spin" />}
+            {nextSource === source && source !== 'custom'
+              ? 'Replace with the current canonical form'
+              : 'Replace the form'}
           </Button>
           {hasApplications && (
             <p className="text-xs text-muted-foreground">
@@ -1413,19 +1486,43 @@ function ApplicationFormCard({
           )}
         </div>
 
-        {fields.length > 0 ? (
-          <DynamicFormRenderer
-            formFields={fields}
-            responses={preview}
-            onChange={(key, value) =>
-              setPreview((prev) => ({ ...prev, [key]: value }))
-            }
-          />
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            This opportunity has no application form.
-          </p>
+        {editable && (
+          <div className="space-y-3">
+            <FormFieldsEditor
+              fields={draft ?? fields}
+              onChange={(next) => setDraft(next)}
+            />
+            {draftProblems.length > 0 && (
+              <ul className="list-disc pl-5 text-sm text-amber-900">
+                {draftProblems.map((p) => (
+                  <li key={p}>{p}</li>
+                ))}
+              </ul>
+            )}
+            <Button
+              type="button"
+              onClick={() => void handleSaveCustom()}
+              disabled={!draft || draftProblems.length > 0 || isWorking}
+            >
+              Save form
+            </Button>
+          </div>
         )}
+
+        {!editable &&
+          (fields.length > 0 ? (
+            <DynamicFormRenderer
+              formFields={fields}
+              responses={preview}
+              onChange={(key, value) =>
+                setPreview((prev) => ({ ...prev, [key]: value }))
+              }
+            />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              This opportunity has no application form.
+            </p>
+          ))}
       </CardContent>
     </Card>
   )
