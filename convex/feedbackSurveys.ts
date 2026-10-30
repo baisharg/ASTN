@@ -7,6 +7,7 @@ import {
 } from './_generated/server'
 import type { MutationCtx } from './_generated/server'
 import { getUserId, requireOrgAdmin } from './lib/auth'
+import { requireOpportunityAccess } from './lib/courseAccess'
 import { resolveApplicantDisplayNameFromApplication } from './lib/applicantName'
 import {
   assertFormFieldsShape,
@@ -592,11 +593,16 @@ export const getRespondentLinks = query({
     }),
   ),
   handler: async (ctx, { surveyId }) => {
-    // Personal links let anyone answer as that person: admins only (this
-    // query had no check before 2026-10-30).
+    // Personal links let anyone answer as that person: admins and course
+    // editors only, which the broadcast needs (no check before 2026-10-30).
     const survey = await ctx.db.get('feedbackSurveys', surveyId)
     if (!survey) return []
-    await requireOrgAdmin(ctx, survey.orgId)
+    const surveyOpportunity = await ctx.db.get(
+      'orgOpportunities',
+      survey.opportunityId,
+    )
+    if (!surveyOpportunity) return []
+    await requireOpportunityAccess(ctx, surveyOpportunity, 'edit')
     // Use denormalized respondentName — no per-row name resolution
     const respondents = await ctx.db
       .query('surveyRespondents')

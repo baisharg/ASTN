@@ -11,6 +11,7 @@ import {
   Database,
   FileText,
   FolderPlus,
+  KeyRound,
   MapPin,
   Settings,
   Shield,
@@ -289,6 +290,13 @@ function OrgAdminDashboard() {
               <Link to="/org/$slug/admin/forms" params={{ slug }}>
                 <ClipboardList className="size-5 mr-2" />
                 Canonical forms
+              </Link>
+            </Button>
+
+            <Button variant="outline" className="h-auto py-4" asChild>
+              <Link to="/org/$slug/admin/permissions" params={{ slug }}>
+                <KeyRound className="size-5 mr-2" />
+                Course permissions
               </Link>
             </Button>
 

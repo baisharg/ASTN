@@ -22,6 +22,7 @@ import { toast } from 'sonner'
 import { api } from '../../../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../../../convex/_generated/dataModel'
 import { canonicalFormProblems } from '../../../../../../../convex/lib/formFields'
+import { courseOf } from '../../../../../../../convex/lib/courses'
 import type { FormField } from '../../../../../../../convex/lib/formFields'
 import type { FormSource } from '../../../../../../../convex/canonicalForms'
 import { weekdayShort } from '../../../../../../../convex/lib/availabilityWeek'
@@ -391,12 +392,23 @@ function OpportunityEditPage() {
     key: oppId,
   })
 
+  // Admins reach every opportunity; members with course access, the ones
+  // tagged with their courses.
+  const access = useQuery(
+    api.courseAccess.myAccess,
+    org ? { orgId: org._id } : 'skip',
+  )
+  const isAdmin = access?.isAdmin ?? false
+  const courseLevel = opportunity
+    ? access?.courses.find((c) => c.course === courseOf(opportunity.tags))
+        ?.level
+    : undefined
+  const canView = isAdmin || courseLevel !== undefined
+
   // Pending outbox drafts — shown as a count badge on the Emails tab.
   const outboxDrafts = useQuery(
     api.emails.outbox.listForOpportunity,
-    opportunity && membership?.role === 'admin'
-      ? { opportunityId: opportunity._id }
-      : 'skip',
+    opportunity && canView ? { opportunityId: opportunity._id } : 'skip',
   )
 
   // Redirect target options: active opportunities in this org (excluding current)
@@ -412,7 +424,7 @@ function OpportunityEditPage() {
   // Gated on admin membership — listAllByOrg throws for non-admins.
   const allOpportunities = useQuery(
     api.orgOpportunities.listAllByOrg,
-    org && membership?.role === 'admin' ? { orgId: org._id } : 'skip',
+    org && canView ? { orgId: org._id } : 'skip',
   )
   // Tags already used anywhere in this org, offered as suggestions in the form.
   const existingTags = Array.from(
@@ -427,7 +439,8 @@ function OpportunityEditPage() {
   if (
     org === undefined ||
     membership === undefined ||
-    opportunity === undefined
+    opportunity === undefined ||
+    (org && membership && access === undefined)
   ) {
     return (
       <div className="min-h-screen bg-slate-50">
@@ -457,7 +470,7 @@ function OpportunityEditPage() {
     )
   }
 
-  if (!membership || membership.role !== 'admin') {
+  if (!membership || !canView) {
     return (
       <div className="min-h-screen bg-slate-50">
         <AuthHeader />
@@ -580,9 +593,7 @@ function OpportunityEditPage() {
             </div>
           </div>
 
-          {membership?.role === 'admin' && (
-            <AutoAcceptedNotice opportunityId={opportunity._id} />
-          )}
+          {canView && <AutoAcceptedNotice opportunityId={opportunity._id} />}
 
           <Tabs defaultValue="details">
             <TabsList>
@@ -607,10 +618,13 @@ function OpportunityEditPage() {
                   </span>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="feedback" className="gap-2">
-                <ClipboardList className="size-4" />
-                Feedback
-              </TabsTrigger>
+              {/* Surveys stay with admins (not part of course access). */}
+              {isAdmin && (
+                <TabsTrigger value="feedback" className="gap-2">
+                  <ClipboardList className="size-4" />
+                  Feedback
+                </TabsTrigger>
+              )}
             </TabsList>
 
             <TabsContent value="details" className="mt-6">
@@ -675,7 +689,11 @@ function OpportunityEditPage() {
             </TabsContent>
 
             <TabsContent value="availability" className="mt-6">
-              <AvailabilityTab opportunityId={opportunity._id} slug={slug} />
+              <AvailabilityTab
+                opportunityId={opportunity._id}
+                slug={slug}
+                canEdit={isAdmin || courseLevel === 'edit'}
+              />
             </TabsContent>
 
             <TabsContent value="emails" className="mt-6">
@@ -683,13 +701,15 @@ function OpportunityEditPage() {
             </TabsContent>
 
             <TabsContent value="feedback" className="mt-6">
-              <SurveyTab
-                opportunityId={opportunity._id}
-                orgId={opportunity.orgId}
-                slug={slug}
-                orgName={org?.name}
-                opportunityTitle={opportunity.title}
-              />
+              {isAdmin && (
+                <SurveyTab
+                  opportunityId={opportunity._id}
+                  orgId={opportunity.orgId}
+                  slug={slug}
+                  orgName={org?.name}
+                  opportunityTitle={opportunity.title}
+                />
+              )}
             </TabsContent>
           </Tabs>
         </div>
@@ -782,9 +802,12 @@ function AutoAcceptedNotice({
 function AvailabilityTab({
   opportunityId,
   slug,
+  canEdit,
 }: {
   opportunityId: Id<'orgOpportunities'>
   slug: string
+  // Personal links let anyone answer as that person: editors only.
+  canEdit: boolean
 }) {
   const poll = useQuery(api.availabilityPolls.getPollByOpportunity, {
     opportunityId,
@@ -797,7 +820,7 @@ function AvailabilityTab({
 
   const respondentLinks = useQuery(
     api.availabilityPolls.getRespondentLinks,
-    poll ? { pollId: poll._id } : 'skip',
+    poll && canEdit ? { pollId: poll._id } : 'skip',
   )
 
   const updatePoll = useMutation(api.availabilityPolls.updatePoll)

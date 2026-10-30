@@ -1,8 +1,10 @@
 import { ConvexError, v } from 'convex/values'
 import { internalMutation, mutation, query } from '../_generated/server'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
-import type { Doc } from '../_generated/dataModel'
+import type { Doc, Id } from '../_generated/dataModel'
 import { getUserId, requireOrgAdminFor } from '../lib/auth'
+import { getOrgAccess, requireOpportunityAccess } from '../lib/courseAccess'
+import type { AccessLevel } from '../lib/courseAccess'
 import {
   assertOnlyKnownVariables,
   discardPendingDraftsForKind,
@@ -92,6 +94,17 @@ async function requireAdmin(
   return userId
 }
 
+// Admins, or members with access to the opportunity's course.
+async function requireAccess(
+  ctx: QueryCtx | MutationCtx,
+  opportunityId: Id<'orgOpportunities'>,
+  level: AccessLevel,
+): Promise<string> {
+  const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+  if (!opportunity) throw new ConvexError('Opportunity not found')
+  return await requireOpportunityAccess(ctx, opportunity, level)
+}
+
 // ── Library ─────────────────────────────────────────────────────────────────
 
 export const listSets = query({
@@ -116,7 +129,13 @@ export const listSets = query({
     }),
   ),
   handler: async (ctx, { orgId }) => {
-    await requireAdmin(ctx, orgId)
+    // Read by the Emails tab to pick a set: admins and anyone with a course.
+    const userId = await getUserId(ctx)
+    if (!userId) throw new ConvexError('Not authenticated')
+    const access = await getOrgAccess(ctx, userId, orgId)
+    if (!access || (!access.isAdmin && access.courses.size === 0)) {
+      throw new ConvexError('Admin access required')
+    }
     const sets = await ctx.db
       .query('emailTemplateSets')
       .withIndex('by_org', (q) => q.eq('orgId', orgId))
@@ -265,7 +284,13 @@ export const updateTemplate = mutation({
   ) => {
     const template = await ctx.db.get('emailTemplates', templateId)
     if (!template) throw new ConvexError('Template not found')
-    await requireAdmin(ctx, template.orgId)
+    // An opportunity's own override is edited like the rest of the
+    // opportunity; a set's template is shared by many, so admins only.
+    if (template.opportunityId) {
+      await requireAccess(ctx, template.opportunityId, 'edit')
+    } else {
+      await requireAdmin(ctx, template.orgId)
+    }
 
     if (!subject.trim()) throw new ConvexError('Subject cannot be empty')
     // A typo'd {{variable}} is rejected here — it can never reach an applicant.
@@ -354,7 +379,7 @@ export const getEffectiveTemplates = query({
   handler: async (ctx, { opportunityId }) => {
     const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
     if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireAdmin(ctx, opportunity.orgId)
+    await requireAccess(ctx, opportunity._id, 'read')
 
     const setId = opportunity.emailTemplateSetId
     if (!setId) return null
@@ -414,7 +439,7 @@ export const upsertOpportunityTemplate = mutation({
   handler: async (ctx, args) => {
     const opportunity = await ctx.db.get('orgOpportunities', args.opportunityId)
     if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireAdmin(ctx, opportunity.orgId)
+    await requireAccess(ctx, opportunity._id, 'edit')
 
     if (!args.subject.trim()) throw new ConvexError('Subject cannot be empty')
     assertOnlyKnownVariables(args.subject)
@@ -476,7 +501,7 @@ export const clearOpportunityTemplate = mutation({
   handler: async (ctx, { opportunityId, kind }) => {
     const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
     if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireAdmin(ctx, opportunity.orgId)
+    await requireAccess(ctx, opportunity._id, 'edit')
 
     const existing = await ctx.db
       .query('emailTemplates')
@@ -507,7 +532,7 @@ export const setSendApplicationReceivedEmail = mutation({
   handler: async (ctx, { opportunityId, enabled }) => {
     const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
     if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireAdmin(ctx, opportunity.orgId)
+    await requireAccess(ctx, opportunity._id, 'edit')
     await ctx.db.patch('orgOpportunities', opportunityId, {
       sendApplicationReceivedEmail: enabled,
       updatedAt: Date.now(),
@@ -530,7 +555,7 @@ export const setOpportunityTemplateSet = mutation({
   handler: async (ctx, { opportunityId, setId }) => {
     const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
     if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireAdmin(ctx, opportunity.orgId)
+    await requireAccess(ctx, opportunity._id, 'edit')
 
     if (setId) {
       const set = await ctx.db.get('emailTemplateSets', setId)

@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import { canAccessOpportunity, getOrgAccess } from '../lib/courseAccess'
 import { internalMutation, internalQuery } from '../_generated/server'
 import { resolveApplicantContact } from '../lib/applicantContact'
 import type { FormField } from '../lib/formFields'
@@ -72,23 +73,21 @@ export const getRecipientsForEmail = internalQuery({
 /**
  * Verify that a user is an admin of the org that owns the opportunity.
  */
+// Despite the name, also true for members with access to the opportunity's
+// course (convex/lib/courseAccess.ts): `edit` by default, since sending email
+// changes things; the CSV export asks for `read`.
 export const verifyOrgAdmin = internalQuery({
   args: {
     userId: v.string(),
     opportunityId: v.id('orgOpportunities'),
+    level: v.optional(v.union(v.literal('read'), v.literal('edit'))),
   },
   returns: v.boolean(),
-  handler: async (ctx, { userId, opportunityId }) => {
+  handler: async (ctx, { userId, opportunityId, level }) => {
     const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
     if (!opportunity) return false
-
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .filter((q) => q.eq(q.field('orgId'), opportunity.orgId))
-      .first()
-
-    return membership?.role === 'admin'
+    const access = await getOrgAccess(ctx, userId, opportunity.orgId)
+    return canAccessOpportunity(access, opportunity, level ?? 'edit')
   },
 })
 

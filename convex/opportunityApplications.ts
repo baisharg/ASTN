@@ -1,6 +1,10 @@
 import { ConvexError, v } from 'convex/values'
 import { action, internalQuery, mutation, query } from './_generated/server'
-import { getUserId, requireOrgAdmin } from './lib/auth'
+import { getUserId } from './lib/auth'
+import {
+  hasOpportunityAccess,
+  requireOpportunityAccess,
+} from './lib/courseAccess'
 import { resolveApplicantContact } from './lib/applicantContact'
 import {
   resolveApplicantDisplayName,
@@ -480,12 +484,9 @@ export const getPreviousResponsesForOpportunity = query({
     // Mirror the visibility rules from `orgOpportunities.get`: active opps
     // are public to authed users, draft/closed require org-admin membership.
     if (opportunity.status !== 'active') {
-      const membership = await ctx.db
-        .query('orgMemberships')
-        .withIndex('by_user', (q) => q.eq('userId', userId))
-        .filter((q) => q.eq(q.field('orgId'), opportunity.orgId))
-        .first()
-      if (!membership || membership.role !== 'admin') return null
+      if (!(await hasOpportunityAccess(ctx, opportunity, 'read'))) {
+        return null
+      }
     }
 
     const formFields =
@@ -559,7 +560,7 @@ export const getNextEditionLinks = query({
   handler: async (ctx, { opportunityId }) => {
     const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
     if (!opportunity) return { autoAcceptedFrom: {}, acceptedIn: {} }
-    await requireOrgAdmin(ctx, opportunity.orgId)
+    await requireOpportunityAccess(ctx, opportunity, 'read')
 
     const applications = await ctx.db
       .query('opportunityApplications')
@@ -607,7 +608,7 @@ export const getUnseenAutoAccepted = query({
   handler: async (ctx, { opportunityId }) => {
     const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
     if (!opportunity) return []
-    const userId = await requireOrgAdmin(ctx, opportunity.orgId)
+    const userId = await requireOpportunityAccess(ctx, opportunity, 'read')
 
     const accepted = await ctx.db
       .query('opportunityApplications')
@@ -649,7 +650,12 @@ export const markAutoAcceptedSeen = mutation({
     for (const id of applicationIds) {
       const app = await ctx.db.get('opportunityApplications', id)
       if (!app) continue
-      const userId = await requireOrgAdmin(ctx, app.orgId)
+      const appOpportunity = await ctx.db.get(
+        'orgOpportunities',
+        app.opportunityId,
+      )
+      if (!appOpportunity) continue
+      const userId = await requireOpportunityAccess(ctx, appOpportunity, 'read')
       const seen = app.autoAcceptSeenBy ?? []
       if (seen.includes(userId)) continue
       await ctx.db.patch('opportunityApplications', id, {
@@ -721,14 +727,7 @@ export const listByOpportunity = query({
     const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
     if (!opportunity) throw new ConvexError('Opportunity not found')
 
-    // Verify admin role
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .filter((q) => q.eq(q.field('orgId'), opportunity.orgId))
-      .first()
-
-    if (!membership || membership.role !== 'admin') {
+    if (!(await hasOpportunityAccess(ctx, opportunity, 'read'))) {
       throw new ConvexError('Admin access required')
     }
 
@@ -792,13 +791,7 @@ export const listRecipientsByOpportunity = query({
     const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
     if (!opportunity) throw new ConvexError('Opportunity not found')
 
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .filter((q) => q.eq(q.field('orgId'), opportunity.orgId))
-      .first()
-
-    if (!membership || membership.role !== 'admin') {
+    if (!(await hasOpportunityAccess(ctx, opportunity, 'read'))) {
       throw new ConvexError('Admin access required')
     }
 
@@ -851,13 +844,14 @@ export const getById = query({
     )
     if (!application) return null
 
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .filter((q) => q.eq(q.field('orgId'), application.orgId))
-      .first()
-
-    if (!membership || membership.role !== 'admin') {
+    const ownOpportunity = await ctx.db.get(
+      'orgOpportunities',
+      application.opportunityId,
+    )
+    if (
+      !ownOpportunity ||
+      !(await hasOpportunityAccess(ctx, ownOpportunity, 'read'))
+    ) {
       throw new ConvexError('Admin access required')
     }
 
@@ -876,14 +870,9 @@ export const getApplicationCount = query({
     const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
     if (!opportunity) return 0
 
-    // Verify admin role
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .filter((q) => q.eq(q.field('orgId'), opportunity.orgId))
-      .first()
-
-    if (!membership || membership.role !== 'admin') return 0
+    if (!(await hasOpportunityAccess(ctx, opportunity, 'read'))) {
+      return 0
+    }
 
     const apps = await ctx.db
       .query('opportunityApplications')
@@ -924,7 +913,7 @@ export const applicationTimeline = query({
   handler: async (ctx, { opportunityId }) => {
     const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
     if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireOrgAdmin(ctx, opportunity.orgId)
+    await requireOpportunityAccess(ctx, opportunity, 'read')
 
     const anchor: 'deadline' | 'firstApplication' = opportunity.deadline
       ? 'deadline'
@@ -1037,15 +1026,15 @@ export const updateStatus = mutation({
     )
     if (!application) throw new ConvexError('Application not found')
 
-    // Verify admin role
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .filter((q) => q.eq(q.field('orgId'), application.orgId))
-      .first()
-
-    if (!membership || membership.role !== 'admin') {
-      throw new ConvexError('Admin access required')
+    const ownOpportunity = await ctx.db.get(
+      'orgOpportunities',
+      application.opportunityId,
+    )
+    if (
+      !ownOpportunity ||
+      !(await hasOpportunityAccess(ctx, ownOpportunity, 'edit'))
+    ) {
+      throw new ConvexError('Edit access required')
     }
 
     // Idempotent: skip if already at target status
@@ -1159,6 +1148,7 @@ export const exportApplications = action({
       ctx.runQuery(internal.emails.adminBroadcast.verifyOrgAdmin, {
         userId: identity.subject,
         opportunityId,
+        level: 'read',
       }),
       ctx.runQuery(internal.opportunityApplications.listForExport, {
         opportunityId,

@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
+import { COURSE_TAGS } from '../../../../../../convex/lib/courses'
 import { OpportunityFormDialog } from '~/components/opportunities/OpportunityFormDialog'
 import { AuthHeader } from '~/components/layout/auth-header'
 import { Card } from '~/components/ui/card'
@@ -85,13 +86,7 @@ const STATUS_ORDER: Record<string, number> = { active: 0, draft: 1, closed: 2 }
 // Tags that say which course an opportunity belongs to. Every opportunity has
 // at most one, so the filter picks one at a time; they also set the order of
 // their own row of chips.
-const TYPE_TAGS = [
-  'TAIS Course',
-  'TAIS Projects',
-  'Governance',
-  'AGI Strategy',
-  'Biosecurity',
-]
+const TYPE_TAGS: ReadonlyArray<string> = COURSE_TAGS
 
 // Preferred display order for the rest of the tag chips. Tags not listed here
 // fall after these, sorted alphabetically.
@@ -134,11 +129,16 @@ function AdminOpportunitiesPage() {
     api.orgs.membership.getMembership,
     org ? { orgId: org._id } : 'skip',
   )
+  // Admins see every opportunity; members with course access, theirs.
+  const access = useQuery(
+    api.courseAccess.myAccess,
+    org ? { orgId: org._id } : 'skip',
+  )
+  const isAdmin = access?.isAdmin ?? false
+  const canView = isAdmin || (access?.courses.length ?? 0) > 0
   const opportunities = useQuery(
     api.orgOpportunities.listAllByOrg,
-    org && membership?.role === 'admin'
-      ? { orgId: org._id, includeArchived: true }
-      : 'skip',
+    org && canView ? { orgId: org._id, includeArchived: true } : 'skip',
   )
 
   const navigate = useNavigate()
@@ -247,7 +247,11 @@ function AdminOpportunitiesPage() {
     })
 
   // Loading
-  if (org === undefined || membership === undefined) {
+  if (
+    org === undefined ||
+    membership === undefined ||
+    (org && membership && access === undefined)
+  ) {
     return (
       <div className="min-h-screen" style={dotGridStyle}>
         <AuthHeader />
@@ -276,7 +280,7 @@ function AdminOpportunitiesPage() {
     )
   }
 
-  if (!membership || membership.role !== 'admin') {
+  if (!membership || !canView) {
     return (
       <div className="min-h-screen" style={dotGridStyle}>
         <AuthHeader />
@@ -325,10 +329,12 @@ function AdminOpportunitiesPage() {
                 forms
               </p>
             </div>
-            <Button onClick={() => setDialogOpen(true)}>
-              <Plus className="size-4 mr-2" />
-              New Opportunity
-            </Button>
+            {isAdmin && (
+              <Button onClick={() => setDialogOpen(true)}>
+                <Plus className="size-4 mr-2" />
+                New Opportunity
+              </Button>
+            )}
           </div>
 
           {/* Search · sort · tag filters (only once there are opportunities) */}
@@ -542,53 +548,59 @@ function AdminOpportunitiesPage() {
                           <Link2 className="size-4" />
                         </Button>
 
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          title={
-                            opp.archivedAt
-                              ? 'Unarchive — put it back in the list'
-                              : 'Archive — take it out of the list, nothing is lost'
-                          }
-                          onClick={async () => {
-                            try {
-                              await setArchived({
-                                id: opp._id,
-                                archived: opp.archivedAt === undefined,
-                              })
-                              toast.success(
-                                opp.archivedAt ? 'Unarchived' : 'Archived',
-                              )
-                            } catch {
-                              toast.error("Couldn't archive the opportunity")
-                            }
-                          }}
-                        >
-                          {opp.archivedAt ? (
-                            <ArchiveRestore className="size-4" />
-                          ) : (
-                            <Archive className="size-4" />
-                          )}
-                        </Button>
+                        {isAdmin && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title={
+                                opp.archivedAt
+                                  ? 'Unarchive — put it back in the list'
+                                  : 'Archive — take it out of the list, nothing is lost'
+                              }
+                              onClick={async () => {
+                                try {
+                                  await setArchived({
+                                    id: opp._id,
+                                    archived: opp.archivedAt === undefined,
+                                  })
+                                  toast.success(
+                                    opp.archivedAt ? 'Unarchived' : 'Archived',
+                                  )
+                                } catch {
+                                  toast.error(
+                                    "Couldn't archive the opportunity",
+                                  )
+                                }
+                              }}
+                            >
+                              {opp.archivedAt ? (
+                                <ArchiveRestore className="size-4" />
+                              ) : (
+                                <Archive className="size-4" />
+                              )}
+                            </Button>
 
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          title="Duplicate — copies the setup into a new draft"
-                          disabled={duplicatingId === opp._id}
-                          onClick={() =>
-                            setConfirmDuplicate({
-                              id: opp._id,
-                              title: opp.title,
-                            })
-                          }
-                        >
-                          {duplicatingId === opp._id ? (
-                            <Loader2 className="size-4 animate-spin" />
-                          ) : (
-                            <Copy className="size-4" />
-                          )}
-                        </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="Duplicate — copies the setup into a new draft"
+                              disabled={duplicatingId === opp._id}
+                              onClick={() =>
+                                setConfirmDuplicate({
+                                  id: opp._id,
+                                  title: opp.title,
+                                })
+                              }
+                            >
+                              {duplicatingId === opp._id ? (
+                                <Loader2 className="size-4 animate-spin" />
+                              ) : (
+                                <Copy className="size-4" />
+                              )}
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </div>
                   </Card>

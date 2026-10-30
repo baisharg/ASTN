@@ -48,6 +48,7 @@ import { Route as OrgSlugAdminIndexRouteImport } from './routes/org/$slug/admin/
 import { Route as OrgSlugAdminBookingsRouteImport } from './routes/org/$slug/admin/bookings'
 import { Route as OrgSlugAdminFormsRouteImport } from './routes/org/$slug/admin/forms'
 import { Route as OrgSlugAdminGuestsRouteImport } from './routes/org/$slug/admin/guests'
+import { Route as OrgSlugAdminPermissionsRouteImport } from './routes/org/$slug/admin/permissions'
 import { Route as OrgSlugAdminSettingsRouteImport } from './routes/org/$slug/admin/settings'
 import { Route as OrgSlugAdminSetupRouteImport } from './routes/org/$slug/admin/setup'
 import { Route as OrgSlugAdminSpaceRouteImport } from './routes/org/$slug/admin/space'
@@ -276,6 +277,11 @@ const OrgSlugAdminFormsRoute = OrgSlugAdminFormsRouteImport.update({
 const OrgSlugAdminGuestsRoute = OrgSlugAdminGuestsRouteImport.update({
   id: '/guests',
   path: '/guests',
+  getParentRoute: () => OrgSlugAdminRouteRoute,
+} as any)
+const OrgSlugAdminPermissionsRoute = OrgSlugAdminPermissionsRouteImport.update({
+  id: '/permissions',
+  path: '/permissions',
   getParentRoute: () => OrgSlugAdminRouteRoute,
 } as any)
 const OrgSlugAdminSettingsRoute = OrgSlugAdminSettingsRouteImport.update({
@@ -508,6 +514,7 @@ export interface FileRoutesByFullPath {
   '/org/$slug/admin/bookings': typeof OrgSlugAdminBookingsRoute
   '/org/$slug/admin/forms': typeof OrgSlugAdminFormsRoute
   '/org/$slug/admin/guests': typeof OrgSlugAdminGuestsRoute
+  '/org/$slug/admin/permissions': typeof OrgSlugAdminPermissionsRoute
   '/org/$slug/admin/settings': typeof OrgSlugAdminSettingsRoute
   '/org/$slug/admin/setup': typeof OrgSlugAdminSetupRoute
   '/org/$slug/admin/space': typeof OrgSlugAdminSpaceRoute
@@ -575,6 +582,7 @@ export interface FileRoutesByTo {
   '/org/$slug/admin/bookings': typeof OrgSlugAdminBookingsRoute
   '/org/$slug/admin/forms': typeof OrgSlugAdminFormsRoute
   '/org/$slug/admin/guests': typeof OrgSlugAdminGuestsRoute
+  '/org/$slug/admin/permissions': typeof OrgSlugAdminPermissionsRoute
   '/org/$slug/admin/settings': typeof OrgSlugAdminSettingsRoute
   '/org/$slug/admin/setup': typeof OrgSlugAdminSetupRoute
   '/org/$slug/admin/space': typeof OrgSlugAdminSpaceRoute
@@ -650,6 +658,7 @@ export interface FileRoutesById {
   '/org/$slug/admin/bookings': typeof OrgSlugAdminBookingsRoute
   '/org/$slug/admin/forms': typeof OrgSlugAdminFormsRoute
   '/org/$slug/admin/guests': typeof OrgSlugAdminGuestsRoute
+  '/org/$slug/admin/permissions': typeof OrgSlugAdminPermissionsRoute
   '/org/$slug/admin/settings': typeof OrgSlugAdminSettingsRoute
   '/org/$slug/admin/setup': typeof OrgSlugAdminSetupRoute
   '/org/$slug/admin/space': typeof OrgSlugAdminSpaceRoute
@@ -726,6 +735,7 @@ export interface FileRouteTypes {
     | '/org/$slug/admin/bookings'
     | '/org/$slug/admin/forms'
     | '/org/$slug/admin/guests'
+    | '/org/$slug/admin/permissions'
     | '/org/$slug/admin/settings'
     | '/org/$slug/admin/setup'
     | '/org/$slug/admin/space'
@@ -793,6 +803,7 @@ export interface FileRouteTypes {
     | '/org/$slug/admin/bookings'
     | '/org/$slug/admin/forms'
     | '/org/$slug/admin/guests'
+    | '/org/$slug/admin/permissions'
     | '/org/$slug/admin/settings'
     | '/org/$slug/admin/setup'
     | '/org/$slug/admin/space'
@@ -867,6 +878,7 @@ export interface FileRouteTypes {
     | '/org/$slug/admin/bookings'
     | '/org/$slug/admin/forms'
     | '/org/$slug/admin/guests'
+    | '/org/$slug/admin/permissions'
     | '/org/$slug/admin/settings'
     | '/org/$slug/admin/setup'
     | '/org/$slug/admin/space'
@@ -1211,6 +1223,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrgSlugAdminGuestsRouteImport
       parentRoute: typeof OrgSlugAdminRouteRoute
     }
+    '/org/$slug/admin/permissions': {
+      id: '/org/$slug/admin/permissions'
+      path: '/permissions'
+      fullPath: '/org/$slug/admin/permissions'
+      preLoaderRoute: typeof OrgSlugAdminPermissionsRouteImport
+      parentRoute: typeof OrgSlugAdminRouteRoute
+    }
     '/org/$slug/admin/settings': {
       id: '/org/$slug/admin/settings'
       path: '/settings'
@@ -1527,6 +1546,7 @@ interface OrgSlugAdminRouteRouteChildren {
   OrgSlugAdminBookingsRoute: typeof OrgSlugAdminBookingsRoute
   OrgSlugAdminFormsRoute: typeof OrgSlugAdminFormsRoute
   OrgSlugAdminGuestsRoute: typeof OrgSlugAdminGuestsRoute
+  OrgSlugAdminPermissionsRoute: typeof OrgSlugAdminPermissionsRoute
   OrgSlugAdminSettingsRoute: typeof OrgSlugAdminSettingsRoute
   OrgSlugAdminSetupRoute: typeof OrgSlugAdminSetupRoute
   OrgSlugAdminSpaceRoute: typeof OrgSlugAdminSpaceRoute
@@ -1552,6 +1572,7 @@ const OrgSlugAdminRouteRouteChildren: OrgSlugAdminRouteRouteChildren = {
   OrgSlugAdminBookingsRoute: OrgSlugAdminBookingsRoute,
   OrgSlugAdminFormsRoute: OrgSlugAdminFormsRoute,
   OrgSlugAdminGuestsRoute: OrgSlugAdminGuestsRoute,
+  OrgSlugAdminPermissionsRoute: OrgSlugAdminPermissionsRoute,
   OrgSlugAdminSettingsRoute: OrgSlugAdminSettingsRoute,
   OrgSlugAdminSetupRoute: OrgSlugAdminSetupRoute,
   OrgSlugAdminSpaceRoute: OrgSlugAdminSpaceRoute,

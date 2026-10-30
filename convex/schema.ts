@@ -1942,6 +1942,19 @@ export default defineSchema({
   // a library you load from and save to, rather than copying an old course's
   // form. Loading a template copies its questions — the two are not linked
   // afterwards, so editing one never rewrites the other.
+  // Per-course access for team members who are not org admins (see
+  // convex/lib/courseAccess.ts). `course` is one of COURSE_TAGS.
+  courseAccess: defineTable({
+    orgId: v.id('organizations'),
+    userId: v.string(),
+    course: v.string(),
+    level: v.union(v.literal('read'), v.literal('edit')),
+    grantedBy: v.string(),
+    grantedAt: v.number(),
+  })
+    .index('by_org_and_user', ['orgId', 'userId'])
+    .index('by_org_and_course', ['orgId', 'course']),
+
   // The org's canonical application forms: one for course editions, one for
   // expressions of interest. Every new opportunity copies the one for its
   // kind (see convex/canonicalForms.ts). Edited only from the web admin,

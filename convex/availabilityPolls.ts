@@ -3,7 +3,12 @@ import { action, internalQuery, mutation, query } from './_generated/server'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import type { Doc, Id } from './_generated/dataModel'
 import { internal } from './_generated/api'
-import { getUserId, requireOrgAdmin } from './lib/auth'
+import { getUserId } from './lib/auth'
+import {
+  canAccessOpportunity,
+  getOrgAccess,
+  requireOpportunityAccess,
+} from './lib/courseAccess'
 import {
   resolveApplicantDisplayNameByApplicationId,
   resolveApplicantDisplayNameFromApplication,
@@ -386,14 +391,9 @@ export const createPoll = mutation({
     const opportunity = await ctx.db.get('orgOpportunities', args.opportunityId)
     if (!opportunity) throw new ConvexError('Opportunity not found')
 
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_org_role', (q) =>
-        q.eq('orgId', opportunity.orgId).eq('role', 'admin'),
-      )
-      .collect()
-    if (!membership.some((m) => m.userId === userId))
-      throw new ConvexError('Admin access required')
+    const access = await getOrgAccess(ctx, userId, opportunity.orgId)
+    if (!canAccessOpportunity(access, opportunity, 'edit'))
+      throw new ConvexError('Edit access required')
 
     return await createPollFor(ctx, {
       ...args,
@@ -414,14 +414,16 @@ export const backfillRespondents = mutation({
     if (!poll) throw new ConvexError('Poll not found')
 
     // Verify admin
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_org_role', (q) =>
-        q.eq('orgId', poll.orgId).eq('role', 'admin'),
-      )
-      .collect()
-    const isAdmin = membership.some((m) => m.userId === userId)
-    if (!isAdmin) throw new ConvexError('Admin access required')
+    const pollOpportunity = await ctx.db.get(
+      'orgOpportunities',
+      poll.opportunityId,
+    )
+    const access = await getOrgAccess(ctx, userId, poll.orgId)
+    if (
+      !pollOpportunity ||
+      !canAccessOpportunity(access, pollOpportunity, 'edit')
+    )
+      throw new ConvexError('Edit access required')
 
     // Collect existing applicationIds so we can skip duplicates
     const existingRespondents = await ctx.db
@@ -479,14 +481,16 @@ export const updatePoll = mutation({
     if (!poll) throw new ConvexError('Poll not found')
 
     // Verify admin
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_org_role', (q) =>
-        q.eq('orgId', poll.orgId).eq('role', 'admin'),
-      )
-      .collect()
-    const isAdmin = membership.some((m) => m.userId === userId)
-    if (!isAdmin) throw new ConvexError('Admin access required')
+    const pollOpportunity = await ctx.db.get(
+      'orgOpportunities',
+      poll.opportunityId,
+    )
+    const access = await getOrgAccess(ctx, userId, poll.orgId)
+    if (
+      !pollOpportunity ||
+      !canAccessOpportunity(access, pollOpportunity, 'edit')
+    )
+      throw new ConvexError('Edit access required')
 
     await ctx.db.patch('availabilityPolls', pollId, {
       ...updates,
@@ -507,14 +511,16 @@ export const deletePoll = mutation({
     if (!poll) throw new ConvexError('Poll not found')
 
     // Verify admin
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_org_role', (q) =>
-        q.eq('orgId', poll.orgId).eq('role', 'admin'),
-      )
-      .collect()
-    const isAdmin = membership.some((m) => m.userId === userId)
-    if (!isAdmin) throw new ConvexError('Admin access required')
+    const pollOpportunity = await ctx.db.get(
+      'orgOpportunities',
+      poll.opportunityId,
+    )
+    const access = await getOrgAccess(ctx, userId, poll.orgId)
+    if (
+      !pollOpportunity ||
+      !canAccessOpportunity(access, pollOpportunity, 'edit')
+    )
+      throw new ConvexError('Edit access required')
 
     // Delete all responses first
     const responses = await ctx.db
@@ -557,14 +563,16 @@ export const finalizePoll = mutation({
     if (!poll) throw new ConvexError('Poll not found')
 
     // Verify admin
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_org_role', (q) =>
-        q.eq('orgId', poll.orgId).eq('role', 'admin'),
-      )
-      .collect()
-    const isAdmin = membership.some((m) => m.userId === userId)
-    if (!isAdmin) throw new ConvexError('Admin access required')
+    const pollOpportunity = await ctx.db.get(
+      'orgOpportunities',
+      poll.opportunityId,
+    )
+    const access = await getOrgAccess(ctx, userId, poll.orgId)
+    if (
+      !pollOpportunity ||
+      !canAccessOpportunity(access, pollOpportunity, 'edit')
+    )
+      throw new ConvexError('Edit access required')
 
     const now = Date.now()
     await ctx.db.patch('availabilityPolls', pollId, {
@@ -600,9 +608,14 @@ export const getPollResults = query({
   handler: async (ctx, { pollId }) => {
     const poll = await ctx.db.get('availabilityPolls', pollId)
     if (!poll) throw new ConvexError('Poll not found')
-    // Everyone's names and availability: admins only (this query had no
-    // check before 2026-10-30).
-    await requireOrgAdmin(ctx, poll.orgId)
+    // Everyone's names and availability: admins and course readers only
+    // (this query had no check before 2026-10-30).
+    const pollOpportunity = await ctx.db.get(
+      'orgOpportunities',
+      poll.opportunityId,
+    )
+    if (!pollOpportunity) throw new ConvexError('Poll not found')
+    await requireOpportunityAccess(ctx, pollOpportunity, 'read')
 
     const responses = await ctx.db
       .query('availabilityResponses')
@@ -651,14 +664,16 @@ export const getExportData = internalQuery({
     const poll = await ctx.db.get('availabilityPolls', pollId)
     if (!poll) throw new ConvexError('Poll not found')
 
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_org_role', (q) =>
-        q.eq('orgId', poll.orgId).eq('role', 'admin'),
-      )
-      .collect()
-    const isAdmin = membership.some((m) => m.userId === userId)
-    if (!isAdmin) throw new ConvexError('Admin access required')
+    const pollOpportunity = await ctx.db.get(
+      'orgOpportunities',
+      poll.opportunityId,
+    )
+    const access = await getOrgAccess(ctx, userId, poll.orgId)
+    if (
+      !pollOpportunity ||
+      !canAccessOpportunity(access, pollOpportunity, 'read')
+    )
+      throw new ConvexError('Admin access required')
 
     const responses = await ctx.db
       .query('availabilityResponses')
@@ -906,11 +921,16 @@ export const getRespondentLinks = query({
     }),
   ),
   handler: async (ctx, { pollId }) => {
-    // Personal links let anyone answer as that person: admins only (this
-    // query had no check before 2026-10-30).
+    // Personal links let anyone answer as that person: admins and course
+    // editors only (this query had no check before 2026-10-30).
     const poll = await ctx.db.get('availabilityPolls', pollId)
     if (!poll) return []
-    await requireOrgAdmin(ctx, poll.orgId)
+    const pollOpportunity = await ctx.db.get(
+      'orgOpportunities',
+      poll.opportunityId,
+    )
+    if (!pollOpportunity) return []
+    await requireOpportunityAccess(ctx, pollOpportunity, 'edit')
     const respondents = await ctx.db
       .query('pollRespondents')
       .withIndex('by_poll', (q) => q.eq('pollId', pollId))

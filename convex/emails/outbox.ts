@@ -6,8 +6,9 @@ import {
   query,
 } from '../_generated/server'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
-import type { Doc } from '../_generated/dataModel'
-import { getUserId, requireOrgAdminFor } from '../lib/auth'
+import type { Doc, Id } from '../_generated/dataModel'
+import { requireOpportunityAccess } from '../lib/courseAccess'
+import type { AccessLevel } from '../lib/courseAccess'
 import { resolveApplicantContact } from '../lib/applicantContact'
 import type { FormField } from '../lib/formFields'
 import { resend } from './send'
@@ -424,14 +425,15 @@ export const backfillDraftsForKind = internalMutation({
 
 // ── Admin queries/mutations (Emails tab) ────────────────────────────────────
 
-async function requireAdmin(
+// Admins, or members with access to the opportunity's course.
+async function requireAccess(
   ctx: QueryCtx | MutationCtx,
-  orgId: Doc<'organizations'>['_id'],
+  opportunityId: Id<'orgOpportunities'>,
+  level: AccessLevel,
 ): Promise<string> {
-  const userId = await getUserId(ctx)
-  if (!userId) throw new ConvexError('Not authenticated')
-  await requireOrgAdminFor(ctx, userId, orgId)
-  return userId
+  const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+  if (!opportunity) throw new ConvexError('Opportunity not found')
+  return await requireOpportunityAccess(ctx, opportunity, level)
 }
 
 // Pending drafts of an opportunity with resolved recipients. Drafts without a
@@ -461,7 +463,7 @@ export const listForOpportunity = query({
   handler: async (ctx, { opportunityId }) => {
     const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
     if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireAdmin(ctx, opportunity.orgId)
+    await requireAccess(ctx, opportunity._id, 'read')
 
     const formFields = opportunity.formFields as Array<FormField> | undefined
     const drafts = await ctx.db
@@ -533,7 +535,7 @@ export const updateDraft = mutation({
   ) => {
     const draft = await ctx.db.get('emailOutbox', draftId)
     if (!draft) throw new ConvexError('Draft not found')
-    await requireAdmin(ctx, draft.orgId)
+    await requireAccess(ctx, draft.opportunityId, 'edit')
 
     // Once touched by hand, a draft stops tracking its template.
     const patch: Record<string, unknown> = {
@@ -569,7 +571,7 @@ export const resetDraftToTemplate = mutation({
   handler: async (ctx, { draftId }) => {
     const draft = await ctx.db.get('emailOutbox', draftId)
     if (!draft) throw new ConvexError('Draft not found')
-    await requireAdmin(ctx, draft.orgId)
+    await requireAccess(ctx, draft.opportunityId, 'edit')
 
     const opportunity = await ctx.db.get(
       'orgOpportunities',
@@ -610,7 +612,7 @@ export const setRecipientEmail = mutation({
   handler: async (ctx, { draftId, email }) => {
     const draft = await ctx.db.get('emailOutbox', draftId)
     if (!draft) throw new ConvexError('Draft not found')
-    await requireAdmin(ctx, draft.orgId)
+    await requireAccess(ctx, draft.opportunityId, 'edit')
 
     const trimmed = email.trim()
     // Deliberately loose: catching a real typo is impossible, and a stricter
@@ -631,7 +633,7 @@ export const deleteDraft = mutation({
   handler: async (ctx, { draftId }) => {
     const draft = await ctx.db.get('emailOutbox', draftId)
     if (!draft) return null
-    await requireAdmin(ctx, draft.orgId)
+    await requireAccess(ctx, draft.opportunityId, 'edit')
     await ctx.db.delete('emailOutbox', draftId)
     return null
   },
@@ -1091,7 +1093,7 @@ export const listLogForOpportunity = query({
   handler: async (ctx, { opportunityId }) => {
     const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
     if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireAdmin(ctx, opportunity.orgId)
+    await requireAccess(ctx, opportunity._id, 'read')
 
     const rows = await ctx.db
       .query('emailLog')

@@ -14,6 +14,12 @@ import {
   type BaishCourseOpportunityContract,
 } from './lib/baishCourseOpportunities'
 import { getUserId, requireOrgAdmin } from './lib/auth'
+import {
+  canAccessOpportunity,
+  getOrgAccess,
+  hasOpportunityAccess,
+  requireOpportunityAccess,
+} from './lib/courseAccess'
 import { sanitizeFormFieldKeys } from './lib/formFields'
 import {
   cleanAdminForm,
@@ -186,16 +192,7 @@ export const get = query({
     if (opp.status === 'active') return opp
 
     // Draft/closed require org admin
-    const userId = await getUserId(ctx)
-    if (!userId) return null
-
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .filter((q) => q.eq(q.field('orgId'), opp.orgId))
-      .first()
-
-    if (!membership || membership.role !== 'admin') return null
+    if (!(await hasOpportunityAccess(ctx, opp, 'read'))) return null
     return opp
   },
 })
@@ -228,14 +225,7 @@ export const getByKey = query({
     if (!opp || opp.orgId !== org._id) return null
     if (opp.status === 'active') return opp
 
-    const userId = await getUserId(ctx)
-    if (!userId) return null
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .filter((q) => q.eq(q.field('orgId'), opp.orgId))
-      .first()
-    if (!membership || membership.role !== 'admin') return null
+    if (!(await hasOpportunityAccess(ctx, opp, 'read'))) return null
     return opp
   },
 })
@@ -365,16 +355,7 @@ async function resolveRedirect(
     return { kind: 'direct' as const, opportunity: opp }
   }
 
-  const userId = await getUserId(ctx)
-  if (!userId) return null
-
-  const membership = await ctx.db
-    .query('orgMemberships')
-    .withIndex('by_user', (q) => q.eq('userId', userId))
-    .filter((q) => q.eq(q.field('orgId'), opp.orgId))
-    .first()
-
-  if (!membership || membership.role !== 'admin') return null
+  if (!(await hasOpportunityAccess(ctx, opp, 'read'))) return null
   return { kind: 'direct' as const, opportunity: opp }
 }
 
@@ -448,13 +429,9 @@ export const listAllByOrg = query({
     const userId = await getUserId(ctx)
     if (!userId) throw new ConvexError('Not authenticated')
 
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .filter((q) => q.eq(q.field('orgId'), orgId))
-      .first()
-
-    if (!membership || membership.role !== 'admin') {
+    // Admins see every opportunity; members with course grants see theirs.
+    const access = await getOrgAccess(ctx, userId, orgId)
+    if (!access || (!access.isAdmin && access.courses.size === 0)) {
       throw new ConvexError('Admin access required')
     }
 
@@ -479,7 +456,12 @@ export const listAllByOrg = query({
       .collect()
 
     const all = [...active, ...closed, ...draft]
-    return includeArchived ? all : all.filter((o) => o.archivedAt === undefined)
+    const visible = access.isAdmin
+      ? all
+      : all.filter((o) => canAccessOpportunity(access, o, 'read'))
+    return includeArchived
+      ? visible
+      : visible.filter((o) => o.archivedAt === undefined)
   },
 })
 
@@ -911,15 +893,20 @@ export const update = mutation({
     const opportunity = await ctx.db.get('orgOpportunities', id)
     if (!opportunity) throw new ConvexError('Opportunity not found')
 
-    // Verify admin role
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .filter((q) => q.eq(q.field('orgId'), opportunity.orgId))
-      .first()
-
-    if (!membership || membership.role !== 'admin') {
-      throw new ConvexError('Admin access required')
+    // Admins, or members with edit access to its course. Only admins move
+    // an opportunity between courses, since the tags decide who reaches it.
+    const access = await getOrgAccess(ctx, userId, opportunity.orgId)
+    if (!canAccessOpportunity(access, opportunity, 'edit')) {
+      throw new ConvexError('Edit access required')
+    }
+    // The details form always sends the tags, so only a real change counts.
+    if (
+      updates.tags !== undefined &&
+      !access?.isAdmin &&
+      JSON.stringify(normalizeTags(updates.tags) ?? []) !==
+        JSON.stringify(opportunity.tags ?? [])
+    ) {
+      throw new ConvexError('Only admins can change the tags.')
     }
 
     const [redirect, source] = await Promise.all([
@@ -991,7 +978,7 @@ export const replaceForm = mutation({
   handler: async (ctx, { id, source }) => {
     const opportunity = await ctx.db.get('orgOpportunities', id)
     if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireOrgAdmin(ctx, opportunity.orgId)
+    await requireOpportunityAccess(ctx, opportunity, 'edit')
     await assertNoApplications(ctx, id)
     await ctx.db.patch('orgOpportunities', id, {
       formFields: await copyCanonicalForm(ctx, {
@@ -1017,7 +1004,7 @@ export const saveCustomForm = mutation({
   handler: async (ctx, { id, formFields }) => {
     const opportunity = await ctx.db.get('orgOpportunities', id)
     if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireOrgAdmin(ctx, opportunity.orgId)
+    await requireOpportunityAccess(ctx, opportunity, 'edit')
     if (formSourceOf(opportunity) !== 'custom') {
       throw new ConvexError(
         'This form is a copy of a canonical form: edit the canonical instead.',
