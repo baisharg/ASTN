@@ -27,7 +27,9 @@ export interface FormFieldChangeImpact {
 const inputKeys = (fields: Array<FormField>): Set<string> =>
   new Set(
     (Array.isArray(fields) ? fields : [])
-      .filter((f) => f && f.kind !== 'section_header' && typeof f.key === 'string')
+      .filter(
+        (f) => f && f.kind !== 'section_header' && typeof f.key === 'string',
+      )
       .map((f) => f.key),
   )
 
@@ -59,36 +61,6 @@ export function countAffected(
     if (hit) n++
   }
   return n
-}
-
-/**
- * Impact of replacing an opportunity's application form with `after`.
- * Reads the opportunity's submitted applications, so it is only meaningful
- * inside a query or mutation.
- */
-export async function impactOnApplications(
-  ctx: QueryCtx,
-  opportunityId: Id<'orgOpportunities'>,
-  before: Array<FormField>,
-  after: Array<FormField>,
-): Promise<FormFieldChangeImpact> {
-  const keys = strandedKeys(before, after)
-  if (keys.length === 0) return { strandedKeys: [], affectedResponses: 0 }
-
-  const applications = await ctx.db
-    .query('opportunityApplications')
-    .withIndex('by_opportunity_and_status', (q) =>
-      q.eq('opportunityId', opportunityId),
-    )
-    .collect()
-
-  return {
-    strandedKeys: keys,
-    affectedResponses: countAffected(
-      keys,
-      applications.map((a) => a.responses),
-    ),
-  }
 }
 
 /**
