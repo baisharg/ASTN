@@ -145,14 +145,53 @@ export function AvailabilityHeatmap({
     return map
   }, [days, timeSlots, responses, totalRespondents, allRespondentNames])
 
-  // Track hovered cell for tooltip
+  // People picked to compare: when any, cells show how many of them can
+  // make it, and the slots where all of them can are outlined.
+  const [focus, setFocus] = useState<Set<string>>(new Set())
+  const focusedResponses = useMemo(
+    () =>
+      focus.size === 0
+        ? responses
+        : responses.filter((r) => focus.has(r.respondentName)),
+    [responses, focus],
+  )
+  const focusMap = useMemo(() => {
+    if (focus.size === 0) return cellDataMap
+    const names = focusedResponses.map((r) => r.respondentName)
+    const map = new Map<string, CellData>()
+    for (const key of cellDataMap.keys()) {
+      map.set(
+        key,
+        aggregateCell(key, focusedResponses, focusedResponses.length, names),
+      )
+    }
+    return map
+  }, [focus, focusedResponses, cellDataMap])
+
+  const toggleFocus = (name: string) =>
+    setFocus((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+
+  // Track hovered cell for tooltip (mouse only)
   const [hoveredCell, setHoveredCell] = useState<{
     key: string
     x: number
     y: number
   } | null>(null)
+  // The cell last clicked or tapped: its people are listed under the grid,
+  // which is how a phone, with no hover, sees who coincides.
+  const [inspected, setInspected] = useState<{
+    key: string
+    day: number
+    slot: number
+  } | null>(null)
 
-  const hoveredData = hoveredCell ? cellDataMap.get(hoveredCell.key) : null
+  const hoveredData = hoveredCell ? focusMap.get(hoveredCell.key) : null
+  const inspectedData = inspected ? focusMap.get(inspected.key) : null
 
   function isSelected(day: number, slotStart: number): boolean {
     if (!selectedSlot) return false
@@ -168,8 +207,45 @@ export function AvailabilityHeatmap({
     <div className="space-y-3">
       {/* Summary bar */}
       <div className="text-sm text-slate-600">
-        {responses.length} of {totalRespondents} responded
+        {responses.length} of {totalRespondents} responded. Each cell shows how
+        many can make it; tap or click one to see who.
       </div>
+
+      {/* Compare specific people */}
+      {responses.length > 1 && (
+        <div className="space-y-1">
+          <p className="text-xs text-slate-500">
+            Pick people to see when they coincide:
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {allRespondentNames.map((name) => (
+              <button
+                key={name}
+                type="button"
+                onClick={() => toggleFocus(name)}
+                aria-pressed={focus.has(name)}
+                className={[
+                  'rounded-full border px-2.5 py-1 text-xs transition-colors',
+                  focus.has(name)
+                    ? 'border-green-700 bg-green-700 text-white'
+                    : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50',
+                ].join(' ')}
+              >
+                {name}
+              </button>
+            ))}
+            {focus.size > 0 && (
+              <button
+                type="button"
+                onClick={() => setFocus(new Set())}
+                className="px-2 py-1 text-xs text-slate-500 underline"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Scrollable grid */}
       <div className="overflow-x-auto border rounded-lg">
@@ -198,7 +274,11 @@ export function AvailabilityHeatmap({
 
                 {days.map((day) => {
                   const key = slotKey(day, slot)
-                  const cell = cellDataMap.get(key)!
+                  const cell = focusMap.get(key)!
+                  const everyoneInFocus =
+                    focus.size > 0 &&
+                    cell.available.length + cell.maybe.length ===
+                      focusedResponses.length
                   const selected = isSelected(day, slot)
                   const finalized = isFinalized(day, slot)
 
@@ -214,7 +294,7 @@ export function AvailabilityHeatmap({
                     titleParts.push(`Available: ${cell.available.join(', ')}`)
                   }
                   if (cell.maybe.length > 0) {
-                    titleParts.push(`Maybe: ${cell.maybe.join(', ')}`)
+                    titleParts.push(`If needed: ${cell.maybe.join(', ')}`)
                   }
                   if (cell.unavailable.length > 0) {
                     titleParts.push(
@@ -230,6 +310,12 @@ export function AvailabilityHeatmap({
                         cell.score === 0 ? 'bg-slate-50' : '',
                         onCellClick ? 'cursor-pointer' : '',
                         selected ? 'ring-2 ring-blue-600 ring-inset' : '',
+                        everyoneInFocus && !selected && !finalized
+                          ? 'ring-2 ring-green-800 ring-inset'
+                          : '',
+                        inspected?.key === key && !selected && !finalized
+                          ? 'outline outline-2 -outline-offset-2 outline-slate-700'
+                          : '',
                         finalized
                           ? 'ring-2 ring-blue-600 ring-inset bg-blue-100'
                           : '',
@@ -238,8 +324,13 @@ export function AvailabilityHeatmap({
                         .join(' ')}
                       style={finalized ? {} : bgStyle}
                       title={titleParts.join('\n')}
-                      onClick={() => onCellClick?.(day, slot)}
-                      onMouseEnter={(e) => {
+                      onClick={() => {
+                        setInspected({ key, day, slot })
+                        onCellClick?.(day, slot)
+                      }}
+                      onPointerEnter={(e) => {
+                        // Touch has no hover: a tap opens the list below.
+                        if (e.pointerType !== 'mouse') return
                         const rect = (
                           e.currentTarget as HTMLElement
                         ).getBoundingClientRect()
@@ -249,10 +340,29 @@ export function AvailabilityHeatmap({
                           y: rect.top,
                         })
                       }}
-                      onMouseLeave={() => setHoveredCell(null)}
+                      onPointerLeave={() => setHoveredCell(null)}
                     >
-                      {/* Fixed cell height */}
-                      <div className="h-10 w-full min-w-[80px]" />
+                      {/* Fixed cell height, with the count of who can make it */}
+                      <div className="h-10 w-full min-w-[80px] flex items-center justify-center text-xs tabular-nums">
+                        {!finalized &&
+                          cell.available.length + cell.maybe.length > 0 && (
+                            <span
+                              className={
+                                cell.score > 0.55
+                                  ? 'text-white'
+                                  : 'text-slate-700'
+                              }
+                            >
+                              {cell.available.length}
+                              {cell.maybe.length > 0 && (
+                                <span className="opacity-80">
+                                  {' '}
+                                  +{cell.maybe.length}?
+                                </span>
+                              )}
+                            </span>
+                          )}
+                      </div>
                       {finalized && (
                         <span className="absolute inset-0 flex items-center justify-center text-[10px] font-semibold text-blue-700">
                           Finalized
@@ -266,6 +376,47 @@ export function AvailabilityHeatmap({
           </tbody>
         </table>
       </div>
+
+      <p className="text-xs text-slate-500">
+        &quot;3 +1?&quot; means 3 can make it and 1 more only if needed.
+      </p>
+
+      {/* Who coincides in the cell last tapped or clicked */}
+      {inspected && inspectedData && (
+        <div className="rounded-lg border bg-white px-3 py-2 text-sm space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-medium text-slate-800">
+              {weekdayShort(inspected.day)}{' '}
+              {formatMinutesToTime(inspected.slot)}
+            </span>
+            <button
+              type="button"
+              onClick={() => setInspected(null)}
+              className="text-xs text-slate-500 underline"
+            >
+              Close
+            </button>
+          </div>
+          <div>
+            <span className="font-semibold text-green-700">Available: </span>
+            {inspectedData.available.join(', ') || 'nobody'}
+          </div>
+          {inspectedData.maybe.length > 0 && (
+            <div>
+              <span className="font-semibold text-amber-600">If needed: </span>
+              {inspectedData.maybe.join(', ')}
+            </div>
+          )}
+          {inspectedData.unavailable.length > 0 && (
+            <div>
+              <span className="font-semibold text-slate-500">
+                Not available:{' '}
+              </span>
+              {inspectedData.unavailable.join(', ')}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Hover tooltip overlay */}
       {hoveredCell && hoveredData && (
@@ -285,7 +436,7 @@ export function AvailabilityHeatmap({
           )}
           {hoveredData.maybe.length > 0 && (
             <div className="mb-1">
-              <span className="font-semibold text-amber-600">Maybe: </span>
+              <span className="font-semibold text-amber-600">If needed: </span>
               {hoveredData.maybe.join(', ')}
             </div>
           )}
