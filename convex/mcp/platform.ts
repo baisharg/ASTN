@@ -16,7 +16,7 @@ import {
   opportunityAttachments,
 } from '../orgOpportunities'
 import { createSurveyFor } from '../feedbackSurveys'
-import { createPollFor } from '../availabilityPolls'
+import { DEFAULT_POLL, createPollFor } from '../availabilityPolls'
 
 // Platform data layer for the MCP endpoint (convex/mcp/server.ts). Like
 // convex/mcp/data.ts (the CRM layer), these are internal functions: the HTTP
@@ -1192,11 +1192,12 @@ export const createPoll = internalMutation({
       createdBy: args.userId,
       title: args.title ?? 'Availability',
       timezone: args.timezone ?? 'America/Argentina/Buenos_Aires',
-      // Mon–Sat, 09:00–21:00 in half hours: the shape BAISH polls actually use.
-      days: args.days ?? [0, 1, 2, 3, 4, 5],
-      startMinutes: args.startMinutes ?? 540,
-      endMinutes: args.endMinutes ?? 1260,
-      slotDurationMinutes: args.slotDurationMinutes ?? 30,
+      // Same defaults as every new poll (Mon–Sat, 08:00–22:00, half hours).
+      days: args.days ?? [...DEFAULT_POLL.days],
+      startMinutes: args.startMinutes ?? DEFAULT_POLL.startMinutes,
+      endMinutes: args.endMinutes ?? DEFAULT_POLL.endMinutes,
+      slotDurationMinutes:
+        args.slotDurationMinutes ?? DEFAULT_POLL.slotDurationMinutes,
     })
     const created = await ctx.db.get(id)
     return { id, status: created?.status, accessToken: created?.accessToken }

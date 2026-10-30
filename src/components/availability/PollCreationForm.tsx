@@ -32,7 +32,7 @@ interface PollCreationFormProps {
   onCreated?: () => void
 }
 
-const timeOptions: Array<{ value: number; label: string }> = []
+export const timeOptions: Array<{ value: number; label: string }> = []
 for (let m = 360; m <= 1320; m += 30) {
   const h = Math.floor(m / 60)
   const min = m % 60
@@ -87,8 +87,8 @@ export function PollCreationForm({
 }: PollCreationFormProps) {
   const [title, setTitle] = useState('')
   const [days, setDays] = useState<Array<number>>(DEFAULT_DAYS)
-  const [startTime, setStartTime] = useState(540)
-  const [endTime, setEndTime] = useState(1260)
+  const [startTime, setStartTime] = useState(480)
+  const [endTime, setEndTime] = useState(1320)
   const [slotDuration, setSlotDuration] = useState(30)
   const [timezone, setTimezone] = useState(getDefaultTimezone)
   const [isSubmitting, setIsSubmitting] = useState(false)

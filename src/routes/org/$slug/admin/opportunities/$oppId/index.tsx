@@ -28,6 +28,7 @@ import type { FormSource } from '../../../../../../../convex/canonicalForms'
 import { weekdayShort } from '../../../../../../../convex/lib/availabilityWeek'
 import type { AvailabilityResponse } from '~/components/availability/AvailabilityHeatmap'
 import { AvailabilityHeatmap } from '~/components/availability/AvailabilityHeatmap'
+import { PollHoursEditor } from '~/components/availability/PollHoursEditor'
 import { PollCreationForm } from '~/components/availability/PollCreationForm'
 import { ScheduleAnalysis } from '~/components/availability/ScheduleAnalysis'
 import { DynamicFormRenderer } from '~/components/opportunities/DynamicFormRenderer'
@@ -994,6 +995,15 @@ function AvailabilityTab({
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            <PollHoursEditor
+              key={`${poll._id}-${poll.startMinutes}-${poll.endMinutes}-${poll.days.join()}`}
+              pollId={poll._id}
+              days={poll.days}
+              startMinutes={poll.startMinutes}
+              endMinutes={poll.endMinutes}
+              slotDurationMinutes={poll.slotDurationMinutes}
+            />
+
             {/* Generic link: anyone identifies with name + email */}
             <div className="space-y-2">
               <Label>Generic link</Label>

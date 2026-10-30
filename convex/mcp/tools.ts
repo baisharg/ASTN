@@ -555,7 +555,7 @@ const PLATFORM_FIELD_HINTS: Record<string, string> = {
     'kind while one is draft or open; close the first one, or edit it instead of creating another.',
   polls:
     'create requires: opportunityId. everything else defaults to how BAISH runs them: Mon–Sat ' +
-    '09:00–21:00 in 30-minute slots, Buenos Aires. optional: title, timezone, days (0=Mon…6=Sun), ' +
+    '08:00–22:00 in 30-minute slots, Buenos Aires. optional: title, timezone, days (0=Mon…6=Sun), ' +
     'startMinutes, endMinutes, slotDurationMinutes (15|30|60). Opens immediately and seeds a ' +
     'respondent per applicant. One active poll per opportunity.',
 }

@@ -68,11 +68,12 @@ const responseReturnValidator = v.object({
 })
 
 // Default config for auto-provisioned polls (mirrors PollCreationForm's
-// defaults): generic week Mon–Sat, 9:00–21:00, 30-minute slots.
+// defaults): generic week Mon–Sat, 8:00–22:00, 30-minute slots. The hours
+// and days can be changed later from the poll card.
 export const DEFAULT_POLL = {
   days: [0, 1, 2, 3, 4, 5],
-  startMinutes: 540,
-  endMinutes: 1260,
+  startMinutes: 480,
+  endMinutes: 1320,
   slotDurationMinutes: 30,
   timezone: 'America/Argentina/Buenos_Aires',
 } as const
@@ -472,6 +473,12 @@ export const updatePoll = mutation({
     status: v.optional(
       v.union(v.literal('open'), v.literal('closed'), v.literal('finalized')),
     ),
+    // The grid's hours and days. Answers are keyed by day and start minute,
+    // so changing them keeps every answer: slots outside the new range are
+    // just not shown (and come back if the range grows again).
+    startMinutes: v.optional(v.number()),
+    endMinutes: v.optional(v.number()),
+    days: v.optional(v.array(v.number())),
   },
   returns: v.null(),
   handler: async (ctx, { pollId, ...updates }) => {
@@ -492,6 +499,23 @@ export const updatePoll = mutation({
       !canAccessOpportunity(access, pollOpportunity, 'edit')
     )
       throw new ConvexError('Edit access required')
+
+    const start = updates.startMinutes ?? poll.startMinutes
+    const end = updates.endMinutes ?? poll.endMinutes
+    const step = poll.slotDurationMinutes
+    if (start < 0 || end > 24 * 60 || start >= end) {
+      throw new ConvexError('The poll has to end after it starts.')
+    }
+    if (start % step !== 0 || end % step !== 0) {
+      throw new ConvexError(`Hours must fall on ${step}-minute slots.`)
+    }
+    if (updates.days !== undefined) {
+      const days = [...new Set(updates.days)].sort((a, b) => a - b)
+      if (days.length === 0 || days.some((d) => d < 0 || d > 6)) {
+        throw new ConvexError('Pick at least one day.')
+      }
+      updates.days = days
+    }
 
     await ctx.db.patch('availabilityPolls', pollId, {
       ...updates,
