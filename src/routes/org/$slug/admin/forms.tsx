@@ -6,10 +6,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../convex/_generated/api'
 import type { Id } from '../../../../../convex/_generated/dataModel'
-import {
-  COURSE_PLACEHOLDER,
-  canonicalFormProblems,
-} from '../../../../../convex/lib/formFields'
+import { canonicalFormProblems } from '../../../../../convex/lib/formFields'
 import type { FormField } from '../../../../../convex/lib/formFields'
 import { AuthHeader } from '~/components/layout/auth-header'
 import { FormFieldsEditor } from '~/components/opportunities/FormFieldsEditor'
@@ -183,10 +180,11 @@ function CanonicalFormEditor({
             : 'Expression of interest form'}
         </CardTitle>
         <CardDescription>
-          Write {COURSE_PLACEHOLDER} wherever the course name goes (e.g.
-          &quot;Why are you interested in {COURSE_PLACEHOLDER}?&quot;); each
-          opportunity fills it with its course name. Mark consent checkboxes as
-          consents to show them together in one block.
+          Write {'{{course}}'} wherever the course name goes and {'{{area}}'}{' '}
+          wherever its area goes (e.g. &quot;¿Cómo te involucraste hasta ahora
+          con {'{{area}}'}?&quot;); each opportunity fills them with its course
+          name and area. Mark consent checkboxes as consents to show them
+          together in one block.
           {kind === 'course'
             ? ' The weekly availability grid is added on its own and does not go here.'
             : ' Expressions of interest do not ask for availability.'}

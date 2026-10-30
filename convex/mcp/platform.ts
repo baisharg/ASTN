@@ -132,6 +132,7 @@ export const UPDATE_FIELDS: Record<string, Set<string>> = {
     'featured',
     'tags',
     'courseName',
+    'courseArea',
     // formFields is deliberately absent (since 2026-10-27): an edition's form
     // is a copy of the org's canonical form, made when the opportunity is
     // created, and the canonical is edited by hand from the admin only.
@@ -1088,6 +1089,7 @@ export const createOpportunity = internalMutation({
     tags: v.optional(v.array(v.string())),
     isEOI: v.optional(v.boolean()),
     courseName: v.optional(v.string()),
+    courseArea: v.optional(v.string()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -1106,6 +1108,7 @@ export const createOpportunity = internalMutation({
       tags: args.tags,
       isEOI: args.isEOI,
       courseName: args.courseName,
+      courseArea: args.courseArea,
     })
     const created = await ctx.db.get(id)
     return { id, slug: created?.slug ?? null, status: created?.status }

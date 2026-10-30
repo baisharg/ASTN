@@ -643,6 +643,12 @@ export function createOpportunityTools(
           .describe(
             'Course name that fills {{course}} in the form. The application form itself is a copy of the org canonical form and cannot be set here.',
           ),
+        courseArea: z
+          .string()
+          .optional()
+          .describe(
+            'Area that fills {{area}} in the form, e.g. "la seguridad en IA".',
+          ),
       },
       async (args) => {
         console.log('[tool] create_opportunity', args.title)
@@ -696,6 +702,7 @@ export function createOpportunityTools(
             featured: args.featured ?? false,
             isEOI: args.isEOI,
             courseName: args.courseName,
+            courseArea: args.courseArea,
           })
 
           return {
@@ -1102,6 +1109,7 @@ export function createOpportunityTools(
             // The form comes from the canonical, never from the source.
             isEOI: source.isEOI,
             courseName: source.courseName,
+            courseArea: source.courseArea,
           })
 
           if (args.redirectOldToNew) {

@@ -106,6 +106,7 @@ function OpportunityDetailsForm({
   const [featured, setFeatured] = useState(opportunity.featured)
   const [isEOI, setIsEOI] = useState(opportunity.isEOI ?? false)
   const [courseName, setCourseName] = useState(opportunity.courseName ?? '')
+  const [courseArea, setCourseArea] = useState(opportunity.courseArea ?? '')
   const [redirectOpportunityId, setRedirectOpportunityId] = useState<
     string | null
   >(opportunity.redirectOpportunityId ?? null)
@@ -132,6 +133,7 @@ function OpportunityDetailsForm({
         featured,
         isEOI,
         courseName,
+        courseArea,
         redirectOpportunityId: redirectOpportunityId
           ? (redirectOpportunityId as Id<'orgOpportunities'>)
           : null,
@@ -247,6 +249,19 @@ function OpportunityDetailsForm({
         <p className="text-xs text-muted-foreground">
           Fills {'{{course}}'} in the canonical form. Changing it later only
           affects the form if you replace it with the canonical again.
+        </p>
+      </div>
+
+      <div className="space-y-1">
+        <Label htmlFor="opp-course-area">Area</Label>
+        <Input
+          id="opp-course-area"
+          value={courseArea}
+          onChange={(e) => setCourseArea(e.target.value)}
+          placeholder="e.g. la seguridad en IA"
+        />
+        <p className="text-xs text-muted-foreground">
+          Fills {'{{area}}'} in the canonical form, the same way.
         </p>
       </div>
 

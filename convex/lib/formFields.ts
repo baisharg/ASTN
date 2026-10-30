@@ -340,10 +340,34 @@ export function labelToKey(label: string): string {
 // --- Canonical forms ---
 
 /**
- * Placeholder the canonical forms use for the course an edition belongs to,
- * e.g. "¿Por qué te interesa {{course}}?".
+ * Placeholders the canonical forms use for what changes between courses, e.g.
+ * "¿Por qué te interesa {{course}}?" or "¿Cómo te involucraste con {{area}}?".
+ * Each one is filled from the opportunity field of the same name.
  */
-export const COURSE_PLACEHOLDER = '{{course}}'
+export const FORM_PLACEHOLDERS = [
+  { token: '{{course}}', name: 'course', label: 'course name' },
+  { token: '{{area}}', name: 'area', label: 'area' },
+] as const
+
+export type PlaceholderValues = Partial<
+  Record<(typeof FORM_PLACEHOLDERS)[number]['name'], string>
+>
+
+function fieldTexts(f: FormField): Array<string> {
+  return [f.label, f.description ?? '', f.placeholder ?? '', ...(f.options ?? [])]
+}
+
+/** Labels of the placeholders `fields` use that `values` leaves empty. */
+export function missingPlaceholders(
+  fields: Array<FormField>,
+  values: PlaceholderValues,
+): Array<string> {
+  const texts = fields.flatMap(fieldTexts)
+  return FORM_PLACEHOLDERS.filter(
+    (p) =>
+      !values[p.name]?.trim() && texts.some((t) => t.includes(p.token)),
+  ).map((p) => p.label)
+}
 
 /**
  * Fill the canonical form's placeholders for one edition. Done once, when the
@@ -352,10 +376,13 @@ export const COURSE_PLACEHOLDER = '{{course}}'
  */
 export function fillFormPlaceholders(
   fields: Array<FormField>,
-  values: { course: string },
+  values: PlaceholderValues,
 ): Array<FormField> {
   const fill = (text: string) =>
-    text.split(COURSE_PLACEHOLDER).join(values.course)
+    FORM_PLACEHOLDERS.reduce(
+      (acc, p) => acc.split(p.token).join(values[p.name]?.trim() ?? p.token),
+      text,
+    )
   return fields.map((f) => ({
     ...f,
     label: fill(f.label),

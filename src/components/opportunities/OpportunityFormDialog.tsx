@@ -54,6 +54,7 @@ export function OpportunityFormDialog({
   const [featured, setFeatured] = useState(false)
   const [isEOI, setIsEOI] = useState(false)
   const [courseName, setCourseName] = useState('')
+  const [courseArea, setCourseArea] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -76,6 +77,7 @@ export function OpportunityFormDialog({
         featured,
         isEOI,
         courseName: courseName.trim() || undefined,
+        courseArea: courseArea.trim() || undefined,
       })
       onOpenChange(false)
       void navigate({
@@ -199,6 +201,19 @@ export function OpportunityFormDialog({
             />
             <p className="text-xs text-muted-foreground">
               Fills {'{{course}}'} in the canonical form&apos;s questions.
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <Label htmlFor="opp-course-area">Area</Label>
+            <Input
+              id="opp-course-area"
+              value={courseArea}
+              onChange={(e) => setCourseArea(e.target.value)}
+              placeholder="e.g. la seguridad en IA"
+            />
+            <p className="text-xs text-muted-foreground">
+              Fills {'{{area}}'} in the canonical form&apos;s questions.
             </p>
           </div>
 

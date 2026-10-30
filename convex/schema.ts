@@ -1449,6 +1449,8 @@ export default defineSchema({
     // (e.g. "Technical AI Safety"). Kept so a duplicate or a reset to the
     // canonical fills it the same way.
     courseName: v.optional(v.string()),
+    // Fills {{area}} in the canonical form (e.g. "la seguridad en IA").
+    courseArea: v.optional(v.string()),
     // Email template set this opportunity inherits (issue #20). When set, the
     // outbox system handles decision emails and legacy auto-emails are skipped.
     emailTemplateSetId: v.optional(v.id('emailTemplateSets')),

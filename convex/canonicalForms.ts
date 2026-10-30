@@ -4,10 +4,10 @@ import type { MutationCtx } from './_generated/server'
 import type { Id } from './_generated/dataModel'
 import { requireOrgAdmin } from './lib/auth'
 import {
-  COURSE_PLACEHOLDER,
   assertFormFieldsShape,
   canonicalFormProblems,
   fillFormPlaceholders,
+  missingPlaceholders,
   sanitizeFormFieldKeys,
 } from './lib/formFields'
 import type { FormField } from './lib/formFields'
@@ -90,8 +90,8 @@ export const save = mutation({
 
 /**
  * The form a new opportunity starts with: a copy of the canonical for its
- * kind with {{course}} filled in. Refuses, saying what to do, when that
- * canonical does not exist yet or needs a course name nobody gave.
+ * kind with {{course}} and {{area}} filled in. Refuses, saying what to do,
+ * when that canonical does not exist yet or uses a placeholder nobody filled.
  */
 export async function copyCanonicalForm(
   ctx: MutationCtx,
@@ -99,6 +99,7 @@ export async function copyCanonicalForm(
     orgId: Id<'organizations'>
     isEOI: boolean | undefined
     courseName: string | undefined
+    courseArea: string | undefined
   },
 ): Promise<Array<FormField>> {
   const kind: CanonicalKind = opts.isEOI ? 'eoi' : 'course'
@@ -115,11 +116,12 @@ export async function copyCanonicalForm(
     )
   }
   const fields = canonical.formFields as Array<FormField>
-  const course = opts.courseName?.trim() ?? ''
-  if (!course && JSON.stringify(fields).includes(COURSE_PLACEHOLDER)) {
+  const values = { course: opts.courseName, area: opts.courseArea }
+  const missing = missingPlaceholders(fields, values)
+  if (missing.length > 0) {
     throw new ConvexError(
-      `The canonical form uses ${COURSE_PLACEHOLDER}: fill in the course name.`,
+      `The canonical form needs the ${missing.join(' and ')}: fill ${missing.length > 1 ? 'them' : 'it'} in first.`,
     )
   }
-  return fillFormPlaceholders(fields, { course })
+  return fillFormPlaceholders(fields, values)
 }
