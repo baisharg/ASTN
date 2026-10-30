@@ -24,6 +24,7 @@ import { SidebarAwareWrapper } from '~/components/agent-sidebar/SidebarAwareWrap
 import { MobileShell } from '~/components/layout/mobile-shell'
 import { ErrorDisplay } from '~/components/ErrorDisplay'
 import { isTauri } from '~/lib/platform'
+import { SITE_URL } from '~/lib/site-url'
 import { LazyPostHogProvider } from '~/components/analytics/LazyPostHogProvider'
 
 // Lazy-loaded: identifies the Clerk user in PostHog once they are loaded
@@ -89,7 +90,7 @@ export const Route = createRootRouteWithContext<{
       },
       {
         property: 'og:url',
-        content: 'https://safetytalent.org',
+        content: SITE_URL,
       },
       {
         property: 'og:title',
@@ -102,7 +103,7 @@ export const Route = createRootRouteWithContext<{
       },
       {
         property: 'og:image',
-        content: 'https://safetytalent.org/og-image.png',
+        content: `${SITE_URL}/og-image.png`,
       },
       {
         property: 'og:image:width',
@@ -132,7 +133,7 @@ export const Route = createRootRouteWithContext<{
       },
       {
         name: 'twitter:image',
-        content: 'https://safetytalent.org/og-image.png',
+        content: `${SITE_URL}/og-image.png`,
       },
     ],
     links: [

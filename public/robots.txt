@@ -5,4 +5,4 @@ Disallow: /opportunities/
 Disallow: /matches/
 Disallow: /admin/
 
-Sitemap: https://safetytalent.org/sitemap.xml
+Sitemap: https://app.baish.com.ar/sitemap.xml

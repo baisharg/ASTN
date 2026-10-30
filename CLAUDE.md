@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AI Safety Talent Network (ASTN) - A career command center for AI safety talent. Users maintain profiles and get matched to opportunities. Initial pilot targets BAISH (Buenos Aires AI Safety Hub) with 50-100 profiles. Live at safetytalent.org with ~40 users.
+AI Safety Talent Network (ASTN) - A career command center for AI safety talent. Users maintain profiles and get matched to opportunities. Initial pilot targets BAISH (Buenos Aires AI Safety Hub) with 50-100 profiles. Live at app.baish.com.ar (safetytalent.org redirects there) with ~40 users.
 
 ## Development Commands
 

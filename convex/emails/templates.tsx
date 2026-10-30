@@ -15,6 +15,7 @@ import {
 } from '@react-email/components'
 import { render } from '@react-email/render'
 import { format } from 'date-fns'
+import { appHost, appUrl } from '../lib/siteUrl'
 
 // ASTN brand color (coral accent)
 const CORAL = '#FF6B4A'
@@ -54,7 +55,7 @@ export function MatchAlertEmail({
             {/* Header with Logo */}
             <Section>
               <Img
-                src="https://safetytalent.org/logo.png"
+                src={`${appUrl()}/logo.png`}
                 width="120"
                 height="40"
                 alt="ASTN"
@@ -129,7 +130,7 @@ export function MatchAlertEmail({
             {/* CTA Button */}
             <Section className="text-center">
               <Button
-                href="https://safetytalent.org/matches"
+                href={`${appUrl()}/matches`}
                 className="px-6 py-3 text-white font-semibold rounded-lg"
                 style={{ backgroundColor: CORAL }}
               >
@@ -145,10 +146,7 @@ export function MatchAlertEmail({
               opportunities
             </Text>
             <Text className="text-xs text-gray-400 text-center">
-              <a
-                href="https://safetytalent.org/settings"
-                className="text-gray-400"
-              >
+              <a href={`${appUrl()}/settings`} className="text-gray-400">
                 Manage notification preferences
               </a>
               {unsubscribeUrl && (
@@ -207,7 +205,7 @@ export function WeeklyDigestEmail({
             {/* Header with Logo */}
             <Section>
               <Img
-                src="https://safetytalent.org/logo.png"
+                src={`${appUrl()}/logo.png`}
                 width="120"
                 height="40"
                 alt="ASTN"
@@ -320,14 +318,14 @@ export function WeeklyDigestEmail({
             {/* CTA Buttons */}
             <Section className="text-center">
               <Button
-                href="https://safetytalent.org/matches"
+                href={`${appUrl()}/matches`}
                 className="px-6 py-3 text-white font-semibold rounded-lg mr-2"
                 style={{ backgroundColor: CORAL }}
               >
                 View Matches
               </Button>
               <Button
-                href="https://safetytalent.org/profile"
+                href={`${appUrl()}/profile`}
                 className="px-6 py-3 text-gray-700 font-semibold rounded-lg border border-gray-300 bg-white ml-2"
               >
                 Update Profile
@@ -342,10 +340,7 @@ export function WeeklyDigestEmail({
               opportunities
             </Text>
             <Text className="text-xs text-gray-400 text-center">
-              <a
-                href="https://safetytalent.org/settings"
-                className="text-gray-400"
-              >
+              <a href={`${appUrl()}/settings`} className="text-gray-400">
                 Manage notification preferences
               </a>
               {unsubscribeUrl && (
@@ -432,7 +427,7 @@ export function EventDigestEmail({
             {/* Header with Logo */}
             <Section>
               <Img
-                src="https://safetytalent.org/logo.png"
+                src={`${appUrl()}/logo.png`}
                 width="120"
                 height="40"
                 alt="ASTN"
@@ -509,10 +504,7 @@ export function EventDigestEmail({
               opportunities
             </Text>
             <Text className="text-xs text-gray-400 text-center">
-              <a
-                href="https://safetytalent.org/settings"
-                className="text-gray-400"
-              >
+              <a href={`${appUrl()}/settings`} className="text-gray-400">
                 Manage notification preferences
               </a>
               {unsubscribeUrl && (
@@ -578,7 +570,7 @@ export function DeadlineReminderEmail({
             {/* Header with Logo */}
             <Section>
               <Img
-                src="https://safetytalent.org/logo.png"
+                src={`${appUrl()}/logo.png`}
                 width="120"
                 height="40"
                 alt="ASTN"
@@ -689,7 +681,7 @@ export function DeadlineReminderEmail({
             {/* CTA Button */}
             <Section className="text-center">
               <Button
-                href="https://safetytalent.org/matches"
+                href={`${appUrl()}/matches`}
                 className="px-6 py-3 text-white font-semibold rounded-lg"
                 style={{ backgroundColor: CORAL }}
               >
@@ -705,10 +697,7 @@ export function DeadlineReminderEmail({
               opportunities
             </Text>
             <Text className="text-xs text-gray-400 text-center">
-              <a
-                href="https://safetytalent.org/settings"
-                className="text-gray-400"
-              >
+              <a href={`${appUrl()}/settings`} className="text-gray-400">
                 Manage notification preferences
               </a>
               {unsubscribeUrl && (
@@ -761,7 +750,7 @@ function AdminBroadcastEmail() {
             {/* Header with Logo */}
             <Section>
               <Img
-                src="https://safetytalent.org/logo.png"
+                src={`${appUrl()}/logo.png`}
                 width="120"
                 height="40"
                 alt="ASTN"
@@ -780,8 +769,8 @@ function AdminBroadcastEmail() {
               opportunities
             </Text>
             <Text className="text-xs text-gray-400 text-center">
-              <a href="https://safetytalent.org" className="text-gray-400">
-                safetytalent.org
+              <a href={appUrl()} className="text-gray-400">
+                {appHost()}
               </a>
             </Text>
           </Container>

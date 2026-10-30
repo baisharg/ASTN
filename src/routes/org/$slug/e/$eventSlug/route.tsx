@@ -9,6 +9,7 @@ import type { Id } from '../../../../../../convex/_generated/dataModel'
 import { SocialEventProvider } from '~/components/social/SocialEventContext'
 import { useLiveState } from '~/components/social/live'
 import { LangToggle, SocialLangProvider, useCopy } from '~/lib/social-i18n'
+import { SITE_URL } from '~/lib/site-url'
 
 export const Route = createFileRoute('/org/$slug/e/$eventSlug')({
   loader: async ({ context, params }) => {
@@ -26,7 +27,7 @@ export const Route = createFileRoute('/org/$slug/e/$eventSlug')({
     const description =
       event?.description?.slice(0, 155) ??
       'Registrate y reunite 1:1 con otros asistentes.'
-    const url = `https://safetytalent.org/org/${params.slug}/e/${params.eventSlug}`
+    const url = `${SITE_URL}/org/${params.slug}/e/${params.eventSlug}`
     return {
       meta: [
         { title },

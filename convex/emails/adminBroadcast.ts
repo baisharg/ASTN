@@ -3,9 +3,8 @@ import { internalMutation, internalQuery } from '../_generated/server'
 import { resolveApplicantContact } from '../lib/applicantContact'
 import type { FormField } from '../lib/formFields'
 import { rateLimiter } from '../lib/rateLimiter'
+import { emailFrom } from '../lib/siteUrl'
 import { resend } from './send'
-
-const FROM_ADDRESS = 'ASTN <notifications@safetytalent.org>'
 
 export const applicationStatusValidator = v.union(
   v.literal('submitted'),
@@ -135,7 +134,7 @@ export const sendSingleEmail = internalMutation({
   returns: v.null(),
   handler: async (ctx, { to, subject, html }) => {
     await resend.sendEmail(ctx, {
-      from: FROM_ADDRESS,
+      from: emailFrom(),
       to,
       subject,
       html,

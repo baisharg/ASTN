@@ -13,6 +13,7 @@ import { resolveApplicantContact } from './lib/applicantContact'
 import { rateLimiter } from './lib/rateLimiter'
 import type { FormField } from './lib/formFields'
 import { maybeAutoAcceptFromNextEdition } from './lib/nextEdition'
+import { appUrl } from './lib/siteUrl'
 
 export const slotValueValidator = v.union(
   v.literal('available'),
@@ -1326,7 +1327,7 @@ export const getAvailabilityEmailPayload = internalQuery({
       ctx.db.get('opportunityApplications', respondent.applicationId),
     ])
     if (!opportunity || !org || !application) return null
-    const baseUrl = process.env.SITE_URL ?? 'https://safetytalent.org'
+    const baseUrl = appUrl()
     return {
       applicationId: application._id,
       recipientName: await resolveApplicantDisplayNameFromApplication(
