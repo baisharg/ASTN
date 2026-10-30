@@ -135,6 +135,8 @@ function CourseAccessEditor({
   const grants = useQuery(api.courseAccess.list, { orgId })
   const setAccess = useMutation(api.courseAccess.setAccess)
   const setOwner = useMutation(api.courseAccess.setOwner)
+  const promote = useMutation(api.orgs.admin.promoteToAdmin)
+  const demote = useMutation(api.orgs.admin.demoteToMember)
   const [pickerOpen, setPickerOpen] = useState(false)
   // People added from the picker before they have any course.
   const [added, setAdded] = useState<Array<string>>([])
@@ -143,193 +145,79 @@ function CourseAccessEditor({
     return <Spinner className="size-6 mx-auto" />
   }
 
-  const nameOf = (m: (typeof members)[number]) =>
-    m.profile?.name || m.email || 'Unnamed member'
-  const byUser = new Map(members.map((m) => [m.membership.userId, m]))
-  const admins = members
-    .filter((m) => m.membership.role === 'admin')
-    .sort((a, b) => nameOf(a).localeCompare(nameOf(b)))
+  type Member = (typeof members)[number]
+  const nameOf = (m: Member) => m.profile?.name || m.email || 'Unnamed member'
+  const isAdmin = (m: Member) => m.membership.role === 'admin'
 
-  // One row per person with any course, plus anyone just picked.
-  const rowIds = [
-    ...new Set([...grants.map((g) => g.userId), ...added]),
-  ].filter((id) => byUser.get(id)?.membership.role !== 'admin')
-  const rows = rowIds
-    .map((id) => byUser.get(id))
-    .filter((m): m is (typeof members)[number] => m !== undefined)
+  // The team: every admin, everyone with a course, and anyone just added.
+  const inTable = new Set([...grants.map((g) => g.userId), ...added])
+  const rows = members
+    .filter((m) => isAdmin(m) || inTable.has(m.membership.userId))
+    .sort(
+      (a, b) =>
+        Number(isAdmin(b)) - Number(isAdmin(a)) ||
+        nameOf(a).localeCompare(nameOf(b)),
+    )
+  const candidates = members
+    .filter((m) => !isAdmin(m) && !inTable.has(m.membership.userId))
     .sort((a, b) => nameOf(a).localeCompare(nameOf(b)))
   const levelOf = (userId: string, course: string): Level | typeof NONE =>
     grants.find((g) => g.userId === userId && g.course === course)?.level ??
     NONE
-  const candidates = members
-    .filter(
-      (m) =>
-        m.membership.role !== 'admin' && !rowIds.includes(m.membership.userId),
+
+  const run = async (action: () => Promise<unknown>, success: string) => {
+    try {
+      await action()
+      toast.success(success)
+    } catch (err) {
+      toast.error("Couldn't save", {
+        description:
+          err instanceof ConvexError && typeof err.data === 'string'
+            ? err.data
+            : 'Please try again.',
+      })
+    }
+  }
+
+  const changeScope = (m: Member, all: boolean) => {
+    // Keep the row in view while they have no course yet.
+    if (!all) setAdded((prev) => [...prev, m.membership.userId])
+    void run(
+      () =>
+        all
+          ? promote({ orgId, membershipId: m.membership._id })
+          : demote({ orgId, membershipId: m.membership._id }),
+      all
+        ? `${nameOf(m)} can now open every course.`
+        : `${nameOf(m)} now opens only the courses you choose.`,
     )
-    .sort((a, b) => nameOf(a).localeCompare(nameOf(b)))
+  }
 
-  const fail = (err: unknown) =>
-    toast.error("Couldn't save", {
-      description:
-        err instanceof ConvexError && typeof err.data === 'string'
-          ? err.data
-          : 'Please try again.',
-    })
-
-  const change = async (
-    m: (typeof members)[number],
+  const changeCourse = (
+    m: Member,
     course: string,
     value: Level | typeof NONE,
-  ) => {
-    try {
-      await setAccess({
-        orgId,
-        userId: m.membership.userId,
-        course,
-        level: value === NONE ? null : value,
-      })
-      toast.success(
-        value === NONE
-          ? `${nameOf(m)} can no longer open ${course}.`
-          : `${nameOf(m)} can now ${value === 'edit' ? 'edit' : 'view'} ${course}.`,
-      )
-    } catch (err) {
-      fail(err)
-    }
-  }
-
-  const toggleOwner = async (m: (typeof members)[number], owner: boolean) => {
-    try {
-      await setOwner({ orgId, membershipId: m.membership._id, owner })
-      toast.success(
-        owner
-          ? `${nameOf(m)} is now an owner.`
-          : `${nameOf(m)} is no longer an owner.`,
-      )
-    } catch (err) {
-      fail(err)
-    }
-  }
+  ) =>
+    void run(
+      () =>
+        setAccess({
+          orgId,
+          userId: m.membership.userId,
+          course,
+          level: value === NONE ? null : value,
+        }),
+      value === NONE
+        ? `${nameOf(m)} can no longer open ${course}.`
+        : `${nameOf(m)} can now ${value === 'edit' ? 'edit' : 'view'} ${course}.`,
+    )
 
   return (
-    <>
-      <Card>
-        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-          <div>
-            <CardTitle>Team members</CardTitle>
-            <CardDescription>
-              People who are not admins open only the courses set here.
-            </CardDescription>
-          </div>
-          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-            <PopoverTrigger asChild>
-              <Button size="sm">
-                <UserPlus className="size-4 mr-2" />
-                Add person
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-[320px] p-0" align="end">
-              <Command>
-                <CommandInput placeholder="Search by name or email…" />
-                <CommandList>
-                  <CommandEmpty>No member found.</CommandEmpty>
-                  <CommandGroup>
-                    {candidates.map((m) => (
-                      <CommandItem
-                        key={m.membership._id}
-                        value={`${nameOf(m)} ${m.email ?? ''}`}
-                        onSelect={() => {
-                          setAdded((prev) => [...prev, m.membership.userId])
-                          setPickerOpen(false)
-                        }}
-                      >
-                        <span className="truncate">
-                          {nameOf(m)}
-                          {m.email && (
-                            <span className="text-muted-foreground">
-                              {' '}
-                              · {m.email}
-                            </span>
-                          )}
-                        </span>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                </CommandList>
-              </Command>
-            </PopoverContent>
-          </Popover>
-        </CardHeader>
-        <CardContent>
-          {rows.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No one yet. Add someone to give them a course.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs text-muted-foreground">
-                    <th className="py-2 pr-3 font-medium">Person</th>
-                    {COURSE_TAGS.map((c) => (
-                      <th key={c} className="py-2 px-1 font-medium">
-                        {c}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {rows.map((m) => (
-                    <tr key={m.membership._id}>
-                      <td className="py-2 pr-3 min-w-40">
-                        <div>{nameOf(m)}</div>
-                        {m.email && (
-                          <div className="text-xs text-muted-foreground">
-                            {m.email}
-                          </div>
-                        )}
-                      </td>
-                      {COURSE_TAGS.map((c) => (
-                        <td key={c} className="py-2 px-1">
-                          <Select
-                            value={levelOf(m.membership.userId, c)}
-                            onValueChange={(value) =>
-                              void change(m, c, value as Level | typeof NONE)
-                            }
-                          >
-                            <SelectTrigger
-                              className="h-8 w-24 text-xs"
-                              aria-label={`${nameOf(m)}: ${c}`}
-                            >
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value={NONE}>—</SelectItem>
-                              <SelectItem value="read">View</SelectItem>
-                              <SelectItem value="edit">Edit</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          <p className="text-xs text-muted-foreground mt-3">
-            A course is the opportunity&apos;s course tag (e.g. &quot;TAIS
-            Course&quot;). Opportunities without one are for admins only.
-          </p>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Admins</CardTitle>
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+        <div>
+          <CardTitle>Team</CardTitle>
           <CardDescription>
-            Admins open every course. Owners also manage this page and who is an
-            admin, in{' '}
+            Owners also manage this page and the admin role in{' '}
             <Link
               to="/org/$slug/admin/members"
               params={{ slug }}
@@ -339,32 +227,149 @@ function CourseAccessEditor({
             </Link>
             .
           </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ul className="divide-y text-sm">
-            {admins.map((m) => (
-              <li
-                key={m.membership._id}
-                className="flex items-center justify-between gap-3 py-2"
-              >
-                <span>
-                  {nameOf(m)}
-                  {m.email && (
-                    <span className="text-muted-foreground"> · {m.email}</span>
-                  )}
-                </span>
-                <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                  Owner
-                  <Switch
-                    checked={m.membership.isOwner === true}
-                    onCheckedChange={(checked) => void toggleOwner(m, checked)}
-                  />
-                </label>
-              </li>
-            ))}
-          </ul>
-        </CardContent>
-      </Card>
-    </>
+        </div>
+        <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+          <PopoverTrigger asChild>
+            <Button size="sm">
+              <UserPlus className="size-4 mr-2" />
+              Add person
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[320px] p-0" align="end">
+            <Command>
+              <CommandInput placeholder="Search by name or email…" />
+              <CommandList>
+                <CommandEmpty>No member found.</CommandEmpty>
+                <CommandGroup>
+                  {candidates.map((m) => (
+                    <CommandItem
+                      key={m.membership._id}
+                      value={`${nameOf(m)} ${m.email ?? ''}`}
+                      onSelect={() => {
+                        setAdded((prev) => [...prev, m.membership.userId])
+                        setPickerOpen(false)
+                      }}
+                    >
+                      <span className="truncate">
+                        {nameOf(m)}
+                        {m.email && (
+                          <span className="text-muted-foreground">
+                            {' '}
+                            · {m.email}
+                          </span>
+                        )}
+                      </span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-muted-foreground">
+                <th className="py-2 pr-3 font-medium">Person</th>
+                <th className="py-2 px-1 font-medium">Access</th>
+                {COURSE_TAGS.map((c) => (
+                  <th key={c} className="py-2 px-1 font-medium">
+                    {c}
+                  </th>
+                ))}
+                <th className="py-2 pl-2 font-medium">Owner</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {rows.map((m) => (
+                <tr key={m.membership._id}>
+                  <td className="py-2 pr-3 min-w-40">
+                    <div>{nameOf(m)}</div>
+                    {m.email && (
+                      <div className="text-xs text-muted-foreground">
+                        {m.email}
+                      </div>
+                    )}
+                  </td>
+                  <td className="py-2 px-1">
+                    <Select
+                      value={isAdmin(m) ? 'all' : 'some'}
+                      onValueChange={(value) => changeScope(m, value === 'all')}
+                    >
+                      <SelectTrigger
+                        className="h-8 w-36 text-xs"
+                        aria-label={`${nameOf(m)}: access`}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All courses</SelectItem>
+                        <SelectItem value="some">Chosen courses</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </td>
+                  {COURSE_TAGS.map((c) => (
+                    <td key={c} className="py-2 px-1">
+                      {isAdmin(m) ? (
+                        <span className="text-xs text-muted-foreground">
+                          Edit
+                        </span>
+                      ) : (
+                        <Select
+                          value={levelOf(m.membership.userId, c)}
+                          onValueChange={(value) =>
+                            changeCourse(m, c, value as Level | typeof NONE)
+                          }
+                        >
+                          <SelectTrigger
+                            className="h-8 w-24 text-xs"
+                            aria-label={`${nameOf(m)}: ${c}`}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={NONE}>—</SelectItem>
+                            <SelectItem value="read">View</SelectItem>
+                            <SelectItem value="edit">Edit</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </td>
+                  ))}
+                  <td className="py-2 pl-2">
+                    {isAdmin(m) && (
+                      <Switch
+                        checked={m.membership.isOwner === true}
+                        onCheckedChange={(checked) =>
+                          void run(
+                            () =>
+                              setOwner({
+                                orgId,
+                                membershipId: m.membership._id,
+                                owner: checked,
+                              }),
+                            checked
+                              ? `${nameOf(m)} is now an owner.`
+                              : `${nameOf(m)} is no longer an owner.`,
+                          )
+                        }
+                        aria-label={`${nameOf(m)}: owner`}
+                      />
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-muted-foreground mt-3">
+          A course is the opportunity&apos;s course tag (e.g. &quot;TAIS
+          Course&quot;). Opportunities without one are opened only by people
+          with all courses.
+        </p>
+      </CardContent>
+    </Card>
   )
 }

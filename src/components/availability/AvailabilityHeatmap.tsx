@@ -291,14 +291,14 @@ export function AvailabilityHeatmap({
                   // Build title text for native tooltip
                   const titleParts: Array<string> = []
                   if (cell.available.length > 0) {
-                    titleParts.push(`Available: ${cell.available.join(', ')}`)
+                    titleParts.push(`Disponible: ${cell.available.join(', ')}`)
                   }
                   if (cell.maybe.length > 0) {
-                    titleParts.push(`If needed: ${cell.maybe.join(', ')}`)
+                    titleParts.push(`Si hace falta: ${cell.maybe.join(', ')}`)
                   }
                   if (cell.unavailable.length > 0) {
                     titleParts.push(
-                      `Unavailable: ${cell.unavailable.join(', ')}`,
+                      `No disponible: ${cell.unavailable.join(', ')}`,
                     )
                   }
 
@@ -357,7 +357,7 @@ export function AvailabilityHeatmap({
                               {cell.maybe.length > 0 && (
                                 <span className="opacity-80">
                                   {' '}
-                                  +{cell.maybe.length}?
+                                  +{cell.maybe.length}
                                 </span>
                               )}
                             </span>
@@ -378,7 +378,7 @@ export function AvailabilityHeatmap({
       </div>
 
       <p className="text-xs text-slate-500">
-        &quot;3 +1?&quot; means 3 can make it and 1 more only if needed.
+        &quot;3 +1&quot; = 3 disponibles + 1 si hace falta.
       </p>
 
       {/* Who coincides in the cell last tapped or clicked; sticks to the
@@ -399,19 +399,21 @@ export function AvailabilityHeatmap({
             </button>
           </div>
           <div>
-            <span className="font-semibold text-green-700">Available: </span>
-            {inspectedData.available.join(', ') || 'nobody'}
+            <span className="font-semibold text-green-700">Disponible: </span>
+            {inspectedData.available.join(', ') || '—'}
           </div>
           {inspectedData.maybe.length > 0 && (
             <div>
-              <span className="font-semibold text-amber-600">If needed: </span>
+              <span className="font-semibold text-amber-600">
+                Si hace falta:{' '}
+              </span>
               {inspectedData.maybe.join(', ')}
             </div>
           )}
           {inspectedData.unavailable.length > 0 && (
             <div>
               <span className="font-semibold text-slate-500">
-                Not available:{' '}
+                No disponible:{' '}
               </span>
               {inspectedData.unavailable.join(', ')}
             </div>
@@ -431,20 +433,22 @@ export function AvailabilityHeatmap({
         >
           {hoveredData.available.length > 0 && (
             <div className="mb-1">
-              <span className="font-semibold text-green-700">Available: </span>
+              <span className="font-semibold text-green-700">Disponible: </span>
               {hoveredData.available.join(', ')}
             </div>
           )}
           {hoveredData.maybe.length > 0 && (
             <div className="mb-1">
-              <span className="font-semibold text-amber-600">If needed: </span>
+              <span className="font-semibold text-amber-600">
+                Si hace falta:{' '}
+              </span>
               {hoveredData.maybe.join(', ')}
             </div>
           )}
           {hoveredData.unavailable.length > 0 && (
             <div>
               <span className="font-semibold text-slate-500">
-                Unavailable:{' '}
+                No disponible:{' '}
               </span>
               {hoveredData.unavailable.join(', ')}
             </div>

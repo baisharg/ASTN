@@ -649,7 +649,7 @@ function OpportunityEditPage() {
 
                 {/* Card 2: the application form, read-only */}
                 <fieldset disabled={!canEdit} className="min-w-0">
-                  <ApplicationFormCard opportunity={opportunity} slug={slug} />
+                  <ApplicationFormCard opportunity={opportunity} />
                 </fieldset>
 
                 {/* Card 3: destructive actions, deliberately last. Deleting is
@@ -842,7 +842,7 @@ function AvailabilityTab({
   } | null>(null)
   const [isFinalizingPoll, setIsFinalizingPoll] = useState(false)
   const [isExportingAvailability, setIsExportingAvailability] = useState(false)
-  const [sessionHours, setSessionHours] = useState('')
+  const [sessionHours, setSessionHours] = useState('2.5')
   const [copiedToken, setCopiedToken] = useState<string | null>(null)
   const [allCopied, setAllCopied] = useState(false)
 
@@ -979,6 +979,15 @@ function AvailabilityTab({
                 >
                   {poll.status.charAt(0).toUpperCase() + poll.status.slice(1)}
                 </span>
+                {poll.status !== 'finalized' && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleToggleStatus}
+                  >
+                    {poll.status === 'open' ? 'Close Poll' : 'Reopen Poll'}
+                  </Button>
+                )}
               </div>
             </div>
           </CardHeader>
@@ -993,7 +1002,7 @@ function AvailabilityTab({
             />
 
             {/* Generic link: anyone identifies with name + email */}
-            <div className="space-y-2">
+            <div className="space-y-2 border-t pt-4">
               <Label>Generic link</Label>
               <div className="flex items-center gap-2">
                 <AlertDialog>
@@ -1158,18 +1167,24 @@ function AvailabilityTab({
               )}
             </div>
 
-            {/* Poll controls */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <div className="flex items-center gap-1.5">
+            {/* Export: the session length groups the slots, so the CSV
+                says who can attend a whole session starting at each time */}
+            <div className="space-y-1 border-t pt-4">
+              <Label htmlFor="session-hours">Export to CSV</Label>
+              <div className="flex flex-wrap items-center gap-2">
                 <Input
+                  id="session-hours"
                   type="number"
                   step="0.5"
                   min="0.5"
-                  placeholder="Session hrs"
                   value={sessionHours}
                   onChange={(e) => setSessionHours(e.target.value)}
-                  className="w-28 h-8 text-sm"
+                  className="w-20 h-8 text-sm"
+                  aria-describedby="session-hours-help"
                 />
+                <span className="text-sm text-muted-foreground">
+                  hours per session
+                </span>
                 <Button
                   variant="outline"
                   size="sm"
@@ -1184,69 +1199,52 @@ function AvailabilityTab({
                   Export CSV
                 </Button>
               </div>
-              {poll.status !== 'finalized' && (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleToggleStatus}
-                  >
-                    {poll.status === 'open' ? 'Close Poll' : 'Reopen Poll'}
-                  </Button>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                      >
-                        <Trash2 className="size-4 mr-1" />
-                        Delete Poll
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Delete this poll?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          This will permanently delete the poll and all{' '}
-                          {totalRespondents} response
-                          {totalRespondents !== 1 ? 's' : ''}. This cannot be
-                          undone.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction
-                          onClick={handleDeletePoll}
-                          className="bg-red-600 hover:bg-red-700"
-                        >
-                          Delete
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                  {selectedSlot && (
-                    <Button
-                      size="sm"
-                      onClick={handleFinalize}
-                      disabled={isFinalizingPoll}
-                    >
-                      {isFinalizingPoll ? (
-                        <>
-                          <Loader2 className="size-4 mr-1 animate-spin" />
-                          Finalizing...
-                        </>
-                      ) : (
-                        <>
-                          <Check className="size-4 mr-1" />
-                          Finalize Selected Slot
-                        </>
-                      )}
-                    </Button>
-                  )}
-                </>
-              )}
+              <p
+                id="session-hours-help"
+                className="text-xs text-muted-foreground"
+              >
+                Usually 2.5. The CSV marks who can attend a whole session
+                starting at each time. Leave it empty to export slot by slot.
+              </p>
             </div>
+
+            {/* Deleting is rare and irreversible: last and on its own. */}
+            {poll.status !== 'finalized' && (
+              <div className="flex justify-end border-t pt-4">
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                    >
+                      <Trash2 className="size-4 mr-1" />
+                      Delete Poll
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete this poll?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This will permanently delete the poll and all{' '}
+                        {totalRespondents} response
+                        {totalRespondents !== 1 ? 's' : ''}. This cannot be
+                        undone.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={handleDeletePoll}
+                        className="bg-red-600 hover:bg-red-700"
+                      >
+                        Delete
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+            )}
           </CardContent>
         </Card>
       </fieldset>
@@ -1254,8 +1252,28 @@ function AvailabilityTab({
       {/* Heatmap */}
       {pollResults && (
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
             <CardTitle>Responses</CardTitle>
+            {/* Pick a slot on the heatmap, then fix it as the session time. */}
+            {canEdit && poll.status !== 'finalized' && selectedSlot && (
+              <Button
+                size="sm"
+                onClick={handleFinalize}
+                disabled={isFinalizingPoll}
+              >
+                {isFinalizingPoll ? (
+                  <>
+                    <Loader2 className="size-4 mr-1 animate-spin" />
+                    Finalizing...
+                  </>
+                ) : (
+                  <>
+                    <Check className="size-4 mr-1" />
+                    Finalize Selected Slot
+                  </>
+                )}
+              </Button>
+            )}
           </CardHeader>
           <CardContent>
             <AvailabilityHeatmap
@@ -1378,24 +1396,21 @@ function OpportunityDeleteButton({
   )
 }
 
-/**
- * The edition's application form, read-only: it is a copy of the canonical
- * form made when the opportunity was created. While nobody has applied it can
- * be replaced with the current canonical (after the canonical or the course
- * name changed); after that the form stays as people answered it.
- */
 const FORM_SOURCE_LABELS: Record<FormSource, string> = {
   course: 'Course canonical form',
   eoi: 'Expression of interest canonical form',
   custom: 'Custom form',
 }
 
+/**
+ * The opportunity's application form: a copy of a canonical form (or a custom
+ * one) that can be edited, or replaced with a fresh copy, until someone
+ * applies; after that it stays as people answered it.
+ */
 function ApplicationFormCard({
   opportunity,
-  slug,
 }: {
   opportunity: Doc<'orgOpportunities'>
-  slug: string
 }) {
   const applicationCount = useQuery(
     api.opportunityApplications.getApplicationCount,
@@ -1470,26 +1485,6 @@ function ApplicationFormCard({
     <Card>
       <CardHeader>
         <CardTitle>Application Form</CardTitle>
-        <CardDescription>
-          {source === 'custom' ? (
-            <>A custom form, not based on a canonical one.</>
-          ) : (
-            <>
-              Started from the {FORM_SOURCE_LABELS[source].toLowerCase()} (
-              <Link
-                to="/org/$slug/admin/forms"
-                params={{ slug }}
-                className="underline"
-              >
-                Canonical forms
-              </Link>
-              ).
-            </>
-          )}{' '}
-          {locked
-            ? 'People already applied, so the questions stay as they answered them.'
-            : 'You can add or change questions for this opportunity until someone applies.'}
-        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">

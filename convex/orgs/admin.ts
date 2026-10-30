@@ -1,4 +1,4 @@
-import { v } from 'convex/values'
+import { ConvexError, v } from 'convex/values'
 import { mutation, query } from '../_generated/server'
 import { getUserId } from '../lib/auth'
 import {
@@ -120,6 +120,19 @@ export const demoteToMember = mutation({
     // Verify the membership is for this org
     if (targetMembership.orgId !== orgId) {
       throw new Error('Membership is not for this organization')
+    }
+
+    // The org always keeps an owner: the last one can't stop being admin
+    if (targetMembership.isOwner === true) {
+      const owners = (
+        await ctx.db
+          .query('orgMemberships')
+          .withIndex('by_org', (q) => q.eq('orgId', orgId))
+          .collect()
+      ).filter((m) => m.isOwner === true)
+      if (owners.length === 1) {
+        throw new ConvexError('Make someone else an owner first.')
+      }
     }
 
     // Cannot demote yourself if you're the last admin
