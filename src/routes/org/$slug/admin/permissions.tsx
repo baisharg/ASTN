@@ -95,7 +95,7 @@ function CourseAccessPage() {
     <div className="min-h-screen bg-slate-50">
       <AuthHeader />
       <main className="container mx-auto px-4 py-8">
-        <div className="max-w-4xl mx-auto space-y-6">
+        <div className="max-w-6xl mx-auto space-y-6">
           <div>
             <div className="flex items-center gap-2 text-muted-foreground text-sm mb-2">
               <Link
@@ -310,13 +310,16 @@ function CourseAccessEditor({
                       </SelectContent>
                     </Select>
                   </td>
-                  {COURSE_TAGS.map((c) => (
-                    <td key={c} className="py-2 px-1">
-                      {isAdmin(m) ? (
-                        <span className="text-xs text-muted-foreground">
-                          Edit
-                        </span>
-                      ) : (
+                  {isAdmin(m) ? (
+                    <td
+                      colSpan={COURSE_TAGS.length}
+                      className="py-2 px-1 text-xs text-muted-foreground"
+                    >
+                      Every course (edit)
+                    </td>
+                  ) : (
+                    COURSE_TAGS.map((c) => (
+                      <td key={c} className="py-2 px-1">
                         <Select
                           value={levelOf(m.membership.userId, c)}
                           onValueChange={(value) =>
@@ -335,9 +338,9 @@ function CourseAccessEditor({
                             <SelectItem value="edit">Edit</SelectItem>
                           </SelectContent>
                         </Select>
-                      )}
-                    </td>
-                  ))}
+                      </td>
+                    ))
+                  )}
                   <td className="py-2 pl-2">
                     {isAdmin(m) && (
                       <Switch
