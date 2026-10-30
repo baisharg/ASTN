@@ -158,10 +158,15 @@ export const setOwner = mutation({
   },
   returns: v.null(),
   handler: async (ctx, { orgId, membershipId, owner }) => {
-    await requirePermissionManager(ctx, orgId)
+    const managerId = await requirePermissionManager(ctx, orgId)
     const target = await ctx.db.get('orgMemberships', membershipId)
     if (!target || target.orgId !== orgId) {
       throw new ConvexError('Membership not found')
+    }
+    // Stepping down would lock you out of this very page: another owner
+    // has to do it.
+    if (!owner && target.userId === managerId && target.isOwner === true) {
+      throw new ConvexError('Another owner has to remove you as owner.')
     }
     if (owner && target.role !== 'admin') {
       throw new ConvexError('Make them an admin first, in Members.')

@@ -108,7 +108,7 @@ export const demoteToMember = mutation({
     membershipId: v.id('orgMemberships'),
   },
   handler: async (ctx, { orgId, membershipId }) => {
-    await requirePermissionManager(ctx, orgId)
+    const managerId = await requirePermissionManager(ctx, orgId)
     const adminMembership = await requireOrgAdmin(ctx, orgId)
 
     // Get the target membership
@@ -122,7 +122,14 @@ export const demoteToMember = mutation({
       throw new Error('Membership is not for this organization')
     }
 
-    // The org always keeps an owner: the last one can't stop being admin
+    // An owner can't demote themselves (it would lock them out); another
+    // owner has to. And the org always keeps an owner.
+    if (
+      targetMembership.isOwner === true &&
+      targetMembership.userId === managerId
+    ) {
+      throw new ConvexError('Another owner has to change your access.')
+    }
     if (targetMembership.isOwner === true) {
       const owners = (
         await ctx.db

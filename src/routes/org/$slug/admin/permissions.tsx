@@ -37,7 +37,6 @@ import {
   SelectValue,
 } from '~/components/ui/select'
 import { Spinner } from '~/components/ui/spinner'
-import { Switch } from '~/components/ui/switch'
 
 export const Route = createFileRoute('/org/$slug/admin/permissions')({
   component: CourseAccessPage,
@@ -132,6 +131,7 @@ function CourseAccessEditor({
   slug: string
 }) {
   const members = useQuery(api.orgs.admin.getAllMembersWithProfiles, { orgId })
+  const me = useQuery(api.orgs.membership.getMembership, { orgId })
   const grants = useQuery(api.courseAccess.list, { orgId })
   const setAccess = useMutation(api.courseAccess.setAccess)
   const setOwner = useMutation(api.courseAccess.setOwner)
@@ -179,17 +179,26 @@ function CourseAccessEditor({
     }
   }
 
-  const changeScope = (m: Member, all: boolean) => {
+  type Scope = 'owner' | 'all' | 'some'
+  const scopeOf = (m: Member): Scope =>
+    m.membership.isOwner === true ? 'owner' : isAdmin(m) ? 'all' : 'some'
+
+  const changeScope = (m: Member, next: Scope) => {
+    const id = m.membership._id
+    const current = scopeOf(m)
     // Keep the row in view while they have no course yet.
-    if (!all) setAdded((prev) => [...prev, m.membership.userId])
+    if (next === 'some') setAdded((prev) => [...prev, m.membership.userId])
     void run(
-      () =>
-        all
-          ? promote({ orgId, membershipId: m.membership._id })
-          : demote({ orgId, membershipId: m.membership._id }),
-      all
-        ? `${nameOf(m)} can now open every course.`
-        : `${nameOf(m)} now opens only the courses you choose.`,
+      async () => {
+        if (next === 'some') return demote({ orgId, membershipId: id })
+        if (current === 'some') await promote({ orgId, membershipId: id })
+        return setOwner({ orgId, membershipId: id, owner: next === 'owner' })
+      },
+      next === 'owner'
+        ? `${nameOf(m)} is now an owner.`
+        : next === 'all'
+          ? `${nameOf(m)} can now open every course.`
+          : `${nameOf(m)} now opens only the courses you choose.`,
     )
   }
 
@@ -217,7 +226,7 @@ function CourseAccessEditor({
         <div>
           <CardTitle>Team</CardTitle>
           <CardDescription>
-            Owners also manage this page and the admin role in{' '}
+            Owners open every course and manage this page and the admin role in{' '}
             <Link
               to="/org/$slug/admin/members"
               params={{ slug }}
@@ -279,7 +288,6 @@ function CourseAccessEditor({
                     {c}
                   </th>
                 ))}
-                <th className="py-2 pl-2 font-medium">Owner</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -295,16 +303,25 @@ function CourseAccessEditor({
                   </td>
                   <td className="py-2 px-1">
                     <Select
-                      value={isAdmin(m) ? 'all' : 'some'}
-                      onValueChange={(value) => changeScope(m, value === 'all')}
+                      value={scopeOf(m)}
+                      onValueChange={(value) => changeScope(m, value as Scope)}
+                      // Your own access is changed by another owner, so a
+                      // misclick can't lock you out of this page.
+                      disabled={m.membership.userId === me?.userId}
                     >
                       <SelectTrigger
                         className="h-8 w-36 text-xs"
                         aria-label={`${nameOf(m)}: access`}
+                        title={
+                          m.membership.userId === me?.userId
+                            ? 'Another owner can change your access.'
+                            : undefined
+                        }
                       >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="owner">Owner</SelectItem>
                         <SelectItem value="all">All courses</SelectItem>
                         <SelectItem value="some">Chosen courses</SelectItem>
                       </SelectContent>
@@ -341,27 +358,6 @@ function CourseAccessEditor({
                       </td>
                     ))
                   )}
-                  <td className="py-2 pl-2">
-                    {isAdmin(m) && (
-                      <Switch
-                        checked={m.membership.isOwner === true}
-                        onCheckedChange={(checked) =>
-                          void run(
-                            () =>
-                              setOwner({
-                                orgId,
-                                membershipId: m.membership._id,
-                                owner: checked,
-                              }),
-                            checked
-                              ? `${nameOf(m)} is now an owner.`
-                              : `${nameOf(m)} is no longer an owner.`,
-                          )
-                        }
-                        aria-label={`${nameOf(m)}: owner`}
-                      />
-                    )}
-                  </td>
                 </tr>
               ))}
             </tbody>
