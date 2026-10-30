@@ -5,6 +5,7 @@ import { resolveApplicantContact } from '../lib/applicantContact'
 import type { FormField } from '../lib/formFields'
 import { rateLimiter } from '../lib/rateLimiter'
 import { resend } from './send'
+import { replyToFor } from './replyTo'
 
 const FROM_ADDRESS = 'ASTN <notifications@safetytalent.org>'
 
@@ -130,14 +131,21 @@ export const sendSingleEmail = internalMutation({
     to: v.string(),
     subject: v.string(),
     html: v.string(),
+    opportunityId: v.optional(v.id('orgOpportunities')),
   },
   returns: v.null(),
-  handler: async (ctx, { to, subject, html }) => {
+  handler: async (ctx, { to, subject, html, opportunityId }) => {
+    const opportunity = opportunityId
+      ? await ctx.db.get('orgOpportunities', opportunityId)
+      : null
     await resend.sendEmail(ctx, {
       from: FROM_ADDRESS,
       to,
       subject,
       html,
+      replyTo: opportunity
+        ? await replyToFor(ctx, opportunity.orgId)
+        : undefined,
     })
     return null
   },

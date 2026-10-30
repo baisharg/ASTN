@@ -591,3 +591,36 @@ export const getOrCreateInviteLink = mutation({
     return { token }
   },
 })
+
+// Where replies to the org's emails go (empty: the contact email).
+export const getEmailSettings = query({
+  args: { orgId: v.id('organizations') },
+  returns: v.object({
+    replyToEmail: v.union(v.string(), v.null()),
+    contactEmail: v.union(v.string(), v.null()),
+  }),
+  handler: async (ctx, { orgId }) => {
+    await requireOrgAdmin(ctx, orgId)
+    const org = await ctx.db.get('organizations', orgId)
+    return {
+      replyToEmail: org?.replyToEmail ?? null,
+      contactEmail: org?.contactEmail ?? null,
+    }
+  },
+})
+
+export const updateReplyToEmail = mutation({
+  args: { orgId: v.id('organizations'), replyToEmail: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { orgId, replyToEmail }) => {
+    await requireOrgAdmin(ctx, orgId)
+    const address = replyToEmail.trim()
+    if (address && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
+      throw new ConvexError('That is not a valid email address.')
+    }
+    await ctx.db.patch('organizations', orgId, {
+      replyToEmail: address || undefined,
+    })
+    return null
+  },
+})

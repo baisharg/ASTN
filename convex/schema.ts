@@ -401,6 +401,8 @@ export default defineSchema({
 
     // Phase 31: Self-configuration fields
     contactEmail: v.optional(v.string()),
+    // Where replies to the org's emails go (falls back to contactEmail).
+    replyToEmail: v.optional(v.string()),
     website: v.optional(v.string()),
     socialLinks: v.optional(
       v.array(

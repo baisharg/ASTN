@@ -143,6 +143,7 @@ export const sendBroadcastToApplicants = action({
           to: recipient.email,
           subject,
           html,
+          opportunityId,
         })
         await ctx.runMutation(internal.emails.outbox.logBroadcastSend, {
           opportunityId,
@@ -239,6 +240,7 @@ export const sendTestEmail = action({
       to: email,
       subject: `[TEST] ${subject.trim() || '(no subject)'}`,
       html,
+      opportunityId,
     })
 
     return null

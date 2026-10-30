@@ -12,6 +12,7 @@ import type { AccessLevel } from '../lib/courseAccess'
 import { resolveApplicantContact } from '../lib/applicantContact'
 import type { FormField } from '../lib/formFields'
 import { resend } from './send'
+import { replyToFor } from './replyTo'
 
 // Outbox for applicant decision emails (issue #20). Changing an application's
 // status never sends anything — it enqueues a pending draft prefilled from the
@@ -832,6 +833,7 @@ export const finalizeDraftSend = internalMutation({
       to,
       subject,
       html,
+      replyTo: await replyToFor(ctx, draft.orgId),
     })
     await ctx.db.insert('emailLog', {
       orgId: draft.orgId,
@@ -942,7 +944,13 @@ export const finalizeAutoSend = internalMutation({
     if (!app) return 'gone'
     if (await hasSentKind(ctx, applicationId, kind)) return 'already_sent'
 
-    await resend.sendEmail(ctx, { from: FROM_ADDRESS, to, subject, html })
+    await resend.sendEmail(ctx, {
+      from: FROM_ADDRESS,
+      to,
+      subject,
+      html,
+      replyTo: await replyToFor(ctx, app.orgId),
+    })
     await ctx.db.insert('emailLog', {
       orgId: app.orgId,
       opportunityId: app.opportunityId,
@@ -980,7 +988,13 @@ export const sendAvailabilityEmailNow = internalMutation({
   ) => {
     const app = await ctx.db.get('opportunityApplications', applicationId)
     if (!app) return null
-    await resend.sendEmail(ctx, { from: FROM_ADDRESS, to, subject, html })
+    await resend.sendEmail(ctx, {
+      from: FROM_ADDRESS,
+      to,
+      subject,
+      html,
+      replyTo: await replyToFor(ctx, app.orgId),
+    })
     await ctx.db.insert('emailLog', {
       orgId: app.orgId,
       opportunityId: app.opportunityId,

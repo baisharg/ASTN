@@ -79,6 +79,7 @@ import type * as emails_adminBroadcastAction from "../emails/adminBroadcastActio
 import type * as emails_batchActions from "../emails/batchActions.js";
 import type * as emails_outbox from "../emails/outbox.js";
 import type * as emails_outboxSend from "../emails/outboxSend.js";
+import type * as emails_replyTo from "../emails/replyTo.js";
 import type * as emails_send from "../emails/send.js";
 import type * as emails_templateLibrary from "../emails/templateLibrary.js";
 import type * as emails_templates from "../emails/templates.js";
@@ -283,6 +284,7 @@ declare const fullApi: ApiFromModules<{
   "emails/batchActions": typeof emails_batchActions;
   "emails/outbox": typeof emails_outbox;
   "emails/outboxSend": typeof emails_outboxSend;
+  "emails/replyTo": typeof emails_replyTo;
   "emails/send": typeof emails_send;
   "emails/templateLibrary": typeof emails_templateLibrary;
   "emails/templates": typeof emails_templates;

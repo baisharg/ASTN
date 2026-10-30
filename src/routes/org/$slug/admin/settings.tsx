@@ -3,7 +3,9 @@ import { useAction, useMutation, useQuery } from 'convex/react'
 import { Building2, CheckCircle2, Loader2, Save, Shield } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
+import { ConvexError } from 'convex/values'
 import { api } from '../../../../../convex/_generated/api'
+import type { Id } from '../../../../../convex/_generated/dataModel'
 import { AuthHeader } from '~/components/layout/auth-header'
 import { Button } from '~/components/ui/button'
 import {
@@ -252,8 +254,77 @@ function OrgAdminSettings() {
               )}
             </CardContent>
           </Card>
+
+          <ReplyToCard orgId={org._id} />
         </div>
       </main>
     </div>
+  )
+}
+
+/**
+ * Where replies to the org's emails go. They leave from
+ * notifications@safetytalent.org, which nobody reads.
+ */
+function ReplyToCard({ orgId }: { orgId: Id<'organizations'> }) {
+  const settings = useQuery(api.orgs.admin.getEmailSettings, { orgId })
+  const update = useMutation(api.orgs.admin.updateReplyToEmail)
+  const [value, setValue] = useState<string | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
+
+  if (settings === undefined) return null
+  const current = value ?? settings.replyToEmail ?? ''
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsSaving(true)
+    try {
+      await update({ orgId, replyToEmail: current })
+      setValue(null)
+      toast.success('Reply-to email saved')
+    } catch (err) {
+      toast.error("Couldn't save", {
+        description:
+          err instanceof ConvexError && typeof err.data === 'string'
+            ? err.data
+            : 'Please try again.',
+      })
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  return (
+    <Card className="mt-6">
+      <CardHeader>
+        <CardTitle>Replies to emails</CardTitle>
+        <CardDescription>
+          Emails go out from notifications@safetytalent.org. When someone
+          replies, the answer goes to this address.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={save} className="flex flex-wrap items-end gap-2">
+          <div className="space-y-1 flex-1 min-w-60">
+            <Label htmlFor="replyToEmail">Reply-to email</Label>
+            <Input
+              id="replyToEmail"
+              type="email"
+              value={current}
+              placeholder={settings.contactEmail ?? 'team@example.org'}
+              onChange={(e) => setValue(e.target.value)}
+            />
+          </div>
+          <Button type="submit" disabled={isSaving || value === null}>
+            Save
+          </Button>
+        </form>
+        {settings.contactEmail && (
+          <p className="text-xs text-muted-foreground mt-2">
+            Empty: replies go to the contact email, {settings.contactEmail}.
+          </p>
+        )}
+      </CardContent>
+    </Card>
   )
 }
