@@ -128,8 +128,8 @@ function isConsentField(field: FormField) {
 /**
  * All the form's consents in one block. Nothing comes pre-checked: Argentina's
  * data protection law (Ley 25.326) asks for express consent, which a box ticked
- * in advance is not. "Accept all" keeps it one click for whoever agrees to
- * everything, and the details stay one click away for whoever does not.
+ * in advance is not. "Aceptar todos" keeps it one click for whoever agrees to
+ * everything; each one can still be ticked on its own.
  */
 function ConsentBlock({
   fields,
@@ -140,70 +140,53 @@ function ConsentBlock({
   responses: Record<string, unknown>
   onChange: (key: string, value: unknown) => void
 }) {
-  const [open, setOpen] = useState(false)
-  const accepted = fields.filter((f) => responses[f.key] === true).length
+  const allAccepted = fields.every((f) => responses[f.key] === true)
   const anyRequired = fields.some((f) => f.required)
 
   return (
     <div className="space-y-3 rounded-md border p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <p className="text-sm font-medium">
-            Terms and consents
-            {anyRequired && <span className="text-red-500"> *</span>}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {accepted} of {fields.length} accepted
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setOpen((o) => !o)}
-          >
-            {open ? 'Hide details' : 'Show details'}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            disabled={accepted === fields.length}
-            onClick={() => {
-              for (const f of fields) onChange(f.key, true)
-            }}
-          >
-            Accept all
-          </Button>
-        </div>
+        <p className="text-sm font-medium">
+          Consentimientos
+          {anyRequired && <span className="text-red-500"> *</span>}
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={allAccepted}
+          onClick={() => {
+            for (const f of fields) onChange(f.key, true)
+          }}
+        >
+          Aceptar todos
+        </Button>
       </div>
-      {open && (
-        <div className="space-y-4 border-t pt-3">
-          {fields.map((field) => (
-            <label
-              key={field.key}
-              className="flex items-start gap-2 cursor-pointer"
-            >
-              <Checkbox
-                checked={responses[field.key] === true}
-                onCheckedChange={(checked) =>
-                  onChange(field.key, checked === true)
-                }
-                className="mt-0.5"
-              />
-              <span className="text-sm">
-                {field.label}
-                {field.required && <span className="text-red-500"> *</span>}
-                {field.description && (
-                  <span className="block text-xs text-muted-foreground whitespace-pre-line">
-                    {field.description}
-                  </span>
-                )}
-              </span>
-            </label>
-          ))}
-        </div>
-      )}
+      <div className="space-y-3">
+        {fields.map((field) => (
+          <label
+            key={field.key}
+            className="flex items-start gap-2 cursor-pointer"
+          >
+            <Checkbox
+              checked={responses[field.key] === true}
+              onCheckedChange={(checked) =>
+                onChange(field.key, checked === true)
+              }
+              className="mt-0.5"
+            />
+            <span className="text-sm">
+              {field.label}
+              {field.required && <span className="text-red-500"> *</span>}
+              {field.description && (
+                <span className="block text-xs text-muted-foreground whitespace-pre-line">
+                  {field.description}
+                </span>
+              )}
+            </span>
+          </label>
+        ))}
+      </div>
     </div>
   )
 }

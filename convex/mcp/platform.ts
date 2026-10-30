@@ -132,8 +132,6 @@ export const UPDATE_FIELDS: Record<string, Set<string>> = {
     'externalUrl',
     'featured',
     'tags',
-    'courseName',
-    'courseArea',
     // formFields is deliberately absent (since 2026-10-27): an edition's form
     // is a copy of the org's canonical form, made when the opportunity is
     // created, and the canonical is edited by hand from the admin only.
@@ -1089,8 +1087,6 @@ export const createOpportunity = internalMutation({
     featured: v.optional(v.boolean()),
     tags: v.optional(v.array(v.string())),
     isEOI: v.optional(v.boolean()),
-    courseName: v.optional(v.string()),
-    courseArea: v.optional(v.string()),
     formSource: v.optional(formSourceValidator),
   },
   returns: v.any(),
@@ -1109,8 +1105,6 @@ export const createOpportunity = internalMutation({
       featured: args.featured ?? false,
       tags: args.tags,
       isEOI: args.isEOI,
-      courseName: args.courseName,
-      courseArea: args.courseArea,
       formSource: args.formSource,
     })
     const created = await ctx.db.get(id)

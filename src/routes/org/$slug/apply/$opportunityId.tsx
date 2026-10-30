@@ -570,12 +570,15 @@ function ApplyPage() {
           {asksAvailability && (
             <section className="mt-8 space-y-2">
               <h2 className="text-lg font-semibold text-foreground">
-                Your availability <span className="text-red-500">*</span>
+                Tu disponibilidad <span className="text-red-500">*</span>
               </h2>
               <p className="text-sm text-muted-foreground">
-                Mark every time you could attend in a regular week. We use it to
-                build the groups. Timezone:{' '}
-                {availabilityPoll.timezone.replace(/_/g, ' ')}.
+                Marcá los horarios en los que podrías cursar en una semana
+                típica. Los usamos para armar los grupos. Hora de{' '}
+                {availabilityPoll.timezone === 'America/Argentina/Buenos_Aires'
+                  ? 'Argentina'
+                  : availabilityPoll.timezone.replace(/_/g, ' ')}
+                .
               </p>
               {/* Fit mode keeps the whole week on one screen. */}
               <div className="h-[75dvh] min-h-96">
@@ -592,7 +595,7 @@ function ApplyPage() {
               </div>
               {missingAvailability && (
                 <p className="text-sm text-muted-foreground">
-                  Mark at least one time to submit.
+                  Marcá al menos un horario para enviar la postulación.
                 </p>
               )}
             </section>

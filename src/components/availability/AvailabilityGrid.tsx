@@ -152,7 +152,7 @@ export function AvailabilityGrid({
               paintModeRef.current = 'available'
             }}
           >
-            Available
+            Disponible
           </Button>
           <Button
             type="button"
@@ -167,7 +167,7 @@ export function AvailabilityGrid({
               paintModeRef.current = 'maybe'
             }}
           >
-            Maybe
+            Si hace falta
           </Button>
           <Button
             type="button"
@@ -182,7 +182,7 @@ export function AvailabilityGrid({
               paintModeRef.current = 'clear'
             }}
           >
-            Clear
+            Borrar
           </Button>
           {Object.keys(slots).length > 0 && (
             <Button
@@ -192,14 +192,9 @@ export function AvailabilityGrid({
               className="ml-auto text-muted-foreground"
               onClick={() => onSlotsChange({})}
             >
-              Clear All
+              Borrar todo
             </Button>
           )}
-          {/* Erasing with the secondary button is handy but invisible, so
-              say it (pointer devices only: a tap paints the chosen mode). */}
-          <p className="hidden w-full text-xs text-muted-foreground [@media(pointer:fine)]:block">
-            Click or drag to mark. Right-click (or Ctrl+click) erases.
-          </p>
         </div>
       )}
 

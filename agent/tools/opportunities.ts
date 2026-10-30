@@ -637,17 +637,11 @@ export function createOpportunityTools(
           .boolean()
           .optional()
           .describe('Whether this is an expression of interest'),
-        courseName: z
-          .string()
+        tags: z
+          .array(z.string())
           .optional()
           .describe(
-            'Course name, with its article, that fills {{course}} in the form (e.g. "el Curso de Technical AI Safety"). The application form itself is a copy of the org canonical form and cannot be set here.',
-          ),
-        courseArea: z
-          .string()
-          .optional()
-          .describe(
-            'Area that fills {{area}} in the form, e.g. "la seguridad en IA".',
+            'Tags. Include the course tag (TAIS Course, TAIS Projects, Governance, AGI Strategy, Biosecurity): it names the course in the canonical form.',
           ),
         formSource: z
           .enum(['course', 'eoi', 'custom'])
@@ -707,8 +701,7 @@ export function createOpportunityTools(
             externalUrl: args.externalUrl,
             featured: args.featured ?? false,
             isEOI: args.isEOI,
-            courseName: args.courseName,
-            courseArea: args.courseArea,
+            tags: args.tags,
             formSource: args.formSource,
           })
 
@@ -1115,8 +1108,7 @@ export function createOpportunityTools(
             featured: overrides.featured ?? false,
             // The form comes from the canonical, never from the source.
             isEOI: source.isEOI,
-            courseName: source.courseName,
-            courseArea: source.courseArea,
+            tags: source.tags,
             formSource: source.formSource,
           })
 

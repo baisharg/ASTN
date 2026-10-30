@@ -656,14 +656,11 @@ export const duplicate = mutation({
           : await copyCanonicalForm(ctx, {
               orgId: source.orgId,
               source: formSourceOf(source),
-              courseName: source.courseName,
-              courseArea: source.courseArea,
+              tags: source.tags,
             }),
       formSource: formSourceOf(source),
       tags: source.tags,
       isEOI: source.isEOI,
-      courseName: source.courseName,
-      courseArea: source.courseArea,
       emailTemplateSetId: source.emailTemplateSetId,
       // Inherit the on-apply kill switch so a duplicated EOI does not start
       // emailing people the original deliberately kept quiet.
@@ -728,8 +725,6 @@ export async function createOpportunityFor(
     featured: boolean
     tags?: Array<string>
     isEOI?: boolean
-    courseName?: string
-    courseArea?: string
     formSource?: FormSource
   },
 ): Promise<Id<'orgOpportunities'>> {
@@ -737,8 +732,7 @@ export async function createOpportunityFor(
   const formFields = await copyCanonicalForm(ctx, {
     orgId: args.orgId,
     source: formSource,
-    courseName: args.courseName,
-    courseArea: args.courseArea,
+    tags: args.tags,
   })
   const now = Date.now()
   const opportunityId = await ctx.db.insert('orgOpportunities', {
@@ -754,8 +748,6 @@ export async function createOpportunityFor(
     formSource,
     ...(args.tags !== undefined && { tags: normalizeTags(args.tags) }),
     isEOI: args.isEOI,
-    courseName: args.courseName?.trim() || undefined,
-    courseArea: args.courseArea?.trim() || undefined,
     slug: await uniqueSlug(ctx, args.orgId, args.title),
     createdAt: now,
     updatedAt: now,
@@ -841,8 +833,6 @@ export const create = mutation({
     featured: v.boolean(),
     tags: v.optional(v.array(v.string())),
     isEOI: v.optional(v.boolean()),
-    courseName: v.optional(v.string()),
-    courseArea: v.optional(v.string()),
     formSource: v.optional(formSourceValidator),
   },
   returns: v.id('orgOpportunities'),
@@ -881,8 +871,6 @@ export const update = mutation({
     slug: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
     isEOI: v.optional(v.boolean()),
-    courseName: v.optional(v.string()),
-    courseArea: v.optional(v.string()),
     redirectOpportunityId: v.optional(
       v.union(v.id('orgOpportunities'), v.null()),
     ),
@@ -937,10 +925,6 @@ export const update = mutation({
       updatedAt: Date.now(),
     }
     if (updates.tags !== undefined) patch.tags = normalizeTags(updates.tags)
-    if (updates.courseName !== undefined)
-      patch.courseName = updates.courseName.trim() || undefined
-    if (updates.courseArea !== undefined)
-      patch.courseArea = updates.courseArea.trim() || undefined
     if (updates.slug !== undefined) {
       // Blank clears the alias; the id keeps working either way. A collision
       // gets suffixed rather than rejected — the admin is renaming a link, not
@@ -992,8 +976,7 @@ export const replaceForm = mutation({
       formFields: await copyCanonicalForm(ctx, {
         orgId: opportunity.orgId,
         source,
-        courseName: opportunity.courseName,
-        courseArea: opportunity.courseArea,
+        tags: opportunity.tags,
       }),
       formSource: source,
       updatedAt: Date.now(),

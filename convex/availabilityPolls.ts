@@ -163,7 +163,7 @@ export function assertAvailabilityGiven(
   slots: Record<string, unknown> | undefined,
 ) {
   if (poll && (!slots || Object.keys(slots).length === 0))
-    throw new ConvexError('Mark at least one time you are available')
+    throw new ConvexError('Marcá al menos un horario en el que puedas cursar.')
 }
 
 /**

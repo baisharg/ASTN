@@ -111,8 +111,6 @@ function OpportunityDetailsForm({
   const [externalUrl, setExternalUrl] = useState(opportunity.externalUrl ?? '')
   const [featured, setFeatured] = useState(opportunity.featured)
   const [isEOI, setIsEOI] = useState(opportunity.isEOI ?? false)
-  const [courseName, setCourseName] = useState(opportunity.courseName ?? '')
-  const [courseArea, setCourseArea] = useState(opportunity.courseArea ?? '')
   const [redirectOpportunityId, setRedirectOpportunityId] = useState<
     string | null
   >(opportunity.redirectOpportunityId ?? null)
@@ -135,8 +133,6 @@ function OpportunityDetailsForm({
     externalUrl !== (opportunity.externalUrl ?? '') ||
     featured !== opportunity.featured ||
     isEOI !== (opportunity.isEOI ?? false) ||
-    courseName !== (opportunity.courseName ?? '') ||
-    courseArea !== (opportunity.courseArea ?? '') ||
     redirectOpportunityId !== (opportunity.redirectOpportunityId ?? null)
   useUnsavedChangesWarning(isDirty && !isSavingDetails)
 
@@ -158,8 +154,6 @@ function OpportunityDetailsForm({
         externalUrl: externalUrl.trim() || undefined,
         featured,
         isEOI,
-        courseName,
-        courseArea,
         redirectOpportunityId: redirectOpportunityId
           ? (redirectOpportunityId as Id<'orgOpportunities'>)
           : null,
@@ -262,33 +256,6 @@ function OpportunityDetailsForm({
             placeholder="https://..."
           />
         </div>
-      </div>
-
-      <div className="space-y-1">
-        <Label htmlFor="opp-course-name">Course name</Label>
-        <Input
-          id="opp-course-name"
-          value={courseName}
-          onChange={(e) => setCourseName(e.target.value)}
-          placeholder="e.g. el Curso de Technical AI Safety"
-        />
-        <p className="text-xs text-muted-foreground">
-          Fills {'{{course}}'} in the canonical form. Changing it later only
-          affects the form if you replace it with the canonical again.
-        </p>
-      </div>
-
-      <div className="space-y-1">
-        <Label htmlFor="opp-course-area">Area</Label>
-        <Input
-          id="opp-course-area"
-          value={courseArea}
-          onChange={(e) => setCourseArea(e.target.value)}
-          placeholder="e.g. la seguridad en IA"
-        />
-        <p className="text-xs text-muted-foreground">
-          Fills {'{{area}}'} in the canonical form, the same way.
-        </p>
       </div>
 
       <div className="space-y-1">

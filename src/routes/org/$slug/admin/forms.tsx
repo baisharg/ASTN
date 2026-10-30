@@ -195,11 +195,10 @@ function CanonicalFormEditor({
             : 'Expression of interest form'}
         </CardTitle>
         <CardDescription>
-          Write {'{{course}}'} wherever the course name goes and {'{{area}}'}{' '}
-          wherever its area goes (e.g. &quot;¿Cómo te involucraste hasta ahora
-          con {'{{area}}'}?&quot;); each opportunity fills them with its course
-          name and area. Mark consent checkboxes as consents to show them
-          together in one block.
+          Write {'{{course}}'} for the course (&quot;el Curso de
+          Biocustodia&quot;) and {'{{area}}'} for its field (&quot;la
+          biocustodia&quot;); each opportunity fills them from its course. Mark
+          consent checkboxes as consents to show them together in one block.
           {kind === 'course'
             ? ' The weekly availability grid is added on its own and does not go here.'
             : ' Expressions of interest do not ask for availability.'}

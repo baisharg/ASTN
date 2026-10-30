@@ -11,6 +11,7 @@ import {
   sanitizeFormFieldKeys,
 } from './lib/formFields'
 import type { FormField } from './lib/formFields'
+import { COURSE_PLACEHOLDERS, courseOf } from './lib/courses'
 
 /**
  * The org's canonical application forms. Every new opportunity copies one —
@@ -114,8 +115,8 @@ const CUSTOM_FORM_START: Array<FormField> = [
 
 /**
  * The form a new opportunity starts with: a copy of the canonical for its
- * source with {{course}} and {{area}} filled in, or the bare start of a
- * custom form. Refuses, saying what to do, when that canonical does not exist
+ * source with {{course}} and {{area}} filled in from its course tag, or the
+ * bare start of a custom form. Refuses, saying what to do, when that canonical does not exist
  * yet or uses a placeholder nobody filled.
  */
 export async function copyCanonicalForm(
@@ -123,8 +124,8 @@ export async function copyCanonicalForm(
   opts: {
     orgId: Id<'organizations'>
     source: FormSource
-    courseName: string | undefined
-    courseArea: string | undefined
+    // The course tag fills {{course}} and {{area}} (convex/lib/courses.ts).
+    tags: ReadonlyArray<string> | undefined
   },
 ): Promise<Array<FormField>> {
   if (opts.source === 'custom') return CUSTOM_FORM_START
@@ -142,11 +143,16 @@ export async function copyCanonicalForm(
     )
   }
   const fields = canonical.formFields as Array<FormField>
-  const values = { course: opts.courseName, area: opts.courseArea }
-  const missing = missingPlaceholders(fields, values)
-  if (missing.length > 0) {
+  const course = courseOf(opts.tags)
+  const values = course
+    ? {
+        course: COURSE_PLACEHOLDERS[course].name,
+        area: COURSE_PLACEHOLDERS[course].area,
+      }
+    : {}
+  if (missingPlaceholders(fields, values).length > 0) {
     throw new ConvexError(
-      `The canonical form needs the ${missing.join(' and ')}: fill ${missing.length > 1 ? 'them' : 'it'} in first.`,
+      'Choose the course: the canonical form names it in its questions.',
     )
   }
   return fillFormPlaceholders(fields, values)

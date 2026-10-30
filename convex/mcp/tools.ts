@@ -538,8 +538,7 @@ const PLATFORM_FIELD_HINTS: Record<string, string> = {
     'create requires: programId, dayNumber, title, date. optional: morningStartTime, afternoonStartTime, lumaUrl.',
   opportunities:
     'create requires: title, description, type (course|fellowship|job|other). optional: status ' +
-    '(defaults to draft), deadline (ms), externalUrl, featured, tags, isEOI, courseName and ' +
-    'courseArea (fill {{course}} and {{area}} in the form), formSource (course|eoi|custom; ' +
+    '(defaults to draft), deadline (ms), externalUrl, featured, tags, isEOI, formSource (course|eoi|custom; ' +
     'defaults to eoi when isEOI, else course). The application form is a copy of the org canonical form (the EOI ' +
     'one when isEOI) and cannot be passed. A readable slug and the default availability poll are ' +
     'created for you.',
@@ -915,8 +914,8 @@ export async function callTool(
         if (args.fields && 'formFields' in (args.fields as object)) {
           throw new Error(
             'formFields cannot be passed: the application form is a copy of the org canonical ' +
-              'form, edited by hand in the web admin. Drop formFields (and pass courseName and ' +
-              'courseArea if the form uses {{course}} or {{area}}).',
+              'form, edited by hand in the web admin. Drop formFields; pass the course tag in tags ' +
+              '(e.g. "TAIS Course") so the form names the course.',
           )
         }
         return await ctx.runMutation(internal.mcp.platform.createOpportunity, {

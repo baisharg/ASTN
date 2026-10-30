@@ -25,3 +25,36 @@ export function courseOf(
   }
   return undefined
 }
+
+/**
+ * What each course puts into the canonical form's placeholders:
+ * {{course}} -> `name` ("¿Por qué te interesa el Curso de Biocustodia?") and
+ * {{area}} -> `area` ("¿Cómo te involucraste con la biocustodia?"). Written
+ * with their article so the sentences read naturally. A new course needs an
+ * entry here along with its tag.
+ */
+export const COURSE_PLACEHOLDERS: Record<
+  CourseTag,
+  { name: string; area: string }
+> = {
+  'TAIS Course': {
+    name: 'el Curso de Technical AI Safety',
+    area: 'la seguridad en IA',
+  },
+  'TAIS Projects': {
+    name: 'el Sprint de Technical AI Safety Projects',
+    area: 'la seguridad en IA',
+  },
+  Governance: {
+    name: 'el Curso de Gobernanza de IA Avanzada',
+    area: 'la gobernanza de la IA',
+  },
+  'AGI Strategy': {
+    name: 'el Curso de Estrategia sobre IA General',
+    area: 'la seguridad en IA',
+  },
+  Biosecurity: {
+    name: 'el Curso de Biocustodia',
+    area: 'la biocustodia',
+  },
+}
