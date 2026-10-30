@@ -10,6 +10,7 @@ import { canonicalFormProblems } from '../../../../../convex/lib/formFields'
 import type { FormField } from '../../../../../convex/lib/formFields'
 import { AuthHeader } from '~/components/layout/auth-header'
 import { FormFieldsEditor } from '~/components/opportunities/FormFieldsEditor'
+import { useUnsavedChangesWarning } from '~/hooks/use-unsaved-changes'
 import { Button } from '~/components/ui/button'
 import {
   Card,
@@ -109,10 +110,18 @@ function CanonicalFormsPage() {
               <TabsTrigger value="course">Course editions</TabsTrigger>
               <TabsTrigger value="eoi">Expressions of interest</TabsTrigger>
             </TabsList>
-            <TabsContent value="course" className="mt-6">
+            <TabsContent
+              value="course"
+              forceMount
+              className="mt-6 data-[state=inactive]:hidden"
+            >
               <CanonicalFormEditor key="course" orgId={org._id} kind="course" />
             </TabsContent>
-            <TabsContent value="eoi" className="mt-6">
+            <TabsContent
+              value="eoi"
+              forceMount
+              className="mt-6 data-[state=inactive]:hidden"
+            >
               <CanonicalFormEditor key="eoi" orgId={org._id} kind="eoi" />
             </TabsContent>
           </Tabs>
@@ -141,6 +150,12 @@ function CanonicalFormEditor({
     setFields((canonical?.formFields as Array<FormField> | undefined) ?? [])
     setLoaded(true)
   }
+
+  const isDirty =
+    canonical !== undefined &&
+    JSON.stringify(fields) !==
+      JSON.stringify((canonical?.formFields as Array<FormField>) ?? [])
+  useUnsavedChangesWarning(isDirty && !isSaving)
 
   if (canonical === undefined) return <Spinner className="size-6 mx-auto" />
 

@@ -33,6 +33,7 @@ import { PollCreationForm } from '~/components/availability/PollCreationForm'
 import { ScheduleAnalysis } from '~/components/availability/ScheduleAnalysis'
 import { DynamicFormRenderer } from '~/components/opportunities/DynamicFormRenderer'
 import { FormFieldsEditor } from '~/components/opportunities/FormFieldsEditor'
+import { useUnsavedChangesWarning } from '~/hooks/use-unsaved-changes'
 import { TagsInput } from '~/components/opportunities/TagsInput'
 import { ApplicationsTable } from '~/components/opportunities/ApplicationsTable'
 import { SurveyTab } from '~/components/surveys/SurveyTab'
@@ -118,6 +119,26 @@ function OpportunityDetailsForm({
   const [isSavingDetails, setIsSavingDetails] = useState(false)
 
   const canSaveDetails = title.trim() && description.trim()
+
+  // Compared with what is saved, so leaving with edits asks first.
+  const savedDeadline = opportunity.deadline
+    ? new Date(opportunity.deadline).toISOString().split('T')[0]
+    : ''
+  const isDirty =
+    title !== opportunity.title ||
+    description !== opportunity.description ||
+    type !== opportunity.type ||
+    status !== opportunity.status ||
+    tags.join('\n') !== (opportunity.tags ?? []).join('\n') ||
+    deadlineStr !== savedDeadline ||
+    slugValue !== (opportunity.slug ?? '') ||
+    externalUrl !== (opportunity.externalUrl ?? '') ||
+    featured !== opportunity.featured ||
+    isEOI !== (opportunity.isEOI ?? false) ||
+    courseName !== (opportunity.courseName ?? '') ||
+    courseArea !== (opportunity.courseArea ?? '') ||
+    redirectOpportunityId !== (opportunity.redirectOpportunityId ?? null)
+  useUnsavedChangesWarning(isDirty && !isSavingDetails)
 
   const handleSaveDetails = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -1414,7 +1435,7 @@ function ApplicationFormCard({
     { opportunityId: opportunity._id },
   )
   const replaceForm = useMutation(api.orgOpportunities.replaceForm)
-  const saveCustomForm = useMutation(api.orgOpportunities.saveCustomForm)
+  const saveForm = useMutation(api.orgOpportunities.saveForm)
   const source: FormSource =
     opportunity.formSource ?? (opportunity.isEOI ? 'eoi' : 'course')
   const [nextSource, setNextSource] = useState<FormSource>(source)
@@ -1425,7 +1446,10 @@ function ApplicationFormCard({
   const fields = (opportunity.formFields as Array<FormField> | undefined) ?? []
   const hasApplications = (applicationCount ?? 0) > 0
   const locked = hasApplications || applicationCount === undefined
-  const editable = source === 'custom' && !locked
+  // Any form can be adjusted here until the first application; the canonical
+  // only decides what it starts with.
+  const editable = !locked
+  useUnsavedChangesWarning(draft !== null)
   const draftProblems = draft
     ? canonicalFormProblems(draft.filter((f) => f.label.trim()))
     : []
@@ -1466,7 +1490,7 @@ function ApplicationFormCard({
     if (!draft || draftProblems.length > 0) return
     const ok = await run(
       () =>
-        saveCustomForm({
+        saveForm({
           id: opportunity._id,
           formFields: draft.filter((f) => f.label.trim()),
         }),
@@ -1481,14 +1505,10 @@ function ApplicationFormCard({
         <CardTitle>Application Form</CardTitle>
         <CardDescription>
           {source === 'custom' ? (
-            <>
-              A custom form, written here because this opportunity is not a
-              course edition.
-            </>
+            <>A custom form, not based on a canonical one.</>
           ) : (
             <>
-              A copy of the {FORM_SOURCE_LABELS[source].toLowerCase()}, made
-              when this opportunity was created. Questions are written in{' '}
+              Started from the {FORM_SOURCE_LABELS[source].toLowerCase()} (
               <Link
                 to="/org/$slug/admin/forms"
                 params={{ slug }}
@@ -1496,9 +1516,12 @@ function ApplicationFormCard({
               >
                 Canonical forms
               </Link>
-              , not here.
+              ).
             </>
-          )}
+          )}{' '}
+          {locked
+            ? 'People already applied, so the questions stay as they answered them.'
+            : 'You can add or change questions for this opportunity until someone applies.'}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

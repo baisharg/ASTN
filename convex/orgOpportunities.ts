@@ -1003,21 +1003,17 @@ export const replaceForm = mutation({
 })
 
 /**
- * Save the questions of a custom form, the only kind written on the
- * opportunity itself. Only while nobody has applied.
+ * Save an opportunity's questions: a custom form, or a canonical copy
+ * adjusted for this edition. Only while nobody has applied, so no answer is
+ * ever left without its question.
  */
-export const saveCustomForm = mutation({
+export const saveForm = mutation({
   args: { id: v.id('orgOpportunities'), formFields: v.any() },
   returns: v.null(),
   handler: async (ctx, { id, formFields }) => {
     const opportunity = await ctx.db.get('orgOpportunities', id)
     if (!opportunity) throw new ConvexError('Opportunity not found')
     await requireOpportunityAccess(ctx, opportunity, 'edit')
-    if (formSourceOf(opportunity) !== 'custom') {
-      throw new ConvexError(
-        'This form is a copy of a canonical form: edit the canonical instead.',
-      )
-    }
     await assertNoApplications(ctx, id)
     await ctx.db.patch('orgOpportunities', id, {
       formFields: cleanAdminForm(formFields),
