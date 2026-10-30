@@ -3,7 +3,7 @@ import { action, internalQuery, mutation, query } from './_generated/server'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import type { Doc, Id } from './_generated/dataModel'
 import { internal } from './_generated/api'
-import { getUserId } from './lib/auth'
+import { getUserId, requireOrgAdmin } from './lib/auth'
 import {
   resolveApplicantDisplayNameByApplicationId,
   resolveApplicantDisplayNameFromApplication,
@@ -600,6 +600,9 @@ export const getPollResults = query({
   handler: async (ctx, { pollId }) => {
     const poll = await ctx.db.get('availabilityPolls', pollId)
     if (!poll) throw new ConvexError('Poll not found')
+    // Everyone's names and availability: admins only (this query had no
+    // check before 2026-10-30).
+    await requireOrgAdmin(ctx, poll.orgId)
 
     const responses = await ctx.db
       .query('availabilityResponses')
@@ -903,6 +906,11 @@ export const getRespondentLinks = query({
     }),
   ),
   handler: async (ctx, { pollId }) => {
+    // Personal links let anyone answer as that person: admins only (this
+    // query had no check before 2026-10-30).
+    const poll = await ctx.db.get('availabilityPolls', pollId)
+    if (!poll) return []
+    await requireOrgAdmin(ctx, poll.orgId)
     const respondents = await ctx.db
       .query('pollRespondents')
       .withIndex('by_poll', (q) => q.eq('pollId', pollId))

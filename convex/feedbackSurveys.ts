@@ -14,10 +14,7 @@ import {
   sanitizeResponseKeys,
   validateResponses,
 } from './lib/formFields'
-import {
-  describeImpact,
-  impactOnSurveyResponses,
-} from './lib/formFieldChanges'
+import { describeImpact, impactOnSurveyResponses } from './lib/formFieldChanges'
 import type { Id } from './_generated/dataModel'
 import type { FormField } from './lib/formFields'
 
@@ -99,11 +96,11 @@ export async function createSurveyFor(
     throw new ConvexError(
       wantAnonymous
         ? 'This opportunity already has an active anonymous survey (draft or open). ' +
-          'Close or edit that one — the limit is one per kind, so its identified ' +
-          'survey is unaffected.'
+            'Close or edit that one — the limit is one per kind, so its identified ' +
+            'survey is unaffected.'
         : 'This opportunity already has an active identified survey (draft or open). ' +
-          'Close or edit that one — the limit is one per kind, so you can still add ' +
-          'an anonymous survey alongside it.',
+            'Close or edit that one — the limit is one per kind, so you can still add ' +
+            'an anonymous survey alongside it.',
     )
 
   const now = Date.now()
@@ -595,6 +592,11 @@ export const getRespondentLinks = query({
     }),
   ),
   handler: async (ctx, { surveyId }) => {
+    // Personal links let anyone answer as that person: admins only (this
+    // query had no check before 2026-10-30).
+    const survey = await ctx.db.get('feedbackSurveys', surveyId)
+    if (!survey) return []
+    await requireOrgAdmin(ctx, survey.orgId)
     // Use denormalized respondentName — no per-row name resolution
     const respondents = await ctx.db
       .query('surveyRespondents')
