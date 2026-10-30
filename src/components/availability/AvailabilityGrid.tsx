@@ -195,6 +195,11 @@ export function AvailabilityGrid({
               Clear All
             </Button>
           )}
+          {/* Erasing with the secondary button is handy but invisible, so
+              say it (pointer devices only: a tap paints the chosen mode). */}
+          <p className="hidden w-full text-xs text-muted-foreground [@media(pointer:fine)]:block">
+            Click or drag to mark. Right-click (or Ctrl+click) erases.
+          </p>
         </div>
       )}
 

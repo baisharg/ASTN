@@ -43,7 +43,7 @@ function ResponsiveSheetContent({
           'translate-x-0 translate-y-0',
           'max-w-full w-full',
           'rounded-t-xl rounded-b-none',
-          'max-h-[85vh]',
+          'max-h-[85dvh]',
           // Slide up animation
           'data-[state=open]:animate-in data-[state=open]:slide-in-from-bottom',
           'data-[state=closed]:animate-out data-[state=closed]:slide-out-to-bottom',
