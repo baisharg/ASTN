@@ -506,6 +506,12 @@ export const getPreviousResponsesForOpportunity = query({
       )
       .sort((a, b) => b.submittedAt - a.submittedAt)
 
+    // Consents are never carried over: every edition shares the canonical's
+    // consent keys, and a consent ticked for another edition is not express
+    // consent for this one (Ley 25.326).
+    const consentKeys = new Set(
+      formFields.filter((f) => f.consent).map((f) => f.key),
+    )
     const responses: Record<string, unknown> = {}
     const usedOpportunityIds = new Set<Id<'orgOpportunities'>>()
     for (const application of prior) {
@@ -515,7 +521,8 @@ export const getPreviousResponsesForOpportunity = query({
         PROFILE_PREFILL_KEYS,
       )
       for (const [key, value] of Object.entries(cleaned)) {
-        if (key in responses || isBlankAnswer(value)) continue
+        if (key in responses || consentKeys.has(key) || isBlankAnswer(value))
+          continue
         responses[key] = value
         usedOpportunityIds.add(application.opportunityId)
       }

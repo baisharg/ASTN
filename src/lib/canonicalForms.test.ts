@@ -2,6 +2,7 @@ import {
   canonicalFormProblems,
   fillFormPlaceholders,
   missingPlaceholders,
+  validateResponses,
   type FormField,
 } from '../../convex/lib/formFields'
 
@@ -87,6 +88,28 @@ describe('canonical form validation', () => {
     ])
     expect(canonicalFormProblems(identity.slice(0, 2))).toEqual([
       'Add a required email question for the email, with key "email".',
+    ])
+  })
+})
+
+describe('required checkboxes', () => {
+  const consent: Array<FormField> = [
+    {
+      key: 'dataConsent',
+      kind: 'checkbox',
+      label: 'Acepto el tratamiento de mis datos',
+      required: true,
+      consent: true,
+    },
+  ]
+
+  test('are satisfied only when ticked', () => {
+    expect(validateResponses(consent, { dataConsent: true })).toEqual([])
+  })
+
+  test('are not satisfied by a box ticked and then unticked', () => {
+    expect(validateResponses(consent, { dataConsent: false })).toEqual([
+      'Acepto el tratamiento de mis datos is required',
     ])
   })
 })

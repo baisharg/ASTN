@@ -1,5 +1,6 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
+import { ConvexError } from 'convex/values'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import {
@@ -698,11 +699,13 @@ function AdminOpportunitiesPage() {
                         params: { slug, oppId: newId },
                       })
                     } catch (err) {
-                      toast.error(
-                        err instanceof Error
-                          ? err.message
-                          : 'Could not duplicate the opportunity',
-                      )
+                      toast.error('Could not duplicate the opportunity', {
+                        description:
+                          err instanceof ConvexError &&
+                          typeof err.data === 'string'
+                            ? err.data
+                            : undefined,
+                      })
                     } finally {
                       setDuplicatingId(null)
                     }

@@ -200,6 +200,9 @@ export function validateResponses(
     const val = responses[field.key]
     if (val === undefined || val === null || val === '') {
       errors.push(`${field.label} is required`)
+    } else if (field.kind === 'checkbox' && val !== true) {
+      // A ticked-then-unticked checkbox leaves `false`, which is not consent.
+      errors.push(`${field.label} is required`)
     } else if (Array.isArray(val) && val.length === 0) {
       errors.push(`${field.label} is required`)
     }
