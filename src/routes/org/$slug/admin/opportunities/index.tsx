@@ -19,7 +19,7 @@ import {
 } from 'lucide-react'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
-import { COURSE_TAGS } from '../../../../../../convex/lib/courses'
+import { COURSE_TAGS, courseOf } from '../../../../../../convex/lib/courses'
 import { OpportunityFormDialog } from '~/components/opportunities/OpportunityFormDialog'
 import { AuthHeader } from '~/components/layout/auth-header'
 import { Card } from '~/components/ui/card'
@@ -136,6 +136,12 @@ function AdminOpportunitiesPage() {
   )
   const isAdmin = access?.isAdmin ?? false
   const canView = isAdmin || (access?.courses.length ?? 0) > 0
+  // Course editors create, duplicate and archive within their courses.
+  const editCourses = (access?.courses ?? [])
+    .filter((c) => c.level === 'edit')
+    .map((c): string => c.course)
+  const canEditOpp = (tags: Array<string> | undefined) =>
+    isAdmin || editCourses.includes(courseOf(tags) ?? '')
   const opportunities = useQuery(
     api.orgOpportunities.listAllByOrg,
     org && canView ? { orgId: org._id, includeArchived: true } : 'skip',
@@ -329,7 +335,7 @@ function AdminOpportunitiesPage() {
                 forms
               </p>
             </div>
-            {isAdmin && (
+            {(isAdmin || editCourses.length > 0) && (
               <Button onClick={() => setDialogOpen(true)}>
                 <Plus className="size-4 mr-2" />
                 New Opportunity
@@ -548,7 +554,7 @@ function AdminOpportunitiesPage() {
                           <Link2 className="size-4" />
                         </Button>
 
-                        {isAdmin && (
+                        {canEditOpp(opp.tags) && (
                           <>
                             <Button
                               variant="ghost"
@@ -738,6 +744,8 @@ function AdminOpportunitiesPage() {
             onOpenChange={setDialogOpen}
             orgId={org._id}
             slug={slug}
+            isAdmin={isAdmin}
+            courses={isAdmin ? COURSE_TAGS : editCourses}
           />
         </div>
       </main>

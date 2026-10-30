@@ -380,6 +380,11 @@ export const getSurveysByOpportunity = query({
     anonymous: v.union(surveyReturnValidator, v.null()),
   }),
   handler: async (ctx, { opportunityId }) => {
+    // Returns each survey's access token: admins only (no check before
+    // 2026-10-30, and opportunity ids are public in application links).
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) return { identified: null, anonymous: null }
+    await requireOrgAdmin(ctx, opportunity.orgId)
     const surveys = await ctx.db
       .query('feedbackSurveys')
       .withIndex('by_opportunity', (q) => q.eq('opportunityId', opportunityId))

@@ -1,7 +1,7 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import { ConvexError } from 'convex/values'
-import { Shield, Trash2 } from 'lucide-react'
+import { Shield, UserPlus } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../convex/_generated/api'
@@ -16,7 +16,19 @@ import {
   CardHeader,
   CardTitle,
 } from '~/components/ui/card'
-import { Input } from '~/components/ui/input'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '~/components/ui/command'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '~/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -25,33 +37,28 @@ import {
   SelectValue,
 } from '~/components/ui/select'
 import { Spinner } from '~/components/ui/spinner'
+import { Switch } from '~/components/ui/switch'
 
 export const Route = createFileRoute('/org/$slug/admin/permissions')({
-  component: PermissionsPage,
+  component: CourseAccessPage,
 })
 
 type Level = 'read' | 'edit'
-
-const LEVEL_LABELS: Record<Level, string> = {
-  read: 'Read',
-  edit: 'Edit',
-}
+const NONE = 'none'
 
 /**
- * Who can reach each course. Admins reach everything; anyone else only the
- * courses granted here: Read shows the course's opportunities, applications,
- * answers and availability; Edit also changes statuses, emails, polls and
- * custom forms.
+ * Which courses each team member who is not an admin can open, and who the
+ * owners are (the admins who manage this page and the admin role).
  */
-function PermissionsPage() {
+function CourseAccessPage() {
   const { slug } = Route.useParams()
   const org = useQuery(api.orgs.directory.getOrgBySlug, { slug })
-  const membership = useQuery(
-    api.orgs.membership.getMembership,
+  const access = useQuery(
+    api.courseAccess.myAccess,
     org ? { orgId: org._id } : 'skip',
   )
 
-  if (org === undefined || membership === undefined) {
+  if (org === undefined || (org && access === undefined)) {
     return (
       <div className="min-h-screen bg-slate-50">
         <AuthHeader />
@@ -62,18 +69,21 @@ function PermissionsPage() {
     )
   }
 
-  if (!org || !membership || membership.role !== 'admin') {
+  if (!org || !access?.canManage) {
     return (
       <div className="min-h-screen bg-slate-50">
         <AuthHeader />
         <main className="container mx-auto px-4 py-8">
           <div className="max-w-lg mx-auto text-center py-12">
             <Shield className="size-8 text-slate-400 mx-auto mb-4" />
-            <h1 className="text-2xl font-display mb-4">
-              Admin Access Required
-            </h1>
+            <h1 className="text-2xl font-display mb-4">Owners only</h1>
+            <p className="text-slate-600 mb-6">
+              Only the organization&apos;s owners manage course access.
+            </p>
             <Button asChild>
-              <Link to="/">Go Home</Link>
+              <Link to="/org/$slug/admin" params={{ slug }}>
+                Back to Admin
+              </Link>
             </Button>
           </div>
         </main>
@@ -85,7 +95,7 @@ function PermissionsPage() {
     <div className="min-h-screen bg-slate-50">
       <AuthHeader />
       <main className="container mx-auto px-4 py-8">
-        <div className="max-w-3xl mx-auto space-y-6">
+        <div className="max-w-4xl mx-auto space-y-6">
           <div>
             <div className="flex items-center gap-2 text-muted-foreground text-sm mb-2">
               <Link
@@ -96,29 +106,25 @@ function PermissionsPage() {
                 Admin
               </Link>
               <span>/</span>
-              <span className="text-slate-700">Course permissions</span>
+              <span className="text-slate-700">Course access</span>
             </div>
             <h1 className="text-2xl font-display font-semibold text-foreground">
-              Course permissions
+              Course access
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Admins reach every course. Anyone else reaches only the courses
-              granted here. <strong>Read</strong> shows a course&apos;s
-              opportunities, applications, answers and availability;{' '}
-              <strong>Edit</strong> also changes statuses, emails, polls and
-              custom forms. Creating or deleting opportunities, canonical forms,
-              members and settings stay with admins. A course is the
-              opportunity&apos;s course tag.
+              Choose which courses each team member can open. View lets them see
+              applications and availability; Edit also lets them change
+              statuses, send emails and create editions.
             </p>
           </div>
-          <PermissionsEditor orgId={org._id} slug={slug} />
+          <CourseAccessEditor orgId={org._id} slug={slug} />
         </div>
       </main>
     </div>
   )
 }
 
-function PermissionsEditor({
+function CourseAccessEditor({
   orgId,
   slug,
 }: {
@@ -128,12 +134,10 @@ function PermissionsEditor({
   const members = useQuery(api.orgs.admin.getAllMembersWithProfiles, { orgId })
   const grants = useQuery(api.courseAccess.list, { orgId })
   const setAccess = useMutation(api.courseAccess.setAccess)
-
-  const [search, setSearch] = useState('')
-  const [userId, setUserId] = useState<string>('')
-  const [course, setCourse] = useState<string>(COURSE_TAGS[0])
-  const [level, setLevel] = useState<Level>('read')
-  const [isSaving, setIsSaving] = useState(false)
+  const setOwner = useMutation(api.courseAccess.setOwner)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  // People added from the picker before they have any course.
+  const [added, setAdded] = useState<Array<string>>([])
 
   if (members === undefined || grants === undefined) {
     return <Spinner className="size-6 mx-auto" />
@@ -141,53 +145,191 @@ function PermissionsEditor({
 
   const nameOf = (m: (typeof members)[number]) =>
     m.profile?.name || m.email || 'Unnamed member'
-  const admins = members.filter((m) => m.membership.role === 'admin')
-  const candidates = members
-    .filter((m) => m.membership.role !== 'admin')
-    .filter((m) => {
-      const q = search.trim().toLowerCase()
-      if (!q) return true
-      return (
-        nameOf(m).toLowerCase().includes(q) ||
-        (m.email ?? '').toLowerCase().includes(q)
-      )
-    })
+  const byUser = new Map(members.map((m) => [m.membership.userId, m]))
+  const admins = members
+    .filter((m) => m.membership.role === 'admin')
     .sort((a, b) => nameOf(a).localeCompare(nameOf(b)))
 
-  const save = async (
-    target: string,
-    targetCourse: string,
-    targetLevel: Level | null,
+  // One row per person with any course, plus anyone just picked.
+  const rowIds = [
+    ...new Set([...grants.map((g) => g.userId), ...added]),
+  ].filter((id) => byUser.get(id)?.membership.role !== 'admin')
+  const rows = rowIds
+    .map((id) => byUser.get(id))
+    .filter((m): m is (typeof members)[number] => m !== undefined)
+    .sort((a, b) => nameOf(a).localeCompare(nameOf(b)))
+  const levelOf = (userId: string, course: string): Level | typeof NONE =>
+    grants.find((g) => g.userId === userId && g.course === course)?.level ??
+    NONE
+  const candidates = members
+    .filter(
+      (m) =>
+        m.membership.role !== 'admin' && !rowIds.includes(m.membership.userId),
+    )
+    .sort((a, b) => nameOf(a).localeCompare(nameOf(b)))
+
+  const fail = (err: unknown) =>
+    toast.error("Couldn't save", {
+      description:
+        err instanceof ConvexError && typeof err.data === 'string'
+          ? err.data
+          : 'Please try again.',
+    })
+
+  const change = async (
+    m: (typeof members)[number],
+    course: string,
+    value: Level | typeof NONE,
   ) => {
-    setIsSaving(true)
     try {
       await setAccess({
         orgId,
-        userId: target,
-        course: targetCourse,
-        level: targetLevel,
+        userId: m.membership.userId,
+        course,
+        level: value === NONE ? null : value,
       })
-      toast.success(targetLevel === null ? 'Access removed' : 'Access saved')
+      toast.success(
+        value === NONE
+          ? `${nameOf(m)} can no longer open ${course}.`
+          : `${nameOf(m)} can now ${value === 'edit' ? 'edit' : 'view'} ${course}.`,
+      )
     } catch (err) {
-      toast.error("Couldn't change the access", {
-        description:
-          err instanceof ConvexError && typeof err.data === 'string'
-            ? err.data
-            : 'Please try again.',
-      })
-    } finally {
-      setIsSaving(false)
+      fail(err)
+    }
+  }
+
+  const toggleOwner = async (m: (typeof members)[number], owner: boolean) => {
+    try {
+      await setOwner({ orgId, membershipId: m.membership._id, owner })
+      toast.success(
+        owner
+          ? `${nameOf(m)} is now an owner.`
+          : `${nameOf(m)} is no longer an owner.`,
+      )
+    } catch (err) {
+      fail(err)
     }
   }
 
   return (
     <>
       <Card>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+          <div>
+            <CardTitle>Team members</CardTitle>
+            <CardDescription>
+              People who are not admins open only the courses set here.
+            </CardDescription>
+          </div>
+          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+            <PopoverTrigger asChild>
+              <Button size="sm">
+                <UserPlus className="size-4 mr-2" />
+                Add person
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-[320px] p-0" align="end">
+              <Command>
+                <CommandInput placeholder="Search by name or email…" />
+                <CommandList>
+                  <CommandEmpty>No member found.</CommandEmpty>
+                  <CommandGroup>
+                    {candidates.map((m) => (
+                      <CommandItem
+                        key={m.membership._id}
+                        value={`${nameOf(m)} ${m.email ?? ''}`}
+                        onSelect={() => {
+                          setAdded((prev) => [...prev, m.membership.userId])
+                          setPickerOpen(false)
+                        }}
+                      >
+                        <span className="truncate">
+                          {nameOf(m)}
+                          {m.email && (
+                            <span className="text-muted-foreground">
+                              {' '}
+                              · {m.email}
+                            </span>
+                          )}
+                        </span>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
+        </CardHeader>
+        <CardContent>
+          {rows.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No one yet. Add someone to give them a course.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-muted-foreground">
+                    <th className="py-2 pr-3 font-medium">Person</th>
+                    {COURSE_TAGS.map((c) => (
+                      <th key={c} className="py-2 px-1 font-medium">
+                        {c}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {rows.map((m) => (
+                    <tr key={m.membership._id}>
+                      <td className="py-2 pr-3 min-w-40">
+                        <div>{nameOf(m)}</div>
+                        {m.email && (
+                          <div className="text-xs text-muted-foreground">
+                            {m.email}
+                          </div>
+                        )}
+                      </td>
+                      {COURSE_TAGS.map((c) => (
+                        <td key={c} className="py-2 px-1">
+                          <Select
+                            value={levelOf(m.membership.userId, c)}
+                            onValueChange={(value) =>
+                              void change(m, c, value as Level | typeof NONE)
+                            }
+                          >
+                            <SelectTrigger
+                              className="h-8 w-24 text-xs"
+                              aria-label={`${nameOf(m)}: ${c}`}
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={NONE}>—</SelectItem>
+                              <SelectItem value="read">View</SelectItem>
+                              <SelectItem value="edit">Edit</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground mt-3">
+            A course is the opportunity&apos;s course tag (e.g. &quot;TAIS
+            Course&quot;). Opportunities without one are for admins only.
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader>
           <CardTitle>Admins</CardTitle>
           <CardDescription>
-            They reach every course and manage these permissions. Make someone
-            an admin, or take it away, in{' '}
+            Admins open every course. Owners also manage this page and who is an
+            admin, in{' '}
             <Link
               to="/org/$slug/admin/members"
               params={{ slug }}
@@ -199,151 +341,30 @@ function PermissionsEditor({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <ul className="text-sm space-y-1">
+          <ul className="divide-y text-sm">
             {admins.map((m) => (
-              <li key={m.membership._id}>
-                {nameOf(m)}
-                {m.email && (
-                  <span className="text-muted-foreground"> · {m.email}</span>
-                )}
+              <li
+                key={m.membership._id}
+                className="flex items-center justify-between gap-3 py-2"
+              >
+                <span>
+                  {nameOf(m)}
+                  {m.email && (
+                    <span className="text-muted-foreground"> · {m.email}</span>
+                  )}
+                </span>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  Owner
+                  <Switch
+                    checked={m.membership.isOwner === true}
+                    onCheckedChange={(checked) => void toggleOwner(m, checked)}
+                  />
+                </label>
               </li>
             ))}
           </ul>
         </CardContent>
       </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Give access to a course</CardTitle>
-          <CardDescription>
-            Only members who are not admins are listed.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search members by name or email"
-          />
-          <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto_auto]">
-            <Select value={userId} onValueChange={setUserId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Choose a member…" />
-              </SelectTrigger>
-              <SelectContent>
-                {candidates.slice(0, 100).map((m) => (
-                  <SelectItem
-                    key={m.membership._id}
-                    value={m.membership.userId}
-                  >
-                    {nameOf(m)}
-                    {m.email ? ` · ${m.email}` : ''}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={course} onValueChange={setCourse}>
-              <SelectTrigger className="sm:w-44">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {COURSE_TAGS.map((c) => (
-                  <SelectItem key={c} value={c}>
-                    {c}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select
-              value={level}
-              onValueChange={(value) => setLevel(value as Level)}
-            >
-              <SelectTrigger className="sm:w-28">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="read">Read</SelectItem>
-                <SelectItem value="edit">Edit</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button
-              type="button"
-              disabled={!userId || isSaving}
-              onClick={() => void save(userId, course, level)}
-            >
-              Give access
-            </Button>
-          </div>
-          {candidates.length > 100 && (
-            <p className="text-xs text-muted-foreground">
-              Showing the first 100 matches; search to narrow them down.
-            </p>
-          )}
-        </CardContent>
-      </Card>
-
-      {COURSE_TAGS.map((c) => {
-        const rows = grants.filter((g) => g.course === c)
-        return (
-          <Card key={c}>
-            <CardHeader>
-              <CardTitle>{c}</CardTitle>
-              <CardDescription>
-                {rows.length === 0
-                  ? 'Only admins reach this course.'
-                  : `${rows.length} ${rows.length === 1 ? 'person' : 'people'} besides the admins.`}
-              </CardDescription>
-            </CardHeader>
-            {rows.length > 0 && (
-              <CardContent>
-                <ul className="divide-y">
-                  {rows.map((g) => (
-                    <li
-                      key={g.userId}
-                      className="flex flex-wrap items-center gap-2 py-2 text-sm"
-                    >
-                      <span className="flex-1 min-w-40">
-                        {g.name || g.email || g.userId}
-                        {g.name && g.email && (
-                          <span className="text-muted-foreground">
-                            {' '}
-                            · {g.email}
-                          </span>
-                        )}
-                      </span>
-                      <Select
-                        value={g.level}
-                        onValueChange={(value) =>
-                          void save(g.userId, c, value as Level)
-                        }
-                        disabled={isSaving}
-                      >
-                        <SelectTrigger className="w-28">
-                          <SelectValue>{LEVEL_LABELS[g.level]}</SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="read">Read</SelectItem>
-                          <SelectItem value="edit">Edit</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={isSaving}
-                        onClick={() => void save(g.userId, c, null)}
-                        aria-label={`Remove ${g.name ?? 'this person'} from ${c}`}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-            )}
-          </Card>
-        )
-      })}
     </>
   )
 }

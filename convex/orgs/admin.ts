@@ -1,6 +1,10 @@
 import { v } from 'convex/values'
 import { mutation, query } from '../_generated/server'
 import { getUserId } from '../lib/auth'
+import {
+  deleteCourseGrants,
+  requirePermissionManager,
+} from '../lib/courseAccess'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc, Id } from '../_generated/dataModel'
 
@@ -58,8 +62,9 @@ export const removeMember = mutation({
       )
     }
 
-    // Delete the membership
+    // Delete the membership, and the course access that came with it
     await ctx.db.delete('orgMemberships', membershipId)
+    await deleteCourseGrants(ctx, orgId, targetMembership.userId)
 
     return { success: true }
   },
@@ -72,7 +77,8 @@ export const promoteToAdmin = mutation({
     membershipId: v.id('orgMemberships'),
   },
   handler: async (ctx, { orgId, membershipId }) => {
-    await requireOrgAdmin(ctx, orgId)
+    // Admins see every course, so making one is an owner's call.
+    await requirePermissionManager(ctx, orgId)
 
     // Get the target membership
     const targetMembership = await ctx.db.get('orgMemberships', membershipId)
@@ -85,10 +91,11 @@ export const promoteToAdmin = mutation({
       throw new Error('Membership is not for this organization')
     }
 
-    // Update role to admin
+    // Update role to admin; course grants are moot for an admin
     await ctx.db.patch('orgMemberships', membershipId, {
       role: 'admin',
     })
+    await deleteCourseGrants(ctx, orgId, targetMembership.userId)
 
     return { success: true }
   },
@@ -101,6 +108,7 @@ export const demoteToMember = mutation({
     membershipId: v.id('orgMemberships'),
   },
   handler: async (ctx, { orgId, membershipId }) => {
+    await requirePermissionManager(ctx, orgId)
     const adminMembership = await requireOrgAdmin(ctx, orgId)
 
     // Get the target membership
@@ -138,6 +146,7 @@ export const demoteToMember = mutation({
     // Update role to member
     await ctx.db.patch('orgMemberships', membershipId, {
       role: 'member',
+      isOwner: undefined,
     })
 
     return { success: true }

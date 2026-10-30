@@ -54,6 +54,10 @@ function OrgAdminDashboard() {
     api.orgs.membership.getMembership,
     org ? { orgId: org._id } : 'skip',
   )
+  const access = useQuery(
+    api.courseAccess.myAccess,
+    org && membership ? { orgId: org._id } : 'skip',
+  )
   const stats = useQuery(
     api.orgs.stats.getEnhancedOrgStats,
     org && membership?.role === 'admin'
@@ -108,6 +112,39 @@ function OrgAdminDashboard() {
             </p>
             <Button asChild>
               <Link to="/">Go Home</Link>
+            </Button>
+          </div>
+        </main>
+      </div>
+    )
+  }
+
+  // Not an admin but with course access: their way into their courses.
+  if (
+    membership &&
+    membership.role !== 'admin' &&
+    (access?.courses.length ?? 0) > 0
+  ) {
+    return (
+      <div className="min-h-screen" style={dotGridStyle}>
+        <AuthHeader />
+        <main className="container mx-auto px-4 py-8">
+          <div className="max-w-lg mx-auto text-center py-12">
+            <h1 className="text-2xl font-display text-foreground mb-2">
+              Your courses
+            </h1>
+            <p className="text-slate-600 mb-6">
+              {access?.courses
+                .map(
+                  (c) =>
+                    `${c.course} (${c.level === 'edit' ? 'edit' : 'view'})`,
+                )
+                .join(' · ')}
+            </p>
+            <Button asChild>
+              <Link to="/org/$slug/admin/opportunities" params={{ slug }}>
+                Open opportunities
+              </Link>
             </Button>
           </div>
         </main>
@@ -296,7 +333,7 @@ function OrgAdminDashboard() {
             <Button variant="outline" className="h-auto py-4" asChild>
               <Link to="/org/$slug/admin/permissions" params={{ slug }}>
                 <KeyRound className="size-5 mr-2" />
-                Course permissions
+                Course access
               </Link>
             </Button>
 

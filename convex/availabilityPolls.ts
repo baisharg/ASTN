@@ -7,6 +7,7 @@ import { getUserId } from './lib/auth'
 import {
   canAccessOpportunity,
   getOrgAccess,
+  hasOpportunityAccess,
   requireOpportunityAccess,
 } from './lib/courseAccess'
 import {
@@ -591,6 +592,11 @@ export const getPollByOpportunity = query({
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.union(pollReturnValidator, v.null()),
   handler: async (ctx, { opportunityId }) => {
+    // Returns the poll's access token: admins and course readers only (no
+    // check before 2026-10-30, and opportunity ids are public).
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity || !(await hasOpportunityAccess(ctx, opportunity, 'read')))
+      return null
     return await ctx.db
       .query('availabilityPolls')
       .withIndex('by_opportunity', (q) => q.eq('opportunityId', opportunityId))

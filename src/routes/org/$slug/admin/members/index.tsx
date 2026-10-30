@@ -479,6 +479,9 @@ function MemberCardMobile({
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false)
 
   const removeMember = useMutation(api.orgs.admin.removeMember)
+  // Making or unmaking admins is for owners (see Course access).
+  const myAccess = useQuery(api.courseAccess.myAccess, { orgId })
+  const canManageRoles = myAccess?.canManage ?? false
   const promoteToAdmin = useMutation(api.orgs.admin.promoteToAdmin)
   const demoteToMember = useMutation(api.orgs.admin.demoteToMember)
 
@@ -624,13 +627,13 @@ function MemberCardMobile({
               </>
             )}
             <DropdownMenuSeparator />
-            {!isAdmin && (
+            {!isAdmin && canManageRoles && (
               <DropdownMenuItem onClick={handlePromote}>
                 <Shield className="size-4 mr-2" />
                 Promote to Admin
               </DropdownMenuItem>
             )}
-            {isAdmin && !isSelf && (
+            {isAdmin && !isSelf && canManageRoles && (
               <DropdownMenuItem onClick={handleDemote}>
                 <ShieldOff className="size-4 mr-2" />
                 Demote to Member
@@ -694,6 +697,9 @@ function MemberRow({
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false)
 
   const removeMember = useMutation(api.orgs.admin.removeMember)
+  // Making or unmaking admins is for owners (see Course access).
+  const myAccess = useQuery(api.courseAccess.myAccess, { orgId })
+  const canManageRoles = myAccess?.canManage ?? false
   const promoteToAdmin = useMutation(api.orgs.admin.promoteToAdmin)
   const demoteToMember = useMutation(api.orgs.admin.demoteToMember)
 
@@ -860,13 +866,13 @@ function MemberRow({
                 </>
               )}
               <DropdownMenuSeparator />
-              {!isAdmin && (
+              {!isAdmin && canManageRoles && (
                 <DropdownMenuItem onClick={handlePromote}>
                   <Shield className="size-4 mr-2" />
                   Promote to Admin
                 </DropdownMenuItem>
               )}
-              {isAdmin && !isSelf && (
+              {isAdmin && !isSelf && canManageRoles && (
                 <DropdownMenuItem onClick={handleDemote}>
                   <ShieldOff className="size-4 mr-2" />
                   Demote to Member

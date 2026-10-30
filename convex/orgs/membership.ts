@@ -1,6 +1,7 @@
 import { v } from 'convex/values'
 import { mutation, query } from '../_generated/server'
 import { getUserId } from '../lib/auth'
+import { deleteCourseGrants } from '../lib/courseAccess'
 import type { Id } from '../_generated/dataModel'
 
 // Get current user's membership for a given org
@@ -339,8 +340,9 @@ export const leaveOrg = mutation({
       }
     }
 
-    // Delete membership
+    // Delete membership, and the course access that came with it
     await ctx.db.delete('orgMemberships', membership._id)
+    await deleteCourseGrants(ctx, membership.orgId, membership.userId)
 
     return { success: true }
   },

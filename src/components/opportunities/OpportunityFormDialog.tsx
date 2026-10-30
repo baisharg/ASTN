@@ -35,13 +35,20 @@ interface OpportunityFormDialogProps {
   onOpenChange: (open: boolean) => void
   orgId: Id<'organizations'>
   slug: string
+  // Courses the user may create in. Admins also get "No course".
+  courses: ReadonlyArray<string>
+  isAdmin: boolean
 }
+
+const NO_COURSE = '__none__'
 
 export function OpportunityFormDialog({
   open,
   onOpenChange,
   orgId,
   slug,
+  courses,
+  isAdmin,
 }: OpportunityFormDialogProps) {
   const navigate = useNavigate()
   const createOpp = useMutation(api.orgOpportunities.create)
@@ -54,6 +61,10 @@ export function OpportunityFormDialog({
   const [externalUrl, setExternalUrl] = useState('')
   const [featured, setFeatured] = useState(false)
   const [isEOI, setIsEOI] = useState(false)
+  // The course tag decides the canonical form's course and who reaches it.
+  const [course, setCourse] = useState<string>(
+    isAdmin ? NO_COURSE : (courses[0] ?? NO_COURSE),
+  )
   // null until picked: follows the EOI checkbox.
   const [pickedFormSource, setPickedFormSource] = useState<FormSource | null>(
     null,
@@ -83,6 +94,7 @@ export function OpportunityFormDialog({
         featured,
         isEOI,
         formSource,
+        ...(course !== NO_COURSE && { tags: [course] }),
         courseName: courseName.trim() || undefined,
         courseArea: courseArea.trim() || undefined,
       })
@@ -196,6 +208,28 @@ export function OpportunityFormDialog({
                 placeholder="https://..."
               />
             </div>
+          </div>
+
+          <div className="space-y-1">
+            <Label htmlFor="opp-course">Course</Label>
+            <Select value={course} onValueChange={setCourse}>
+              <SelectTrigger id="opp-course">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {isAdmin && (
+                  <SelectItem value={NO_COURSE}>No course</SelectItem>
+                )}
+                {courses.map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {c}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Who can open it besides admins: people with access to this course.
+            </p>
           </div>
 
           <div className="space-y-1">

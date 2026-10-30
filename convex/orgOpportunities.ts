@@ -13,7 +13,7 @@ import {
   toBaishCourseOpportunityContract,
   type BaishCourseOpportunityContract,
 } from './lib/baishCourseOpportunities'
-import { getUserId, requireOrgAdmin } from './lib/auth'
+import { getUserId } from './lib/auth'
 import {
   canAccessOpportunity,
   getOrgAccess,
@@ -529,7 +529,7 @@ export const setArchived = mutation({
   handler: async (ctx, { id, archived }) => {
     const opportunity = await ctx.db.get('orgOpportunities', id)
     if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireOrgAdmin(ctx, opportunity.orgId)
+    await requireOpportunityAccess(ctx, opportunity, 'edit')
 
     await ctx.db.patch('orgOpportunities', id, {
       archivedAt: archived ? Date.now() : undefined,
@@ -560,7 +560,9 @@ export const remove = mutation({
   handler: async (ctx, { id }) => {
     const opportunity = await ctx.db.get('orgOpportunities', id)
     if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireOrgAdmin(ctx, opportunity.orgId)
+    // Only empty opportunities can be deleted (see below), so course editors
+    // may clean up their own drafts.
+    await requireOpportunityAccess(ctx, opportunity, 'edit')
 
     const attached = await opportunityAttachments(ctx, id)
     const blocking = Object.entries(attached).filter(([, n]) => n > 0)
@@ -634,7 +636,7 @@ export const duplicate = mutation({
     const source = await ctx.db.get('orgOpportunities', id)
     if (!source) throw new ConvexError('Opportunity not found')
 
-    const userId = await requireOrgAdmin(ctx, source.orgId)
+    const userId = await requireOpportunityAccess(ctx, source, 'edit')
 
     const now = Date.now()
     const title = `${source.title} (copy)`
@@ -845,7 +847,13 @@ export const create = mutation({
   },
   returns: v.id('orgOpportunities'),
   handler: async (ctx, args) => {
-    const userId = await requireOrgAdmin(ctx, args.orgId)
+    // Admins create anything; course editors only inside their courses, so
+    // the new opportunity must carry the course tag they can edit.
+    const userId = await requireOpportunityAccess(
+      ctx,
+      { orgId: args.orgId, tags: args.tags },
+      'edit',
+    )
     return await createOpportunityFor(ctx, { ...args, createdBy: userId })
   },
 })
@@ -899,14 +907,14 @@ export const update = mutation({
     if (!canAccessOpportunity(access, opportunity, 'edit')) {
       throw new ConvexError('Edit access required')
     }
-    // The details form always sends the tags, so only a real change counts.
+    // Tags decide who reaches it: a course editor can retag only within
+    // the courses they edit, so they can't hand it to (or hide it from)
+    // another course.
     if (
       updates.tags !== undefined &&
-      !access?.isAdmin &&
-      JSON.stringify(normalizeTags(updates.tags) ?? []) !==
-        JSON.stringify(opportunity.tags ?? [])
+      !canAccessOpportunity(access, { tags: updates.tags }, 'edit')
     ) {
-      throw new ConvexError('Only admins can change the tags.')
+      throw new ConvexError('You can only tag it with a course you can edit.')
     }
 
     const [redirect, source] = await Promise.all([

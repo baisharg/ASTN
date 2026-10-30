@@ -34,7 +34,6 @@ import { DynamicFormRenderer } from '~/components/opportunities/DynamicFormRende
 import { FormFieldsEditor } from '~/components/opportunities/FormFieldsEditor'
 import { TagsInput } from '~/components/opportunities/TagsInput'
 import { ApplicationsTable } from '~/components/opportunities/ApplicationsTable'
-import { ApplicationsTimeline } from '~/components/opportunities/ApplicationsTimeline'
 import { SurveyTab } from '~/components/surveys/SurveyTab'
 import { EmailsTab } from '~/components/opportunities/EmailsTab'
 import { AuthHeader } from '~/components/layout/auth-header'
@@ -404,6 +403,7 @@ function OpportunityEditPage() {
         ?.level
     : undefined
   const canView = isAdmin || courseLevel !== undefined
+  const canEdit = isAdmin || courseLevel === 'edit'
 
   // Pending outbox drafts — shown as a count badge on the Emails tab.
   const outboxDrafts = useQuery(
@@ -558,8 +558,13 @@ function OpportunityEditPage() {
               <span className="text-slate-700">{opportunity.title}</span>
             </div>
             <div className="flex items-center justify-between">
-              <h1 className="text-2xl font-display font-semibold text-foreground">
-                Edit Opportunity
+              <h1 className="text-2xl font-display font-semibold text-foreground flex items-center gap-2">
+                {opportunity.title}
+                {!canEdit && (
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                    View only
+                  </span>
+                )}
               </h1>
               <div className="flex items-center gap-2">
                 <Button
@@ -640,51 +645,59 @@ function OpportunityEditPage() {
                   <CardContent>
                     {/* key by _id so the form re-initializes from props when
                         navigating between opportunities */}
-                    <OpportunityDetailsForm
-                      key={opportunity._id}
-                      opportunity={opportunity}
-                      redirectTargets={redirectTargets}
-                      existingTags={existingTags}
-                    />
+                    {/* A disabled fieldset turns every input and button in
+                        the form off for people who can only read. */}
+                    <fieldset disabled={!canEdit} className="min-w-0">
+                      <OpportunityDetailsForm
+                        key={opportunity._id}
+                        opportunity={opportunity}
+                        redirectTargets={redirectTargets}
+                        existingTags={existingTags}
+                      />
+                    </fieldset>
                   </CardContent>
                 </Card>
 
                 {/* Card 2: the application form, read-only */}
-                <ApplicationFormCard opportunity={opportunity} slug={slug} />
+                <fieldset disabled={!canEdit} className="min-w-0">
+                  <ApplicationFormCard opportunity={opportunity} slug={slug} />
+                </fieldset>
 
                 {/* Card 3: destructive actions, deliberately last. Deleting is
                     rare and irreversible, so it does not belong next to the
                     everyday controls in the list. */}
-                <Card className="border-red-200">
-                  <CardHeader>
-                    <CardTitle className="text-base text-red-700">
-                      Delete this opportunity
-                    </CardTitle>
-                    <CardDescription>
-                      Only possible while nothing is attached — no applications,
-                      feedback surveys, extra availability polls or sent emails.
-                      For a cohort that is simply over, archive it instead from
-                      the opportunities list: it leaves the list and nothing is
-                      lost.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <OpportunityDeleteButton
-                      opportunityId={opportunity._id}
-                      title={opportunity.title}
-                      slug={slug}
-                    />
-                  </CardContent>
-                </Card>
+                {canEdit && (
+                  <Card className="border-red-200">
+                    <CardHeader>
+                      <CardTitle className="text-base text-red-700">
+                        Delete this opportunity
+                      </CardTitle>
+                      <CardDescription>
+                        Only possible while nothing is attached — no
+                        applications, feedback surveys, extra availability polls
+                        or sent emails. For a cohort that is simply over,
+                        archive it instead from the opportunities list: it
+                        leaves the list and nothing is lost.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <OpportunityDeleteButton
+                        opportunityId={opportunity._id}
+                        title={opportunity.title}
+                        slug={slug}
+                      />
+                    </CardContent>
+                  </Card>
+                )}
               </div>
             </TabsContent>
 
             <TabsContent value="applications" className="mt-6">
-              <ApplicationsTimeline opportunityId={opportunity._id} />
               <ApplicationsTable
                 opportunityId={opportunity._id}
                 opportunityTitle={opportunity.title}
                 formFields={(opportunity.formFields ?? []) as Array<FormField>}
+                readOnly={!canEdit}
               />
             </TabsContent>
 
@@ -692,12 +705,14 @@ function OpportunityEditPage() {
               <AvailabilityTab
                 opportunityId={opportunity._id}
                 slug={slug}
-                canEdit={isAdmin || courseLevel === 'edit'}
+                canEdit={canEdit}
               />
             </TabsContent>
 
             <TabsContent value="emails" className="mt-6">
-              <EmailsTab opportunity={opportunity} slug={slug} />
+              <fieldset disabled={!canEdit} className="min-w-0">
+                <EmailsTab opportunity={opportunity} slug={slug} />
+              </fieldset>
             </TabsContent>
 
             <TabsContent value="feedback" className="mt-6">
@@ -950,97 +965,148 @@ function AvailabilityTab({
 
   return (
     <div className="space-y-6">
-      {/* Poll info card */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>{poll.title}</CardTitle>
-              <CardDescription>
-                {poll.days.map((d) => weekdayShort(d)).join(', ')} ·{' '}
-                {poll.timezone.replace(/_/g, ' ')} · {poll.slotDurationMinutes}{' '}
-                min slots
-              </CardDescription>
+      {/* Poll info card: settings, links and finalize, off for readers */}
+      <fieldset disabled={!canEdit} className="min-w-0">
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>{poll.title}</CardTitle>
+                <CardDescription>
+                  {poll.days.map((d) => weekdayShort(d)).join(', ')} ·{' '}
+                  {poll.timezone.replace(/_/g, ' ')} ·{' '}
+                  {poll.slotDurationMinutes} min slots
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                    poll.status === 'open'
+                      ? 'bg-green-100 text-green-800'
+                      : poll.status === 'closed'
+                        ? 'bg-slate-100 text-slate-800'
+                        : 'bg-blue-100 text-blue-800'
+                  }`}
+                >
+                  {poll.status.charAt(0).toUpperCase() + poll.status.slice(1)}
+                </span>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <span
-                className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                  poll.status === 'open'
-                    ? 'bg-green-100 text-green-800'
-                    : poll.status === 'closed'
-                      ? 'bg-slate-100 text-slate-800'
-                      : 'bg-blue-100 text-blue-800'
-                }`}
-              >
-                {poll.status.charAt(0).toUpperCase() + poll.status.slice(1)}
-              </span>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Generic link: anyone identifies with name + email */}
+            <div className="space-y-2">
+              <Label>Generic link</Label>
+              <div className="flex items-center gap-2">
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      <ClipboardCopy className="size-4 mr-1" />
+                      Copy
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>
+                        Share this link with care
+                      </AlertDialogTitle>
+                      <AlertDialogDescription asChild>
+                        <div className="space-y-2 text-sm">
+                          <p>
+                            This link is meant for people we already plan to
+                            accept, or who were accepted in a past edition.
+                          </p>
+                          <p>
+                            Anyone who has it can join this opportunity&apos;s
+                            applicants with just a name and an email. Send it
+                            directly to the people it is for, and avoid posting
+                            it in groups or public channels.
+                          </p>
+                        </div>
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={async () => {
+                          await navigator.clipboard.writeText(baseUrl)
+                          toast.success('Generic link copied')
+                        }}
+                      >
+                        Copy link
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                For people without a personal link: they give their name and
+                email (the email identifies them). Someone new appears in
+                Applications as an incomplete application to review; someone
+                marked Next edition in an earlier edition of this course is
+                accepted automatically.
+              </p>
             </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Generic link: anyone identifies with name + email */}
-          <div className="space-y-2">
-            <Label>Generic link</Label>
-            <div className="flex items-center gap-2">
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="outline" size="sm">
-                    <ClipboardCopy className="size-4 mr-1" />
-                    Copy
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>
-                      Share this link with care
-                    </AlertDialogTitle>
-                    <AlertDialogDescription asChild>
-                      <div className="space-y-2 text-sm">
-                        <p>
-                          This link is meant for people we already plan to
-                          accept, or who were accepted in a past edition.
-                        </p>
-                        <p>
-                          Anyone who has it can join this opportunity&apos;s
-                          applicants with just a name and an email. Send it
-                          directly to the people it is for, and avoid posting it
-                          in groups or public channels.
-                        </p>
-                      </div>
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
+
+            {/* Per-applicant links */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>
+                  Respondent Links
+                  {respondentLinks ? ` (${respondentLinks.length})` : ''}
+                </Label>
+                {respondentLinks && respondentLinks.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={async () => {
-                        await navigator.clipboard.writeText(baseUrl)
-                        toast.success('Generic link copied')
+                        try {
+                          const count = await backfillRespondents({
+                            pollId: poll._id,
+                          })
+                          if (count > 0) {
+                            toast.success(
+                              `Added ${count} new respondent link${count !== 1 ? 's' : ''}`,
+                            )
+                          } else {
+                            toast.info('All applicants already have links')
+                          }
+                        } catch (err) {
+                          console.error('Failed to sync links:', err)
+                          toast.error('Failed to sync links')
+                        }
                       }}
                     >
-                      Copy link
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              For people without a personal link: they give their name and email
-              (the email identifies them). Someone new appears in Applications
-              as an incomplete application to review; someone marked Next
-              edition in an earlier edition of this course is accepted
-              automatically.
-            </p>
-          </div>
-
-          {/* Per-applicant links */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>
-                Respondent Links
-                {respondentLinks ? ` (${respondentLinks.length})` : ''}
-              </Label>
-              {respondentLinks && respondentLinks.length > 0 && (
-                <div className="flex items-center gap-2">
+                      Sync New Applicants
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCopyAllLinks}
+                    >
+                      {allCopied ? (
+                        <>
+                          <Check className="size-4 mr-1" />
+                          Copied All
+                        </>
+                      ) : (
+                        <>
+                          <ClipboardCopy className="size-4 mr-1" />
+                          Copy All Links
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
+              </div>
+              {respondentLinks === undefined ? (
+                <Spinner className="size-4" />
+              ) : respondentLinks.length === 0 ? (
+                <div className="flex items-center gap-3">
+                  <p className="text-sm text-muted-foreground">
+                    No respondent links yet.
+                  </p>
                   <Button
                     variant="outline"
                     size="sm"
@@ -1049,190 +1115,143 @@ function AvailabilityTab({
                         const count = await backfillRespondents({
                           pollId: poll._id,
                         })
-                        if (count > 0) {
-                          toast.success(
-                            `Added ${count} new respondent link${count !== 1 ? 's' : ''}`,
-                          )
-                        } else {
-                          toast.info('All applicants already have links')
-                        }
+                        toast.success(
+                          `Generated ${count} respondent link${count !== 1 ? 's' : ''}`,
+                        )
                       } catch (err) {
-                        console.error('Failed to sync links:', err)
-                        toast.error('Failed to sync links')
+                        console.error('Failed to generate links:', err)
+                        toast.error('Failed to generate links')
                       }
                     }}
                   >
-                    Sync New Applicants
+                    Generate Links
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleCopyAllLinks}
-                  >
-                    {allCopied ? (
-                      <>
-                        <Check className="size-4 mr-1" />
-                        Copied All
-                      </>
-                    ) : (
-                      <>
-                        <ClipboardCopy className="size-4 mr-1" />
-                        Copy All Links
-                      </>
-                    )}
-                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-1 max-h-48 overflow-y-auto rounded-md border p-2">
+                  {respondentLinks.map((r) => (
+                    <div
+                      key={r.respondentToken}
+                      className="flex items-center justify-between gap-2 py-1 px-1 rounded hover:bg-slate-50"
+                    >
+                      <span className="text-sm truncate">
+                        {r.respondentName}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="shrink-0 h-7 px-2"
+                        onClick={() =>
+                          handleCopyRespondentLink(
+                            r.respondentToken,
+                            r.respondentName,
+                          )
+                        }
+                      >
+                        {copiedToken === r.respondentToken ? (
+                          <Check className="size-3.5" />
+                        ) : (
+                          <ClipboardCopy className="size-3.5" />
+                        )}
+                      </Button>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
-            {respondentLinks === undefined ? (
-              <Spinner className="size-4" />
-            ) : respondentLinks.length === 0 ? (
-              <div className="flex items-center gap-3">
-                <p className="text-sm text-muted-foreground">
-                  No respondent links yet.
-                </p>
+
+            {/* Poll controls */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <Input
+                  type="number"
+                  step="0.5"
+                  min="0.5"
+                  placeholder="Session hrs"
+                  value={sessionHours}
+                  onChange={(e) => setSessionHours(e.target.value)}
+                  className="w-28 h-8 text-sm"
+                />
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={async () => {
-                    try {
-                      const count = await backfillRespondents({
-                        pollId: poll._id,
-                      })
-                      toast.success(
-                        `Generated ${count} respondent link${count !== 1 ? 's' : ''}`,
-                      )
-                    } catch (err) {
-                      console.error('Failed to generate links:', err)
-                      toast.error('Failed to generate links')
-                    }
-                  }}
+                  onClick={handleExportAvailability}
+                  disabled={isExportingAvailability}
                 >
-                  Generate Links
+                  {isExportingAvailability ? (
+                    <Loader2 className="size-4 mr-1 animate-spin" />
+                  ) : (
+                    <Download className="size-4 mr-1" />
+                  )}
+                  Export CSV
                 </Button>
               </div>
-            ) : (
-              <div className="space-y-1 max-h-48 overflow-y-auto rounded-md border p-2">
-                {respondentLinks.map((r) => (
-                  <div
-                    key={r.respondentToken}
-                    className="flex items-center justify-between gap-2 py-1 px-1 rounded hover:bg-slate-50"
+              {poll.status !== 'finalized' && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleToggleStatus}
                   >
-                    <span className="text-sm truncate">{r.respondentName}</span>
+                    {poll.status === 'open' ? 'Close Poll' : 'Reopen Poll'}
+                  </Button>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                      >
+                        <Trash2 className="size-4 mr-1" />
+                        Delete Poll
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Delete this poll?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This will permanently delete the poll and all{' '}
+                          {totalRespondents} response
+                          {totalRespondents !== 1 ? 's' : ''}. This cannot be
+                          undone.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={handleDeletePoll}
+                          className="bg-red-600 hover:bg-red-700"
+                        >
+                          Delete
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                  {selectedSlot && (
                     <Button
-                      variant="ghost"
                       size="sm"
-                      className="shrink-0 h-7 px-2"
-                      onClick={() =>
-                        handleCopyRespondentLink(
-                          r.respondentToken,
-                          r.respondentName,
-                        )
-                      }
+                      onClick={handleFinalize}
+                      disabled={isFinalizingPoll}
                     >
-                      {copiedToken === r.respondentToken ? (
-                        <Check className="size-3.5" />
+                      {isFinalizingPoll ? (
+                        <>
+                          <Loader2 className="size-4 mr-1 animate-spin" />
+                          Finalizing...
+                        </>
                       ) : (
-                        <ClipboardCopy className="size-3.5" />
+                        <>
+                          <Check className="size-4 mr-1" />
+                          Finalize Selected Slot
+                        </>
                       )}
                     </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Poll controls */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1.5">
-              <Input
-                type="number"
-                step="0.5"
-                min="0.5"
-                placeholder="Session hrs"
-                value={sessionHours}
-                onChange={(e) => setSessionHours(e.target.value)}
-                className="w-28 h-8 text-sm"
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleExportAvailability}
-                disabled={isExportingAvailability}
-              >
-                {isExportingAvailability ? (
-                  <Loader2 className="size-4 mr-1 animate-spin" />
-                ) : (
-                  <Download className="size-4 mr-1" />
-                )}
-                Export CSV
-              </Button>
+                  )}
+                </>
+              )}
             </div>
-            {poll.status !== 'finalized' && (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleToggleStatus}
-                >
-                  {poll.status === 'open' ? 'Close Poll' : 'Reopen Poll'}
-                </Button>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                    >
-                      <Trash2 className="size-4 mr-1" />
-                      Delete Poll
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Delete this poll?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        This will permanently delete the poll and all{' '}
-                        {totalRespondents} response
-                        {totalRespondents !== 1 ? 's' : ''}. This cannot be
-                        undone.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={handleDeletePoll}
-                        className="bg-red-600 hover:bg-red-700"
-                      >
-                        Delete
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-                {selectedSlot && (
-                  <Button
-                    size="sm"
-                    onClick={handleFinalize}
-                    disabled={isFinalizingPoll}
-                  >
-                    {isFinalizingPoll ? (
-                      <>
-                        <Loader2 className="size-4 mr-1 animate-spin" />
-                        Finalizing...
-                      </>
-                    ) : (
-                      <>
-                        <Check className="size-4 mr-1" />
-                        Finalize Selected Slot
-                      </>
-                    )}
-                  </Button>
-                )}
-              </>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </fieldset>
 
       {/* Heatmap */}
       {pollResults && (

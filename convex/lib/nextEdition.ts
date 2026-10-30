@@ -33,7 +33,7 @@ function courseTags(opportunity: Doc<'orgOpportunities'>): Set<string> {
   )
 }
 
-export function sameCourse(
+function sameCourse(
   a: Doc<'orgOpportunities'>,
   b: Doc<'orgOpportunities'>,
 ): boolean {

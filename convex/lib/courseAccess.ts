@@ -90,3 +90,49 @@ export async function hasOpportunityAccess(
   const access = await getOrgAccess(ctx, userId, opportunity.orgId)
   return canAccessOpportunity(access, opportunity, level)
 }
+
+/**
+ * Whether `userId` manages roles and course permissions in the org: an owner,
+ * or any admin while the org has no owner yet (so the first one can be set).
+ */
+export async function canManagePermissions(
+  ctx: QueryCtx | MutationCtx,
+  userId: string,
+  orgId: Id<'organizations'>,
+): Promise<boolean> {
+  const memberships = await ctx.db
+    .query('orgMemberships')
+    .withIndex('by_org', (q) => q.eq('orgId', orgId))
+    .collect()
+  const mine = memberships.find((m) => m.userId === userId)
+  if (!mine || mine.role !== 'admin') return false
+  return mine.isOwner === true || !memberships.some((m) => m.isOwner === true)
+}
+
+/** Throws unless the current user manages roles and permissions. */
+export async function requirePermissionManager(
+  ctx: QueryCtx | MutationCtx,
+  orgId: Id<'organizations'>,
+): Promise<string> {
+  const userId = await getUserId(ctx)
+  if (!userId) throw new Error('Not authenticated')
+  if (!(await canManagePermissions(ctx, userId, orgId))) {
+    throw new Error('Only owners can change roles and permissions')
+  }
+  return userId
+}
+
+/** Drop someone's course grants, e.g. when they leave or become an admin. */
+export async function deleteCourseGrants(
+  ctx: MutationCtx,
+  orgId: Id<'organizations'>,
+  userId: string,
+): Promise<void> {
+  const grants = await ctx.db
+    .query('courseAccess')
+    .withIndex('by_org_and_user', (q) =>
+      q.eq('orgId', orgId).eq('userId', userId),
+    )
+    .collect()
+  for (const g of grants) await ctx.db.delete('courseAccess', g._id)
+}
