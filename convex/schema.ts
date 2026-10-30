@@ -434,6 +434,9 @@ export default defineSchema({
     // Owners are the admins who manage roles and course permissions
     // (convex/lib/courseAccess.ts). "Admin" covers every facilitator.
     isOwner: v.optional(v.boolean()),
+    // Part of the team even without any course yet (moved to "Chosen
+    // courses" in Course access), so the table keeps showing them.
+    onTeam: v.optional(v.boolean()),
     directoryVisibility: v.union(v.literal('visible'), v.literal('hidden')),
     joinedAt: v.number(),
     invitedBy: v.optional(v.id('orgMemberships')),

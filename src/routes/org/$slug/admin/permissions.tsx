@@ -152,14 +152,24 @@ function CourseAccessEditor({
   // The team: every admin, everyone with a course, and anyone just added.
   const inTable = new Set([...grants.map((g) => g.userId), ...added])
   const rows = members
-    .filter((m) => isAdmin(m) || inTable.has(m.membership.userId))
+    .filter(
+      (m) =>
+        isAdmin(m) ||
+        m.membership.onTeam === true ||
+        inTable.has(m.membership.userId),
+    )
     .sort(
       (a, b) =>
         Number(isAdmin(b)) - Number(isAdmin(a)) ||
         nameOf(a).localeCompare(nameOf(b)),
     )
   const candidates = members
-    .filter((m) => !isAdmin(m) && !inTable.has(m.membership.userId))
+    .filter(
+      (m) =>
+        !isAdmin(m) &&
+        m.membership.onTeam !== true &&
+        !inTable.has(m.membership.userId),
+    )
     .sort((a, b) => nameOf(a).localeCompare(nameOf(b)))
   const levelOf = (userId: string, course: string): Level | typeof NONE =>
     grants.find((g) => g.userId === userId && g.course === course)?.level ??

@@ -167,6 +167,7 @@ export const demoteToMember = mutation({
     await ctx.db.patch('orgMemberships', membershipId, {
       role: 'member',
       isOwner: undefined,
+      onTeam: true,
     })
 
     return { success: true }
