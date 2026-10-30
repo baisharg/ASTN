@@ -11,7 +11,7 @@ import { internal } from './_generated/api'
 import type { MutationCtx } from './_generated/server'
 import type { Id } from './_generated/dataModel'
 import { isOutboxActive, syncOutboxOnStatusChange } from './emails/outbox'
-import { maybeAutoAcceptFromNextEdition } from './lib/nextEdition'
+import { maybeAutoAcceptFromNextEdition, sameCourse } from './lib/nextEdition'
 import {
   assertAvailabilityGiven,
   getApplicationPoll,
@@ -893,6 +893,95 @@ export const getApplicationCount = query({
       .collect()
 
     return apps.length
+  },
+})
+
+const DAY_MS = 24 * 60 * 60 * 1000
+const TIMELINE_EDITIONS = 5
+
+/**
+ * Applications per day, accumulated, for this opportunity and the previous
+ * editions of the same course (shared course tag, not EOIs), so a team can
+ * see whether this edition is filling faster or slower than the last ones.
+ * Days count to the deadline (day 0) when this opportunity has one, so
+ * editions line up by how close they were to closing; otherwise they count
+ * from each edition's first application. Incomplete rows (availability
+ * without the form) are left out, as in the application count.
+ */
+export const applicationTimeline = query({
+  args: { opportunityId: v.id('orgOpportunities') },
+  returns: v.object({
+    anchor: v.union(v.literal('deadline'), v.literal('firstApplication')),
+    editions: v.array(
+      v.object({
+        opportunityId: v.id('orgOpportunities'),
+        title: v.string(),
+        isCurrent: v.boolean(),
+        points: v.array(v.object({ day: v.number(), total: v.number() })),
+      }),
+    ),
+  }),
+  handler: async (ctx, { opportunityId }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) throw new ConvexError('Opportunity not found')
+    await requireOrgAdmin(ctx, opportunity.orgId)
+
+    const anchor: 'deadline' | 'firstApplication' = opportunity.deadline
+      ? 'deadline'
+      : 'firstApplication'
+    const siblings = (
+      await ctx.db
+        .query('orgOpportunities')
+        .withIndex('by_org_and_status', (q) => q.eq('orgId', opportunity.orgId))
+        .collect()
+    )
+      .filter(
+        (o) =>
+          o._id !== opportunityId &&
+          !o.isEOI &&
+          o.createdAt < opportunity.createdAt &&
+          sameCourse(o, opportunity) &&
+          (anchor === 'firstApplication' || o.deadline !== undefined),
+      )
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, TIMELINE_EDITIONS - 1)
+
+    const editions = []
+    for (const edition of [opportunity, ...siblings]) {
+      const times = (
+        await ctx.db
+          .query('opportunityApplications')
+          .withIndex('by_opportunity_and_status', (q) =>
+            q.eq('opportunityId', edition._id),
+          )
+          .collect()
+      )
+        .filter((a) => !a.availabilityOnly)
+        .map((a) => a.submittedAt)
+        .sort((a, b) => a - b)
+      if (times.length === 0 && edition._id !== opportunityId) continue
+      const zero =
+        anchor === 'deadline' ? (edition.deadline ?? 0) : (times[0] ?? 0)
+      const perDay = new Map<number, number>()
+      for (const t of times) {
+        const day = Math.floor((t - zero) / DAY_MS)
+        perDay.set(day, (perDay.get(day) ?? 0) + 1)
+      }
+      let total = 0
+      const points = [...perDay.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([day, count]) => {
+          total += count
+          return { day, total }
+        })
+      editions.push({
+        opportunityId: edition._id,
+        title: edition.title,
+        isCurrent: edition._id === opportunityId,
+        points,
+      })
+    }
+    return { anchor, editions }
   },
 })
 

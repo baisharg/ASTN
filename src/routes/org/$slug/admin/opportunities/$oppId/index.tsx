@@ -33,6 +33,7 @@ import { DynamicFormRenderer } from '~/components/opportunities/DynamicFormRende
 import { FormFieldsEditor } from '~/components/opportunities/FormFieldsEditor'
 import { TagsInput } from '~/components/opportunities/TagsInput'
 import { ApplicationsTable } from '~/components/opportunities/ApplicationsTable'
+import { ApplicationsTimeline } from '~/components/opportunities/ApplicationsTimeline'
 import { SurveyTab } from '~/components/surveys/SurveyTab'
 import { EmailsTab } from '~/components/opportunities/EmailsTab'
 import { AuthHeader } from '~/components/layout/auth-header'
@@ -665,6 +666,7 @@ function OpportunityEditPage() {
             </TabsContent>
 
             <TabsContent value="applications" className="mt-6">
+              <ApplicationsTimeline opportunityId={opportunity._id} />
               <ApplicationsTable
                 opportunityId={opportunity._id}
                 opportunityTitle={opportunity.title}
