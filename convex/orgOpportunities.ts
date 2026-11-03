@@ -6,6 +6,7 @@ import {
   mutation,
   query,
 } from './_generated/server'
+import { canonicalSetFor } from './emails/templateLibrary'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import {
   BAISH_ORG_SLUG,
@@ -84,7 +85,7 @@ async function uniqueSlug(
 // keeping the first-seen casing), cap length. Returns undefined for an empty
 // result so we don't store empty arrays.
 const MAX_TAG_LEN = 40
-function normalizeTags(tags: Array<string>): Array<string> | undefined {
+export function normalizeTags(tags: Array<string>): Array<string> | undefined {
   const seen = new Set<string>()
   const out: Array<string> = []
   for (const raw of tags) {
@@ -748,6 +749,12 @@ export async function createOpportunityFor(
     formSource,
     ...(args.tags !== undefined && { tags: normalizeTags(args.tags) }),
     isEOI: args.isEOI,
+    // A course edition announces its decisions with the canonical emails.
+    emailTemplateSetId: await canonicalSetFor(ctx, {
+      orgId: args.orgId,
+      formSource,
+      tags: args.tags,
+    }),
     slug: await uniqueSlug(ctx, args.orgId, args.title),
     createdAt: now,
     updatedAt: now,
@@ -941,7 +948,7 @@ export const update = mutation({
   },
 })
 
-async function assertNoApplications(
+export async function assertNoApplications(
   ctx: MutationCtx,
   opportunityId: Id<'orgOpportunities'>,
 ) {

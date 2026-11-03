@@ -403,6 +403,9 @@ export default defineSchema({
     contactEmail: v.optional(v.string()),
     // Where replies to the org's emails go (falls back to contactEmail).
     replyToEmail: v.optional(v.string()),
+    // Markdown closing every email the org sends to applicants (Canonicals →
+    // Emails), e.g. that replies are read with delay.
+    emailFooter: v.optional(v.string()),
     website: v.optional(v.string()),
     socialLinks: v.optional(
       v.array(
@@ -1665,6 +1668,9 @@ export default defineSchema({
   emailTemplateSets: defineTable({
     orgId: v.id('organizations'),
     name: v.string(),
+    // The org's canonical emails (at most one set per org): new course
+    // editions link it, and {{course}}/{{area}} fill from their course tag.
+    isCanonical: v.optional(v.boolean()),
     createdBy: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -1969,11 +1975,36 @@ export default defineSchema({
   // never through the MCP.
   canonicalForms: defineTable({
     orgId: v.id('organizations'),
-    kind: v.union(v.literal('course'), v.literal('eoi')),
+    kind: v.union(
+      v.literal('course'),
+      v.literal('eoi'),
+      v.literal('feedback'),
+      v.literal('feedback_anonymous'),
+    ),
     formFields: v.any(), // Array<FormField> — see convex/lib/formFields.ts
+    // Feedback surveys also start with a title and an intro.
+    title: v.optional(v.string()),
+    description: v.optional(v.string()),
     updatedBy: v.string(),
     updatedAt: v.number(),
   }).index('by_org_and_kind', ['orgId', 'kind']),
+
+  // Personal links that open a course's application pre-filled with the
+  // answers someone gave elsewhere (usually their expression of interest).
+  // Sent as {{apply_link}} in an email; they work while the target is active
+  // and stop pre-filling once that email applied there.
+  applicationInvites: defineTable({
+    orgId: v.id('organizations'),
+    token: v.string(),
+    sourceApplicationId: v.id('opportunityApplications'),
+    targetOpportunityId: v.id('orgOpportunities'),
+    createdAt: v.number(),
+  })
+    .index('by_token', ['token'])
+    .index('by_source_and_target', [
+      'sourceApplicationId',
+      'targetOpportunityId',
+    ]),
 
   formTemplates: defineTable({
     orgId: v.id('organizations'),

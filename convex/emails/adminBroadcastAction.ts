@@ -5,6 +5,8 @@ import { marked } from 'marked'
 import { emojify } from 'node-emoji'
 import { api, internal } from '../_generated/api'
 import { action } from '../_generated/server'
+import type { Id } from '../_generated/dataModel'
+import { linkBareUrls } from '../lib/emailLinks'
 import { renderAdminBroadcast } from './templates'
 
 /**
@@ -12,7 +14,9 @@ import { renderAdminBroadcast } from './templates'
  * Public action called from the admin email compose page.
  *
  * If `pollId` and `pollLinkBase` are provided, `{{poll_link}}` in the markdown body
- * will be replaced with each recipient's unique poll link.
+ * will be replaced with each recipient's unique poll link. `{{apply_link}}`
+ * becomes each recipient's personal link to the course's open application,
+ * pre-filled with their answers here (convex/applicationInvites.ts).
  */
 export const sendBroadcastToApplicants = action({
   args: {
@@ -75,6 +79,8 @@ export const sendBroadcastToApplicants = action({
       tokenMap: Map<string, string>
       linkBase: string
       placeholder: string
+      // Token as ?param= instead of a path segment.
+      param?: string
     }
     const linkSubs: Array<LinkSub> = []
 
@@ -114,6 +120,36 @@ export const sendBroadcastToApplicants = action({
       })
     }
 
+    if (markdownBody.includes('{{apply_link}}')) {
+      const target: {
+        targetOpportunityId: Id<'orgOpportunities'>
+        linkBase: string
+      } | null = await ctx.runQuery(
+        internal.applicationInvites.applyTargetForSend,
+        { opportunityId },
+      )
+      if (!target) {
+        throw new Error(
+          'There is no open application for this course, so {{apply_link}} has nowhere to go.',
+        )
+      }
+      const tokens: Record<string, string> = await ctx.runMutation(
+        internal.applicationInvites.ensureInvites,
+        {
+          targetOpportunityId: target.targetOpportunityId,
+          applicationIds: recipients.map(
+            (r) => r.applicationId as Id<'opportunityApplications'>,
+          ),
+        },
+      )
+      linkSubs.push({
+        tokenMap: new Map(Object.entries(tokens)),
+        linkBase: target.linkBase,
+        placeholder: '{{apply_link}}',
+        param: 'invite',
+      })
+    }
+
     let sent = 0
     let failed = 0
 
@@ -123,17 +159,24 @@ export const sendBroadcastToApplicants = action({
         let recipientMarkdown = markdownBody
         for (const sub of linkSubs) {
           const token = sub.tokenMap.get(recipient.applicationId)
-          const link = token ? `${sub.linkBase}/${token}` : sub.linkBase
+          const link = !token
+            ? sub.linkBase
+            : sub.param
+              ? `${sub.linkBase}?${sub.param}=${token}`
+              : `${sub.linkBase}/${token}`
           recipientMarkdown = recipientMarkdown.replaceAll(
             sub.placeholder,
             link,
           )
         }
 
-        const recipientHtml: string = await marked(emojify(recipientMarkdown), {
-          breaks: true,
-          gfm: true,
-        })
+        const recipientHtml: string = await marked(
+          emojify(linkBareUrls(recipientMarkdown)),
+          {
+            breaks: true,
+            gfm: true,
+          },
+        )
 
         const html: string = await renderAdminBroadcast({
           bodyHtml: recipientHtml,
@@ -190,6 +233,7 @@ export const sendTestEmail = action({
     toEmail: v.string(),
     pollExampleLink: v.optional(v.string()),
     surveyExampleLink: v.optional(v.string()),
+    applyExampleLink: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (
@@ -201,6 +245,7 @@ export const sendTestEmail = action({
       toEmail,
       pollExampleLink,
       surveyExampleLink,
+      applyExampleLink,
     },
   ) => {
     const identity = await ctx.auth.getUserIdentity()
@@ -227,8 +272,9 @@ export const sendTestEmail = action({
     if (surveyExampleLink) {
       md = md.replaceAll('{{survey_link}}', surveyExampleLink)
     }
+    if (applyExampleLink) md = md.replaceAll('{{apply_link}}', applyExampleLink)
 
-    const bodyHtml: string = await marked(emojify(md), {
+    const bodyHtml: string = await marked(emojify(linkBareUrls(md)), {
       breaks: true,
       gfm: true,
     })

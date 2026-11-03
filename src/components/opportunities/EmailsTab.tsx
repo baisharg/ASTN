@@ -73,7 +73,7 @@ type EmailKind =
   | 'redirected'
   | 'waitlisted'
 
-const KIND_LABELS: Record<string, string> = {
+export const KIND_LABELS: Record<string, string> = {
   application_received: 'Application received',
   accepted: 'Accepted',
   next_edition: 'Next edition',
@@ -86,7 +86,7 @@ const KIND_LABELS: Record<string, string> = {
   broadcast: 'Broadcast',
 }
 
-const KIND_COLORS: Record<string, string> = {
+export const KIND_COLORS: Record<string, string> = {
   application_received: 'bg-blue-50 text-blue-700 border-blue-200',
   accepted: 'bg-green-50 text-green-700 border-green-200',
   next_edition: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -493,7 +493,7 @@ function DraftEditDialog({
     } catch (err) {
       toast.error(
         err instanceof Error && err.message.includes('variable')
-          ? 'Unknown {{variable}} — only {{applicant_name}} is supported'
+          ? 'Unknown {{variable}}: use {{applicant_name}}, {{course}} or {{area}}'
           : 'Failed to save draft',
       )
     } finally {
@@ -860,7 +860,7 @@ function TemplateCard({
 
   const varError = (msg: string) =>
     msg.includes('variable')
-      ? 'Unknown {{variable}} — only {{applicant_name}} is supported'
+      ? 'Unknown {{variable}}: use {{applicant_name}}, {{course}} or {{area}}'
       : 'Failed to save'
 
   const saveOverride = async () => {
@@ -1030,7 +1030,7 @@ function NeedsEmailRow({ draft }: { draft: Draft }) {
 }
 
 // Shared subject/body/link-toggle fields for template cards and draft edits.
-function TemplateFields({
+export function TemplateFields({
   subject,
   body,
   pollLink,
@@ -1057,7 +1057,8 @@ function TemplateFields({
       </div>
       <div className="space-y-1">
         <Label className="text-xs">
-          Body (markdown — use {'{{applicant_name}}'} for the name)
+          Body (markdown — {'{{applicant_name}}'} for the name, {'{{course}}'}{' '}
+          and {'{{area}}'} for the course)
         </Label>
         {/* The base Textarea sets `field-sizing-content`, which overrides `rows`
             and lets the box grow with the body. Inside the draft dialog that

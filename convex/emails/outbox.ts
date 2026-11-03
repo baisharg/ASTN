@@ -12,7 +12,8 @@ import type { AccessLevel } from '../lib/courseAccess'
 import { resolveApplicantContact } from '../lib/applicantContact'
 import type { FormField } from '../lib/formFields'
 import { resend } from './send'
-import { replyToFor } from './replyTo'
+import { coursePlaceholderValues, fillText } from '../canonicalForms'
+import { replyToFor, withOrgFooter } from './replyTo'
 
 // Outbox for applicant decision emails (issue #20). Changing an application's
 // status never sends anything — it enqueues a pending draft prefilled from the
@@ -20,7 +21,9 @@ import { replyToFor } from './replyTo'
 // (convex/emails/outboxSend.ts). Design invariants:
 //   - at most one pending draft per application (a status change replaces it)
 //   - hard idempotency: one 'sent' emailLog row per (application, kind)
-//   - the only text variable is {{applicant_name}} (always resolvable);
+//   - the text variables are {{applicant_name}} (always resolvable) and
+//     {{course}}/{{area}}, filled from the opportunity's course tag (linking a
+//     set that uses them to an opportunity without one is refused);
 //     poll/survey links are system-managed blocks, never failable variables
 
 const FROM_ADDRESS = 'ASTN <notifications@safetytalent.org>'
@@ -54,19 +57,37 @@ const KIND_BY_STATUS: Record<string, DecisionKind | null> = {
   participated: null,
 }
 
+export const TEMPLATE_VARIABLES = ['applicant_name', 'course', 'area']
+
 // Validate template text at save time so a typo'd {{variable}} can never reach
-// an applicant. {{applicant_name}} is the only supported variable.
+// an applicant.
 export function assertOnlyKnownVariables(text: string): void {
   const unknown = [...text.matchAll(/\{\{\s*([^}]*?)\s*\}\}/g)]
     .map((m) => m[1])
-    .filter((name) => name !== 'applicant_name')
+    .filter((name) => !TEMPLATE_VARIABLES.includes(name))
   if (unknown.length > 0) {
     throw new ConvexError(
       `Unknown template variable(s): ${[...new Set(unknown)]
         .map((n) => `{{${n}}}`)
-        .join(', ')}. Only {{applicant_name}} is supported.`,
+        .join(', ')}. Use {{applicant_name}}, {{course}} or {{area}}.`,
     )
   }
+}
+
+/** Whether a template's text names the course ({{course}} or {{area}}). */
+export function usesCourseVariables(text: string): boolean {
+  return /\{\{\s*(course|area)\s*\}\}/.test(text)
+}
+
+/**
+ * Fill {{course}} and {{area}} from the opportunity's course tag. Left as
+ * written when it has none; the send then refuses (outboxSend.renderBody).
+ */
+export function fillCourseVariables(
+  text: string,
+  opportunity: Pick<Doc<'orgOpportunities'>, 'tags'> | null,
+): string {
+  return fillText(text, coursePlaceholderValues(opportunity?.tags))
 }
 
 // The outbox system is active for an opportunity iff it links a template set;
@@ -127,16 +148,26 @@ export async function syncOutboxOnStatusChange(
   const { application, status, opportunity } = opts
   if (!isOutboxActive(opportunity)) return
 
-  // A status change always supersedes the pending draft (no zombie drafts).
+  const kind = KIND_BY_STATUS[status] ?? null
   const existing = await ctx.db
     .query('emailOutbox')
     .withIndex('by_application', (q) => q.eq('applicationId', application._id))
     .collect()
+  // The same decision again (only the notes changed, or an MCP retry) keeps a
+  // draft someone already edited by hand.
+  if (
+    kind &&
+    existing.length === 1 &&
+    existing[0].kind === kind &&
+    existing[0].editedByAdmin === true
+  ) {
+    return
+  }
+  // A new decision supersedes the pending draft (no zombie drafts).
   for (const draft of existing) {
     await ctx.db.delete('emailOutbox', draft._id)
   }
 
-  const kind = KIND_BY_STATUS[status] ?? null
   if (!kind) return
   if (await hasSentKind(ctx, application._id, kind)) return
 
@@ -496,8 +527,8 @@ export const listForOpportunity = query({
         _id: draft._id,
         applicationId: draft.applicationId,
         kind: draft.kind,
-        subject: draft.subject,
-        markdownBody: draft.markdownBody,
+        subject: fillCourseVariables(draft.subject, opportunity),
+        markdownBody: fillCourseVariables(draft.markdownBody, opportunity),
         includePollLink: draft.includePollLink ?? false,
         includeSurveyLink: draft.includeSurveyLink ?? false,
         recipientName: name,
@@ -684,8 +715,8 @@ export const getDraftsForSend = internalQuery({
         draftId: draft._id,
         applicationId: draft.applicationId,
         kind: draft.kind,
-        subject: draft.subject,
-        markdownBody: draft.markdownBody,
+        subject: fillCourseVariables(draft.subject, opportunity),
+        markdownBody: fillCourseVariables(draft.markdownBody, opportunity),
         includePollLink: draft.includePollLink ?? false,
         includeSurveyLink: draft.includeSurveyLink ?? false,
         recipientName: name,
@@ -832,7 +863,7 @@ export const finalizeDraftSend = internalMutation({
       from: FROM_ADDRESS,
       to,
       subject,
-      html,
+      html: await withOrgFooter(ctx, draft.orgId, html),
       replyTo: await replyToFor(ctx, draft.orgId),
     })
     await ctx.db.insert('emailLog', {
@@ -913,8 +944,8 @@ export const getApplicationReceivedPayload = internalQuery({
       opportunityId: opportunity._id,
       to: email,
       recipientName: name,
-      subject: template.subject,
-      markdownBody: template.markdownBody,
+      subject: fillCourseVariables(template.subject, opportunity),
+      markdownBody: fillCourseVariables(template.markdownBody, opportunity),
       includePollLink: template.includePollLink ?? false,
       includeSurveyLink: template.includeSurveyLink ?? false,
     }
@@ -948,7 +979,7 @@ export const finalizeAutoSend = internalMutation({
       from: FROM_ADDRESS,
       to,
       subject,
-      html,
+      html: await withOrgFooter(ctx, app.orgId, html),
       replyTo: await replyToFor(ctx, app.orgId),
     })
     await ctx.db.insert('emailLog', {
@@ -992,7 +1023,7 @@ export const sendAvailabilityEmailNow = internalMutation({
       from: FROM_ADDRESS,
       to,
       subject,
-      html,
+      html: await withOrgFooter(ctx, app.orgId, html),
       replyTo: await replyToFor(ctx, app.orgId),
     })
     await ctx.db.insert('emailLog', {

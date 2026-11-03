@@ -31,6 +31,7 @@ import type * as aggregation_enrichmentValidation from "../aggregation/enrichmen
 import type * as aggregation_sync from "../aggregation/sync.js";
 import type * as aggregation_syncMutations from "../aggregation/syncMutations.js";
 import type * as aggregation_validation from "../aggregation/validation.js";
+import type * as applicationInvites from "../applicationInvites.js";
 import type * as attendance_mutations from "../attendance/mutations.js";
 import type * as attendance_queries from "../attendance/queries.js";
 import type * as attendance_scheduler from "../attendance/scheduler.js";
@@ -125,6 +126,7 @@ import type * as lib_courseAccess from "../lib/courseAccess.js";
 import type * as lib_courses from "../lib/courses.js";
 import type * as lib_crmFields from "../lib/crmFields.js";
 import type * as lib_debouncer from "../lib/debouncer.js";
+import type * as lib_emailLinks from "../lib/emailLinks.js";
 import type * as lib_formFieldChanges from "../lib/formFieldChanges.js";
 import type * as lib_formFields from "../lib/formFields.js";
 import type * as lib_limits from "../lib/limits.js";
@@ -236,6 +238,7 @@ declare const fullApi: ApiFromModules<{
   "aggregation/sync": typeof aggregation_sync;
   "aggregation/syncMutations": typeof aggregation_syncMutations;
   "aggregation/validation": typeof aggregation_validation;
+  applicationInvites: typeof applicationInvites;
   "attendance/mutations": typeof attendance_mutations;
   "attendance/queries": typeof attendance_queries;
   "attendance/scheduler": typeof attendance_scheduler;
@@ -330,6 +333,7 @@ declare const fullApi: ApiFromModules<{
   "lib/courses": typeof lib_courses;
   "lib/crmFields": typeof lib_crmFields;
   "lib/debouncer": typeof lib_debouncer;
+  "lib/emailLinks": typeof lib_emailLinks;
   "lib/formFieldChanges": typeof lib_formFieldChanges;
   "lib/formFields": typeof lib_formFields;
   "lib/limits": typeof lib_limits;

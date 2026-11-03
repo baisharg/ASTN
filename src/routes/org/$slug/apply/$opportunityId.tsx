@@ -34,6 +34,12 @@ import { saveGuestApplicationEmail } from '~/lib/pendingGuestApplication'
 const APPLICATION_EDIT_GRACE_MS = 24 * 60 * 60 * 1000
 
 export const Route = createFileRoute('/org/$slug/apply/$opportunityId')({
+  // ?invite=: a personal link from an email ({{apply_link}}) that pre-fills
+  // the form with what this person answered before (convex/applicationInvites.ts).
+  validateSearch: (search: Record<string, unknown>): { invite?: string } =>
+    typeof search.invite === 'string' && search.invite
+      ? { invite: search.invite }
+      : {},
   loader: async ({ context, params }) => {
     const [org, result] = await Promise.all([
       context.queryClient.ensureQueryData(
@@ -101,6 +107,7 @@ function isInterestRedirect(
 
 function ApplyPage() {
   const { slug, opportunityId } = Route.useParams()
+  const { invite: inviteToken } = Route.useSearch()
   const navigate = useNavigate()
   const { isAuthenticated } = useConvexAuth()
   const { user } = useUser()
@@ -131,6 +138,12 @@ function ApplyPage() {
       ? { opportunityId: opportunity._id }
       : 'skip',
   )
+  const invite = useQuery(
+    api.applicationInvites.getInvite,
+    inviteToken && opportunity
+      ? { token: inviteToken, opportunityId: opportunity._id }
+      : 'skip',
+  )
   const profile = useQuery(
     api.profiles.getOrCreateProfile,
     isAuthenticated ? {} : 'skip',
@@ -150,6 +163,7 @@ function ApplyPage() {
   const [submittedAsGuest, setSubmittedAsGuest] = useState(false)
   const [wasEditingAtSubmit, setWasEditingAtSubmit] = useState(false)
   const [preFilled, setPreFilled] = useState(false)
+  const [inviteFilled, setInviteFilled] = useState(false)
   const [responses, setResponses] = useState<Record<string, unknown>>({})
   const [slots, setSlots] = useState<Record<string, 'available' | 'maybe'>>({})
   const [slotsFilled, setSlotsFilled] = useState(false)
@@ -226,6 +240,16 @@ function ApplyPage() {
       setResponses((prev) => ({ ...prev, ...updates }))
     }
     setPreFilled(true)
+  }
+
+  // The invite's answers are what this person already wrote for this course,
+  // so they come first; their own application, when editing, still wins.
+  if (invite?.state === 'ok' && !inviteFilled && !isEditing) {
+    setResponses((prev) => ({
+      ...prev,
+      ...(invite.responses as Record<string, unknown>),
+    }))
+    setInviteFilled(true)
   }
 
   // Banner appears only after pre-fill actually ran so we never promise
@@ -535,30 +559,53 @@ function ApplyPage() {
             </div>
           )}
 
-          {!isEditing && (hasPreviousAppData || hasPreFilledData) && (
+          {!isEditing && invite?.state === 'applied' && (
             <div className="flex items-start gap-2 rounded-lg bg-blue-50 border border-blue-200 p-3 mb-6 text-sm text-blue-800">
               <Info className="size-4 mt-0.5 shrink-0" />
               <span>
-                {hasPreviousAppData ? (
-                  <>
-                    Some answers have been pre-filled from your previous{' '}
-                    {previousApplication?.sourceTitles.length === 1
-                      ? 'application to '
-                      : 'applications to '}
-                    <strong>
-                      {previousApplication?.sourceTitles.join(', ')}
-                    </strong>
-                    . Review and update as needed.
-                  </>
-                ) : (
-                  <>
-                    Some fields have been pre-filled from your ASTN profile.
-                    Review and edit as needed.
-                  </>
-                )}
+                Ya recibimos tu inscripción con este link. Si querés cambiar
+                algo, escribinos.
               </span>
             </div>
           )}
+
+          {!isEditing && inviteFilled && invite?.state === 'ok' && (
+            <div className="flex items-start gap-2 rounded-lg bg-blue-50 border border-blue-200 p-3 mb-6 text-sm text-blue-800">
+              <Info className="size-4 mt-0.5 shrink-0" />
+              <span>
+                Completamos el formulario con lo que respondiste en{' '}
+                <strong>{invite.sourceTitle}</strong>. Revisalo, completá lo que
+                falte y enviá.
+              </span>
+            </div>
+          )}
+
+          {!isEditing &&
+            !inviteFilled &&
+            (hasPreviousAppData || hasPreFilledData) && (
+              <div className="flex items-start gap-2 rounded-lg bg-blue-50 border border-blue-200 p-3 mb-6 text-sm text-blue-800">
+                <Info className="size-4 mt-0.5 shrink-0" />
+                <span>
+                  {hasPreviousAppData ? (
+                    <>
+                      Some answers have been pre-filled from your previous{' '}
+                      {previousApplication?.sourceTitles.length === 1
+                        ? 'application to '
+                        : 'applications to '}
+                      <strong>
+                        {previousApplication?.sourceTitles.join(', ')}
+                      </strong>
+                      . Review and update as needed.
+                    </>
+                  ) : (
+                    <>
+                      Some fields have been pre-filled from your ASTN profile.
+                      Review and edit as needed.
+                    </>
+                  )}
+                </span>
+              </div>
+            )}
 
           {/* Dynamic form */}
           <DynamicFormRenderer

@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import {
   CheckCircle2,
@@ -20,7 +21,6 @@ import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
 import type { FormField } from '../../../convex/lib/formFields'
 import { FormFieldsEditor } from '~/components/opportunities/FormFieldsEditor'
-import { FormTemplateBar } from '~/components/opportunities/FormTemplateBar'
 import { SurveyPreview } from '~/components/surveys/SurveyPreview'
 import { SurveyResultsTable } from '~/components/surveys/SurveyResultsTable'
 import { AnonymousSurveyResults } from '~/components/surveys/AnonymousSurveyResults'
@@ -62,7 +62,6 @@ const ALL_STATUSES = [
 
 interface SurveyTabProps {
   opportunityId: Id<'orgOpportunities'>
-  orgId: Id<'organizations'>
   slug: string
   /** Passed to the respondent-faithful preview header. */
   orgName?: string
@@ -80,7 +79,6 @@ interface SurveyTabProps {
  */
 export function SurveyTab({
   opportunityId,
-  orgId,
   slug,
   orgName,
   opportunityTitle,
@@ -101,7 +99,6 @@ export function SurveyTab({
     survey ? (
       <SurveyManagement
         surveyId={survey._id}
-        orgId={orgId}
         slug={slug}
         accessToken={survey.accessToken}
         orgName={orgName}
@@ -109,8 +106,9 @@ export function SurveyTab({
       />
     ) : (
       <CreateSurveyForm
+        key={String(anonymous)}
         opportunityId={opportunityId}
-        orgId={orgId}
+        slug={slug}
         anonymous={anonymous}
         orgName={orgName}
         opportunityTitle={opportunityTitle}
@@ -142,21 +140,35 @@ export function SurveyTab({
 
 function CreateSurveyForm({
   opportunityId,
-  orgId,
+  slug,
   anonymous,
   orgName,
   opportunityTitle,
 }: {
   opportunityId: Id<'orgOpportunities'>
-  orgId: Id<'organizations'>
+  slug: string
   /** Decided by which tab this is rendered under, not by a control. */
   anonymous: boolean
   orgName?: string
   opportunityTitle?: string
 }) {
+  // The org's canonical feedback form, filled for this course.
+  const start = useQuery(api.canonicalForms.surveyStart, {
+    opportunityId,
+    anonymous,
+  })
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [formFields, setFormFields] = useState<Array<FormField>>([])
+  const [started, setStarted] = useState(false)
+  if (start !== undefined && !started) {
+    if (start) {
+      setTitle(start.title)
+      setDescription(start.description)
+      setFormFields(start.formFields as Array<FormField>)
+    }
+    setStarted(true)
+  }
   const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(
     new Set(['accepted']),
   )
@@ -282,17 +294,33 @@ function CreateSurveyForm({
         <CardHeader>
           <CardTitle>Survey Questions</CardTitle>
           <CardDescription>
-            Build the form fields for your survey. Supports text, ratings, NPS,
-            and more.
+            Starts from the canonical feedback form. Changes here apply only to
+            this survey.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <FormTemplateBar
-            orgId={orgId}
-            kind="feedback"
-            fields={formFields}
-            onLoad={setFormFields}
-          />
+          {start === null && (
+            <p className="text-sm text-muted-foreground">
+              There is no canonical{' '}
+              {anonymous ? 'anonymous feedback' : 'course feedback'} form yet.
+              Set it up in{' '}
+              <Link
+                to="/org/$slug/admin/forms"
+                params={{ slug }}
+                className="underline"
+              >
+                Canonicals
+              </Link>{' '}
+              so every course starts from the same questions.
+            </p>
+          )}
+          {start && start.missing.length > 0 && (
+            <p className="text-sm text-amber-900">
+              This opportunity has no course tag, so {'{{course}}'} and{' '}
+              {'{{area}}'} are left as written. Replace them before creating the
+              survey.
+            </p>
+          )}
           <FormFieldsEditor fields={formFields} onChange={setFormFields} />
         </CardContent>
       </Card>
@@ -330,14 +358,12 @@ function CreateSurveyForm({
 
 function SurveyManagement({
   surveyId,
-  orgId,
   slug,
   accessToken,
   orgName,
   opportunityTitle,
 }: {
   surveyId: Id<'feedbackSurveys'>
-  orgId: Id<'organizations'>
   slug: string
   accessToken: string
   orgName?: string
@@ -773,12 +799,6 @@ function SurveyManagement({
         <CardContent>
           {isEditingFields ? (
             <div className="space-y-4">
-              <FormTemplateBar
-                orgId={orgId}
-                kind="feedback"
-                fields={editFormFields}
-                onLoad={setEditFormFields}
-              />
               <FormFieldsEditor
                 fields={editFormFields}
                 onChange={setEditFormFields}

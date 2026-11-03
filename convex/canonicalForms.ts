@@ -10,13 +10,15 @@ import {
   missingPlaceholders,
   sanitizeFormFieldKeys,
 } from './lib/formFields'
-import type { FormField } from './lib/formFields'
+import type { FormField, PlaceholderValues } from './lib/formFields'
 import { COURSE_PLACEHOLDERS, courseOf } from './lib/courses'
 
 /**
- * The org's canonical application forms. Every new opportunity copies one —
- * the course form, or the expression-of-interest form for EOIs — and fills
- * its placeholders. Editions no longer build or copy forms of their own, so
+ * The org's canonical forms. Every new opportunity copies one of the
+ * application forms — the course form, or the expression-of-interest form for
+ * EOIs — and fills its placeholders. A new feedback survey starts from one of
+ * the two feedback forms (the course feedback, or the anonymous one), with
+ * its title and intro. Editions no longer build or copy forms of their own, so
  * a question removed here is gone from every edition created afterwards,
  * while an edition already taking applications keeps the form people are
  * answering.
@@ -25,13 +27,26 @@ import { COURSE_PLACEHOLDERS, courseOf } from './lib/courses'
  * from the admin, at any time (also while no edition is open).
  */
 
-const kindValidator = v.union(v.literal('course'), v.literal('eoi'))
-type CanonicalKind = 'course' | 'eoi'
+const kindValidator = v.union(
+  v.literal('course'),
+  v.literal('eoi'),
+  v.literal('feedback'),
+  v.literal('feedback_anonymous'),
+)
+type CanonicalKind = 'course' | 'eoi' | 'feedback' | 'feedback_anonymous'
+
+const isFeedback = (kind: CanonicalKind) =>
+  kind === 'feedback' || kind === 'feedback_anonymous'
 
 export const get = query({
   args: { orgId: v.id('organizations'), kind: kindValidator },
   returns: v.union(
-    v.object({ formFields: v.any(), updatedAt: v.number() }),
+    v.object({
+      formFields: v.any(),
+      title: v.optional(v.string()),
+      description: v.optional(v.string()),
+      updatedAt: v.number(),
+    }),
     v.null(),
   ),
   handler: async (ctx, { orgId, kind }) => {
@@ -43,7 +58,12 @@ export const get = query({
       )
       .unique()
     return form
-      ? { formFields: form.formFields, updatedAt: form.updatedAt }
+      ? {
+          formFields: form.formFields,
+          title: form.title,
+          description: form.description,
+          updatedAt: form.updatedAt,
+        }
       : null
   },
 })
@@ -53,11 +73,22 @@ export const save = mutation({
     orgId: v.id('organizations'),
     kind: kindValidator,
     formFields: v.any(),
+    title: v.optional(v.string()),
+    description: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, { orgId, kind, formFields }) => {
+  handler: async (ctx, { orgId, kind, formFields, title, description }) => {
     const userId = await requireOrgAdmin(ctx, orgId)
-    const fields = cleanAdminForm(formFields)
+    // A survey asks no identity questions: its personal link says who answered.
+    const fields = isFeedback(kind)
+      ? cleanSurveyForm(formFields)
+      : cleanAdminForm(formFields)
+    const intro = isFeedback(kind)
+      ? {
+          title: title?.trim() || undefined,
+          description: description?.trim() || undefined,
+        }
+      : {}
 
     const existing = await ctx.db
       .query('canonicalForms')
@@ -69,6 +100,7 @@ export const save = mutation({
     if (existing) {
       await ctx.db.patch('canonicalForms', existing._id, {
         formFields: fields,
+        ...intro,
         updatedBy: userId,
         updatedAt: now,
       })
@@ -77,6 +109,7 @@ export const save = mutation({
         orgId,
         kind,
         formFields: fields,
+        ...intro,
         updatedBy: userId,
         updatedAt: now,
       })
@@ -129,7 +162,7 @@ export async function copyCanonicalForm(
   },
 ): Promise<Array<FormField>> {
   if (opts.source === 'custom') return CUSTOM_FORM_START
-  const kind: CanonicalKind = opts.source
+  const kind = opts.source
   const canonical = await ctx.db
     .query('canonicalForms')
     .withIndex('by_org_and_kind', (q) =>
@@ -139,17 +172,11 @@ export async function copyCanonicalForm(
   if (!canonical) {
     throw new ConvexError(
       `There is no canonical ${kind === 'eoi' ? 'expression of interest' : 'course'} form yet. ` +
-        'Set it up in Admin → Canonical forms first, or create the opportunity with a custom form.',
+        'Set it up in Admin → Canonicals first, or create the opportunity with a custom form.',
     )
   }
   const fields = canonical.formFields as Array<FormField>
-  const course = courseOf(opts.tags)
-  const values = course
-    ? {
-        course: COURSE_PLACEHOLDERS[course].name,
-        area: COURSE_PLACEHOLDERS[course].area,
-      }
-    : {}
+  const values = coursePlaceholderValues(opts.tags)
   if (missingPlaceholders(fields, values).length > 0) {
     throw new ConvexError(
       'Choose the course: the canonical form names it in its questions.',
@@ -169,4 +196,83 @@ export function cleanAdminForm(formFields: unknown): Array<FormField> {
   const problems = canonicalFormProblems(fields)
   if (problems.length > 0) throw new ConvexError(problems.join(' '))
   return fields
+}
+
+/** A survey's questions, checked and with sanitized keys and no blanks. */
+function cleanSurveyForm(formFields: unknown): Array<FormField> {
+  return sanitizeFormFieldKeys(
+    assertFormFieldsShape(formFields).filter((f) => f.label.trim()),
+  )
+}
+
+/** {{course}} and {{area}} for an opportunity, from its course tag. */
+export function coursePlaceholderValues(
+  tags: ReadonlyArray<string> | undefined,
+): PlaceholderValues {
+  const course = courseOf(tags)
+  return course
+    ? {
+        course: COURSE_PLACEHOLDERS[course].name,
+        area: COURSE_PLACEHOLDERS[course].area,
+      }
+    : {}
+}
+
+/**
+ * What a new feedback survey for this opportunity starts with: the canonical
+ * feedback form (course or anonymous) with {{course}} and {{area}} filled from
+ * the opportunity's course tag. The team still edits it before creating the
+ * survey. Placeholders that cannot be filled are listed so the page can say so.
+ */
+export const surveyStart = query({
+  args: {
+    opportunityId: v.id('orgOpportunities'),
+    anonymous: v.boolean(),
+  },
+  returns: v.union(
+    v.null(),
+    v.object({
+      title: v.string(),
+      description: v.string(),
+      formFields: v.any(),
+      missing: v.array(v.string()),
+    }),
+  ),
+  handler: async (ctx, { opportunityId, anonymous }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) return null
+    await requireOrgAdmin(ctx, opportunity.orgId)
+    const canonical = await ctx.db
+      .query('canonicalForms')
+      .withIndex('by_org_and_kind', (q) =>
+        q
+          .eq('orgId', opportunity.orgId)
+          .eq('kind', anonymous ? 'feedback_anonymous' : 'feedback'),
+      )
+      .unique()
+    if (!canonical) return null
+    const values = coursePlaceholderValues(opportunity.tags)
+    const fields = canonical.formFields as Array<FormField>
+    const title = canonical.title ?? ''
+    const description = canonical.description ?? ''
+    // The title and intro count too: label them as one more question.
+    const probe: Array<FormField> = [
+      ...fields,
+      { key: '_intro', kind: 'text', label: `${title} ${description}` },
+    ]
+    return {
+      title: fillText(title, values),
+      description: fillText(description, values),
+      formFields: fillFormPlaceholders(fields, values),
+      missing: missingPlaceholders(probe, values),
+    }
+  },
+})
+
+/** Fill {{course}} and {{area}} in free text, leaving unknown ones as they are. */
+export function fillText(text: string, values: PlaceholderValues): string {
+  return fillFormPlaceholders(
+    [{ key: 'x', kind: 'text', label: text }],
+    values,
+  )[0].label
 }

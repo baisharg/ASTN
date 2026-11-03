@@ -7,12 +7,19 @@ import { internal } from '../_generated/api'
 import { action, internalAction } from '../_generated/server'
 import type { Id } from '../_generated/dataModel'
 import { renderAdminBroadcast } from './templates'
+import { usesCourseVariables } from './outbox'
+import { linkBareUrls } from '../lib/emailLinks'
 
 async function renderBody(
   markdownBody: string,
   recipientName: string,
   links: { pollLink: string | null; surveyLink: string | null },
 ): Promise<string> {
+  if (usesCourseVariables(markdownBody)) {
+    throw new Error(
+      'Not sent: the email names the course ({{course}} or {{area}}) but the opportunity has no course tag.',
+    )
+  }
   let bodyMarkdown = markdownBody.replaceAll(
     '{{applicant_name}}',
     recipientName,
@@ -25,7 +32,7 @@ async function renderBody(
     blocks.push(`[:speech_balloon: Share your feedback](${links.surveyLink})`)
   }
   if (blocks.length > 0) bodyMarkdown += `\n\n${blocks.join('\n\n')}`
-  const bodyHtml: string = await marked(emojify(bodyMarkdown), {
+  const bodyHtml: string = await marked(emojify(linkBareUrls(bodyMarkdown)), {
     breaks: true,
     gfm: true,
   })

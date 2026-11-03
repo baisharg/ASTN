@@ -9,6 +9,8 @@ import type { Id } from '../../../../../convex/_generated/dataModel'
 import { canonicalFormProblems } from '../../../../../convex/lib/formFields'
 import type { FormField } from '../../../../../convex/lib/formFields'
 import { AuthHeader } from '~/components/layout/auth-header'
+import { CanonicalEmailsEditor } from '~/components/canonicals/CanonicalEmailsEditor'
+import { CanonicalFeedbackEditor } from '~/components/canonicals/CanonicalFeedbackEditor'
 import { FormFieldsEditor } from '~/components/opportunities/FormFieldsEditor'
 import { useUnsavedChangesWarning } from '~/hooks/use-unsaved-changes'
 import { Button } from '~/components/ui/button'
@@ -36,9 +38,9 @@ export const Route = createFileRoute('/org/$slug/admin/forms')({
 type CanonicalKind = 'course' | 'eoi'
 
 /**
- * The org's two canonical application forms. Every new opportunity copies one
- * of them (the EOI one for expressions of interest), so this is the only place
- * application questions are written.
+ * The org's canonicals: the two application forms every new opportunity
+ * copies (the EOI one for expressions of interest), the two feedback surveys
+ * a new survey starts from, and the emails every new course edition uses.
  */
 function CanonicalFormsPage() {
   const { slug } = Route.useParams()
@@ -93,22 +95,27 @@ function CanonicalFormsPage() {
                 Admin
               </Link>
               <span>/</span>
-              <span className="text-slate-700">Canonical forms</span>
+              <span className="text-slate-700">Canonicals</span>
             </div>
             <h1 className="text-2xl font-display font-semibold text-foreground">
-              Canonical forms
+              Canonicals
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Every new opportunity copies one of these when it is created.
-              Changes apply to opportunities created afterwards: one already
-              taking applications keeps the form people are answering.
+              What every new opportunity starts with. Changes apply to what is
+              created afterwards: an opportunity already running keeps its own
+              copy.
             </p>
           </div>
 
           <Tabs defaultValue="course">
-            <TabsList>
-              <TabsTrigger value="course">Course editions</TabsTrigger>
-              <TabsTrigger value="eoi">Expressions of interest</TabsTrigger>
+            <TabsList className="flex-wrap h-auto">
+              <TabsTrigger value="course">Course form</TabsTrigger>
+              <TabsTrigger value="eoi">Expression of interest</TabsTrigger>
+              <TabsTrigger value="feedback">Course feedback</TabsTrigger>
+              <TabsTrigger value="feedback_anonymous">
+                Anonymous feedback
+              </TabsTrigger>
+              <TabsTrigger value="emails">Emails</TabsTrigger>
             </TabsList>
             <TabsContent
               value="course"
@@ -123,6 +130,27 @@ function CanonicalFormsPage() {
               className="mt-6 data-[state=inactive]:hidden"
             >
               <CanonicalFormEditor key="eoi" orgId={org._id} kind="eoi" />
+            </TabsContent>
+            <TabsContent
+              value="feedback"
+              forceMount
+              className="mt-6 data-[state=inactive]:hidden"
+            >
+              <CanonicalFeedbackEditor orgId={org._id} anonymous={false} />
+            </TabsContent>
+            <TabsContent
+              value="feedback_anonymous"
+              forceMount
+              className="mt-6 data-[state=inactive]:hidden"
+            >
+              <CanonicalFeedbackEditor orgId={org._id} anonymous />
+            </TabsContent>
+            <TabsContent
+              value="emails"
+              forceMount
+              className="mt-6 data-[state=inactive]:hidden"
+            >
+              <CanonicalEmailsEditor orgId={org._id} />
             </TabsContent>
           </Tabs>
         </div>

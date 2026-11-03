@@ -11,6 +11,7 @@ import {
   Shield,
 } from 'lucide-react'
 import { marked } from 'marked'
+import { linkBareUrls } from '../../../../../../../convex/lib/emailLinks'
 import { emojify } from 'node-emoji'
 import { Checkbox as CheckboxPrimitive } from 'radix-ui'
 import { useEffect, useMemo, useState } from 'react'
@@ -80,8 +81,15 @@ function substituteExampleLinks(
   markdown: string,
   pollExampleLink: string | null,
   surveyExampleLink: string | null,
+  applyExampleLink: string | null,
 ): string {
-  let out = markdown
+  let out = linkBareUrls(markdown)
+  if (applyExampleLink) {
+    // Inside [text]({{apply_link}}) it stays a plain URL so the link works.
+    out = out
+      .replaceAll('({{apply_link}})', `(${applyExampleLink})`)
+      .replaceAll('{{apply_link}}', exampleLinkPill(applyExampleLink))
+  }
   if (pollExampleLink) {
     out = out.replaceAll('{{poll_link}}', exampleLinkPill(pollExampleLink))
   }
@@ -196,6 +204,11 @@ function EmailComposePage() {
     api.feedbackSurveys.getSurveyByOpportunity,
     opportunity ? { opportunityId: opportunity._id } : 'skip',
   )
+  // Where {{apply_link}} goes: the course's open application.
+  const applyTarget = useQuery(
+    api.applicationInvites.getApplyTarget,
+    opportunity ? { opportunityId: opportunity._id } : 'skip',
+  )
   // Current admin's profile — used to prefill the test-email address
   const myProfile = useQuery(api.profiles.getOrCreateProfile, {})
 
@@ -236,6 +249,9 @@ function EmailComposePage() {
     activeSurvey && activeSurvey.status === 'open'
       ? `${origin}/org/${slug}/survey/example`
       : null
+  const applyExampleLink = applyTarget
+    ? `${origin}/org/${slug}/apply/${applyTarget.key}?invite=example`
+    : null
 
   // All applicants (every status), deduped by email — matching the real send's
   // dedupe; applicants with no email are kept individually so each stays visible.
@@ -324,11 +340,12 @@ function EmailComposePage() {
       emojify(body),
       pollExampleLink,
       surveyExampleLink,
+      applyExampleLink,
     )
     return DOMPurify.sanitize(
       marked.parse(withLinks, { async: false, breaks: true, gfm: true }),
     )
-  }, [body, pollExampleLink, surveyExampleLink])
+  }, [body, pollExampleLink, surveyExampleLink, applyExampleLink])
 
   const handleSend = async () => {
     if (!opportunity || isSending || hasSent) return
@@ -380,6 +397,7 @@ function EmailComposePage() {
         toEmail: testEmail.trim(),
         pollExampleLink: pollExampleLink ?? undefined,
         surveyExampleLink: surveyExampleLink ?? undefined,
+        applyExampleLink: applyExampleLink ?? undefined,
       })
       toast.success(`Test email sent to ${testEmail.trim()}`)
     } catch (err) {
@@ -657,6 +675,21 @@ function EmailComposePage() {
                       link.
                     </p>
                   )}
+                  {applyTarget && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Use{' '}
+                      <code className="bg-slate-100 px-1 rounded text-[11px]">
+                        {'{{apply_link}}'}
+                      </code>{' '}
+                      for each person&apos;s link to{' '}
+                      <strong>{applyTarget.title}</strong>, with their answers
+                      already filled in, or{' '}
+                      <code className="bg-slate-100 px-1 rounded text-[11px]">
+                        {'[Inscribite acá]({{apply_link}})'}
+                      </code>{' '}
+                      to put it behind text.
+                    </p>
+                  )}
                   {activeSurvey && activeSurvey.status === 'open' && (
                     <p className="text-xs text-muted-foreground mt-1">
                       Use{' '}
@@ -707,7 +740,7 @@ function EmailComposePage() {
                     </p>
                   </div>
                 </div>
-                {(pollExampleLink || surveyExampleLink) && (
+                {(pollExampleLink || surveyExampleLink || applyExampleLink) && (
                   <p className="text-xs text-muted-foreground mt-3">
                     Recognized variables show as a{' '}
                     <span className="rounded bg-emerald-100 px-1 py-0.5 font-mono text-[11px] font-medium text-emerald-700">

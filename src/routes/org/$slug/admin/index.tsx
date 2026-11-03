@@ -326,7 +326,7 @@ function OrgAdminDashboard() {
             <Button variant="outline" className="h-auto py-4" asChild>
               <Link to="/org/$slug/admin/forms" params={{ slug }}>
                 <ClipboardList className="size-5 mr-2" />
-                Canonical forms
+                Canonicals
               </Link>
             </Button>
 

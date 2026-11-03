@@ -5,7 +5,7 @@ import { resolveApplicantContact } from '../lib/applicantContact'
 import type { FormField } from '../lib/formFields'
 import { rateLimiter } from '../lib/rateLimiter'
 import { resend } from './send'
-import { replyToFor } from './replyTo'
+import { replyToFor, withOrgFooter } from './replyTo'
 
 const FROM_ADDRESS = 'ASTN <notifications@safetytalent.org>'
 
@@ -142,7 +142,9 @@ export const sendSingleEmail = internalMutation({
       from: FROM_ADDRESS,
       to,
       subject,
-      html,
+      html: opportunity
+        ? await withOrgFooter(ctx, opportunity.orgId, html)
+        : html,
       replyTo: opportunity
         ? await replyToFor(ctx, opportunity.orgId)
         : undefined,

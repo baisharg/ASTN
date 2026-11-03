@@ -118,7 +118,7 @@ export function OpportunityFormDialog({
           <DialogTitle>New Opportunity</DialogTitle>
           <DialogDescription>
             Create a new opportunity. Its application form is a copy of the
-            org&apos;s canonical form (Admin → Canonical forms).
+            org&apos;s canonical form (Admin → Canonicals).
           </DialogDescription>
         </DialogHeader>
 

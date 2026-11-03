@@ -14,6 +14,7 @@ import {
   Text,
 } from '@react-email/components'
 import { render } from '@react-email/render'
+import { ORG_FOOTER_MARKER } from './replyTo'
 import { format } from 'date-fns'
 
 // ASTN brand color (coral accent)
@@ -736,6 +737,7 @@ export async function renderDeadlineReminder(
 // ===== Admin Broadcast Email =====
 
 const BODY_PLACEHOLDER = '__BODY_PLACEHOLDER__'
+const FOOTER_PLACEHOLDER = '__FOOTER_PLACEHOLDER__'
 
 /**
  * The wrapper around an applicant-facing email: logo, body, footer.
@@ -771,6 +773,8 @@ function AdminBroadcastEmail() {
 
             {/* Body placeholder — replaced after render */}
             <Section>{BODY_PLACEHOLDER}</Section>
+            {/* The org's footer goes here when the email is sent */}
+            <Section>{FOOTER_PLACEHOLDER}</Section>
 
             <Hr className="my-6 border-gray-200" />
 
@@ -801,5 +805,7 @@ export async function renderAdminBroadcast(
     /<p>/g,
     '<p style="margin:12px 0;word-break:break-word">',
   )
-  return html.replace(BODY_PLACEHOLDER, styledBody)
+  return html
+    .replace(BODY_PLACEHOLDER, styledBody)
+    .replace(FOOTER_PLACEHOLDER, ORG_FOOTER_MARKER)
 }

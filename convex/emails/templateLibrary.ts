@@ -4,10 +4,12 @@ import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc, Id } from '../_generated/dataModel'
 import { getUserId, requireOrgAdminFor } from '../lib/auth'
 import { getOrgAccess, requireOpportunityAccess } from '../lib/courseAccess'
+import { courseOf } from '../lib/courses'
 import type { AccessLevel } from '../lib/courseAccess'
 import {
   assertOnlyKnownVariables,
   discardPendingDraftsForKind,
+  usesCourseVariables,
   enqueueMissingDraftsForKind,
   refreshPendingDraftsForTemplate,
   syncOutboxOnStatusChange,
@@ -113,6 +115,7 @@ export const listSets = query({
     v.object({
       _id: v.id('emailTemplateSets'),
       name: v.string(),
+      isCanonical: v.boolean(),
       updatedAt: v.number(),
       templates: v.array(
         v.object({
@@ -150,6 +153,7 @@ export const listSets = query({
       out.push({
         _id: set._id,
         name: set.name,
+        isCanonical: set.isCanonical === true,
         updatedAt: set.updatedAt,
         templates: templates.map((t) => ({
           _id: t._id,
@@ -229,6 +233,9 @@ export const deleteSet = mutation({
     const set = await ctx.db.get('emailTemplateSets', setId)
     if (!set) return null
     await requireAdmin(ctx, set.orgId)
+    if (set.isCanonical) {
+      throw new ConvexError('The canonical emails cannot be deleted.')
+    }
 
     const opportunities = await ctx.db
       .query('orgOpportunities')
@@ -562,6 +569,14 @@ export const setOpportunityTemplateSet = mutation({
       if (!set || set.orgId !== opportunity.orgId) {
         throw new ConvexError('Template set not found')
       }
+      if (
+        !courseOf(opportunity.tags) &&
+        (await setUsesCourseVariables(ctx, setId))
+      ) {
+        throw new ConvexError(
+          'These emails name the course ({{course}}). Choose the opportunity’s course first.',
+        )
+      }
     }
     await ctx.db.patch('orgOpportunities', opportunityId, {
       emailTemplateSetId: setId,
@@ -625,5 +640,146 @@ export const addMissingKindTemplates = internalMutation({
       }
     }
     return added
+  },
+})
+
+async function setUsesCourseVariables(
+  ctx: QueryCtx | MutationCtx,
+  setId: Id<'emailTemplateSets'>,
+): Promise<boolean> {
+  const templates = await ctx.db
+    .query('emailTemplates')
+    .withIndex('by_set_and_kind', (q) => q.eq('setId', setId))
+    .collect()
+  return templates.some(
+    (t) =>
+      t.enabled !== false &&
+      (usesCourseVariables(t.subject) || usesCourseVariables(t.markdownBody)),
+  )
+}
+
+// ── Canonical emails ────────────────────────────────────────────────────────
+//
+// One set per org is the canonical: Canonicals → Emails edits it, and every
+// new course edition links it (createOpportunityFor), with {{course}} and
+// {{area}} filled from its course tag. An edition still customizes a single
+// email for itself from its Emails tab. The org's footer, appended to every
+// email it sends, is edited on the same page.
+
+export async function canonicalSetOf(
+  ctx: QueryCtx | MutationCtx,
+  orgId: Id<'organizations'>,
+): Promise<Doc<'emailTemplateSets'> | null> {
+  const sets = await ctx.db
+    .query('emailTemplateSets')
+    .withIndex('by_org', (q) => q.eq('orgId', orgId))
+    .collect()
+  return sets.find((s) => s.isCanonical === true) ?? null
+}
+
+/**
+ * The set a new opportunity links: the canonical, for course editions whose
+ * course fills its variables. Nothing for EOIs and custom forms, which have no
+ * decisions to announce.
+ */
+export async function canonicalSetFor(
+  ctx: QueryCtx | MutationCtx,
+  opts: {
+    orgId: Id<'organizations'>
+    formSource: 'course' | 'eoi' | 'custom'
+    tags: ReadonlyArray<string> | undefined
+  },
+): Promise<Id<'emailTemplateSets'> | undefined> {
+  if (opts.formSource !== 'course') return undefined
+  const set = await canonicalSetOf(ctx, opts.orgId)
+  if (!set) return undefined
+  if (!courseOf(opts.tags) && (await setUsesCourseVariables(ctx, set._id))) {
+    return undefined
+  }
+  return set._id
+}
+
+export const getCanonical = query({
+  args: { orgId: v.id('organizations') },
+  returns: v.object({
+    setId: v.union(v.id('emailTemplateSets'), v.null()),
+    footer: v.string(),
+  }),
+  handler: async (ctx, { orgId }) => {
+    await requireAdmin(ctx, orgId)
+    const set = await canonicalSetOf(ctx, orgId)
+    const org = await ctx.db.get('organizations', orgId)
+    return { setId: set?._id ?? null, footer: org?.emailFooter ?? '' }
+  },
+})
+
+/**
+ * Make the canonical emails: a copy of an existing set's emails (the one the
+ * team uses most, so nothing is written from scratch), or the defaults.
+ * Opportunities keep the set they link; only new editions get the canonical.
+ */
+export const createCanonical = mutation({
+  args: {
+    orgId: v.id('organizations'),
+    fromSetId: v.optional(v.id('emailTemplateSets')),
+  },
+  returns: v.id('emailTemplateSets'),
+  handler: async (ctx, { orgId, fromSetId }) => {
+    const userId = await requireAdmin(ctx, orgId)
+    if (await canonicalSetOf(ctx, orgId)) {
+      throw new ConvexError('The canonical emails already exist.')
+    }
+    const source = fromSetId
+      ? await ctx.db
+          .query('emailTemplates')
+          .withIndex('by_set_and_kind', (q) => q.eq('setId', fromSetId))
+          .collect()
+      : []
+    if (fromSetId) {
+      const set = await ctx.db.get('emailTemplateSets', fromSetId)
+      if (!set || set.orgId !== orgId) {
+        throw new ConvexError('Template set not found')
+      }
+    }
+    const now = Date.now()
+    const setId = await ctx.db.insert('emailTemplateSets', {
+      orgId,
+      name: 'Canonical',
+      isCanonical: true,
+      createdBy: userId,
+      createdAt: now,
+      updatedAt: now,
+    })
+    for (const kind of EMAIL_KINDS) {
+      const from = source.find((t) => t.kind === kind)
+      await ctx.db.insert('emailTemplates', {
+        orgId,
+        setId,
+        kind,
+        enabled: from ? (from.enabled ?? true) : !DISABLED_BY_DEFAULT.has(kind),
+        subject: from?.subject ?? DEFAULT_TEMPLATES[kind].subject,
+        markdownBody:
+          from?.markdownBody ?? DEFAULT_TEMPLATES[kind].markdownBody,
+        includePollLink: from?.includePollLink ?? false,
+        includeSurveyLink: from?.includeSurveyLink ?? false,
+        updatedAt: now,
+      })
+    }
+    return setId
+  },
+})
+
+export const saveFooter = mutation({
+  args: { orgId: v.id('organizations'), footer: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { orgId, footer }) => {
+    await requireAdmin(ctx, orgId)
+    if (footer.length > 2000) {
+      throw new ConvexError('Keep the footer under 2000 characters.')
+    }
+    await ctx.db.patch('organizations', orgId, {
+      emailFooter: footer.trim() || undefined,
+    })
+    return null
   },
 })

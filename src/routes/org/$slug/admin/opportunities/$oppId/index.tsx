@@ -708,7 +708,6 @@ function OpportunityEditPage() {
               {isAdmin && (
                 <SurveyTab
                   opportunityId={opportunity._id}
-                  orgId={opportunity.orgId}
                   slug={slug}
                   orgName={org?.name}
                   opportunityTitle={opportunity.title}
