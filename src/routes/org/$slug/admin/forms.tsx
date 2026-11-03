@@ -21,13 +21,6 @@ import {
   CardHeader,
   CardTitle,
 } from '~/components/ui/card'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '~/components/ui/select'
 import { Spinner } from '~/components/ui/spinner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
 
@@ -167,7 +160,6 @@ function CanonicalFormEditor({
   kind: CanonicalKind
 }) {
   const canonical = useQuery(api.canonicalForms.get, { orgId, kind })
-  const opportunities = useQuery(api.orgOpportunities.listAllByOrg, { orgId })
   const save = useMutation(api.canonicalForms.save)
 
   const [fields, setFields] = useState<Array<FormField>>([])
@@ -189,12 +181,6 @@ function CanonicalFormEditor({
 
   const validFields = fields.filter((f) => f.label.trim())
   const problems = canonicalFormProblems(validFields)
-  const sources = (opportunities ?? []).filter(
-    (o) =>
-      Array.isArray(o.formFields) &&
-      o.formFields.length > 0 &&
-      (o.isEOI ?? false) === (kind === 'eoi'),
-  )
 
   const handleSave = async () => {
     if (problems.length > 0 || isSaving) return
@@ -233,32 +219,6 @@ function CanonicalFormEditor({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {!canonical && sources.length > 0 && fields.length === 0 && (
-          <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">
-              No canonical form yet. Start from the form of an existing
-              opportunity and adjust it:
-            </p>
-            <Select
-              onValueChange={(id) => {
-                const source = sources.find((o) => o._id === id)
-                if (source) setFields(source.formFields as Array<FormField>)
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Choose an opportunity…" />
-              </SelectTrigger>
-              <SelectContent>
-                {sources.map((o) => (
-                  <SelectItem key={o._id} value={o._id}>
-                    {o.title}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-
         <FormFieldsEditor fields={fields} onChange={setFields} />
 
         {problems.length > 0 && (

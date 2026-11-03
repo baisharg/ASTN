@@ -111,7 +111,6 @@ import type * as extraction_validation from "../extraction/validation.js";
 import type * as facilitatorAgentChat from "../facilitatorAgentChat.js";
 import type * as feedback from "../feedback.js";
 import type * as feedbackSurveys from "../feedbackSurveys.js";
-import type * as formTemplates from "../formTemplates.js";
 import type * as guestBookings from "../guestBookings.js";
 import type * as guestProfiles from "../guestProfiles.js";
 import type * as http from "../http.js";
@@ -318,7 +317,6 @@ declare const fullApi: ApiFromModules<{
   facilitatorAgentChat: typeof facilitatorAgentChat;
   feedback: typeof feedback;
   feedbackSurveys: typeof feedbackSurveys;
-  formTemplates: typeof formTemplates;
   guestBookings: typeof guestBookings;
   guestProfiles: typeof guestProfiles;
   http: typeof http;

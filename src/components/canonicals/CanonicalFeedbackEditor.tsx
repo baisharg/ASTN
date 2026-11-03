@@ -18,13 +18,6 @@ import {
 } from '~/components/ui/card'
 import { Input } from '~/components/ui/input'
 import { Label } from '~/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '~/components/ui/select'
 import { Spinner } from '~/components/ui/spinner'
 import { Textarea } from '~/components/ui/textarea'
 
@@ -42,10 +35,6 @@ export function CanonicalFeedbackEditor({
 }) {
   const kind = anonymous ? 'feedback_anonymous' : 'feedback'
   const canonical = useQuery(api.canonicalForms.get, { orgId, kind })
-  const templates = useQuery(api.formTemplates.listForOrg, {
-    orgId,
-    kind: 'feedback',
-  })
   const save = useMutation(api.canonicalForms.save)
 
   const [title, setTitle] = useState('')
@@ -105,31 +94,6 @@ export function CanonicalFeedbackEditor({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {!canonical && fields.length === 0 && (templates?.length ?? 0) > 0 && (
-          <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">
-              Start from a saved survey and adjust it:
-            </p>
-            <Select
-              onValueChange={(id) => {
-                const template = templates?.find((t) => t._id === id)
-                if (template) setFields(template.formFields as Array<FormField>)
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Choose a saved survey…" />
-              </SelectTrigger>
-              <SelectContent>
-                {templates?.map((t) => (
-                  <SelectItem key={t._id} value={t._id}>
-                    {t.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-
         <div className="space-y-1">
           <Label htmlFor={`${kind}-title`}>Title</Label>
           <Input

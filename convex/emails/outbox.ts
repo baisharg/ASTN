@@ -90,8 +90,7 @@ export function fillCourseVariables(
   return fillText(text, coursePlaceholderValues(opportunity?.tags))
 }
 
-// The outbox system is active for an opportunity iff it links a template set;
-// otherwise legacy auto-email behavior is unchanged (removed in phase 3).
+// An opportunity sends decision emails only when it links a template set.
 export function isOutboxActive(opportunity: Doc<'orgOpportunities'>): boolean {
   return opportunity.emailTemplateSetId != null
 }

@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from 'convex/react'
+import type { FunctionReturnType } from 'convex/server'
 import { ConvexError } from 'convex/values'
 import { Loader2, Save } from 'lucide-react'
 import { useState } from 'react'
@@ -20,16 +21,13 @@ import {
   CardHeader,
   CardTitle,
 } from '~/components/ui/card'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '~/components/ui/select'
 import { Spinner } from '~/components/ui/spinner'
 import { Switch } from '~/components/ui/switch'
 import { Textarea } from '~/components/ui/textarea'
+
+type CanonicalEmail = FunctionReturnType<
+  typeof api.emails.templateLibrary.getCanonical
+>['emails'][number]
 
 const errorText = (err: unknown) =>
   err instanceof ConvexError && typeof err.data === 'string'
@@ -48,34 +46,17 @@ export function CanonicalEmailsEditor({
   const canonical = useQuery(api.emails.templateLibrary.getCanonical, {
     orgId,
   })
-  const sets = useQuery(api.emails.templateLibrary.listSets, { orgId })
 
-  if (canonical === undefined || sets === undefined) {
+  if (canonical === undefined) {
     return <Spinner className="size-6 mx-auto" />
   }
-
-  const set = sets.find((s) => s._id === canonical.setId)
 
   return (
     <div className="space-y-6">
       <FooterCard orgId={orgId} footer={canonical.footer} />
-      {set ? (
-        <>
-          <p className="text-sm text-muted-foreground">
-            New course editions use these emails. Write {'{{course}}'} and{' '}
-            {'{{area}}'} for the course; each edition fills them from its course
-            tag. Opportunities created earlier keep the set they link.
-          </p>
-          {set.templates.map((t) => (
-            <CanonicalEmailCard key={t._id} template={t} />
-          ))}
-        </>
-      ) : (
-        <CreateCanonicalCard
-          orgId={orgId}
-          sets={sets.map((s) => ({ _id: s._id, name: s.name }))}
-        />
-      )}
+      {canonical.emails.map((email) => (
+        <CanonicalEmailCard key={email.kind} orgId={orgId} email={email} />
+      ))}
     </div>
   )
 }
@@ -137,84 +118,14 @@ function FooterCard({
   )
 }
 
-function CreateCanonicalCard({
+function CanonicalEmailCard({
   orgId,
-  sets,
+  email: template,
 }: {
   orgId: Id<'organizations'>
-  sets: Array<{ _id: Id<'emailTemplateSets'>; name: string }>
+  email: CanonicalEmail
 }) {
-  const create = useMutation(api.emails.templateLibrary.createCanonical)
-  const [fromSetId, setFromSetId] = useState<string>('none')
-  const [isCreating, setIsCreating] = useState(false)
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Canonical emails</CardTitle>
-        <CardDescription>
-          No canonical emails yet. Start from the emails of an existing set and
-          adjust them.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-wrap items-center gap-3">
-        <Select value={fromSetId} onValueChange={setFromSetId}>
-          <SelectTrigger className="w-[240px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="none">Blank emails</SelectItem>
-            {sets.map((s) => (
-              <SelectItem key={s._id} value={s._id}>
-                Copy of {s.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button
-          disabled={isCreating}
-          onClick={async () => {
-            setIsCreating(true)
-            try {
-              await create({
-                orgId,
-                fromSetId:
-                  fromSetId === 'none'
-                    ? undefined
-                    : (fromSetId as Id<'emailTemplateSets'>),
-              })
-              toast.success('Canonical emails created')
-            } catch (err) {
-              toast.error("Couldn't create them", {
-                description: errorText(err),
-              })
-            } finally {
-              setIsCreating(false)
-            }
-          }}
-        >
-          {isCreating && <Loader2 className="size-4 mr-2 animate-spin" />}
-          Create canonical emails
-        </Button>
-      </CardContent>
-    </Card>
-  )
-}
-
-function CanonicalEmailCard({
-  template,
-}: {
-  template: {
-    _id: Id<'emailTemplates'>
-    kind: string
-    enabled: boolean
-    subject: string
-    markdownBody: string
-    includePollLink: boolean
-    includeSurveyLink: boolean
-  }
-}) {
-  const update = useMutation(api.emails.templateLibrary.updateTemplate)
+  const save = useMutation(api.emails.templateLibrary.saveCanonicalEmail)
   const [subject, setSubject] = useState(template.subject)
   const [body, setBody] = useState(template.markdownBody)
   const [enabled, setEnabled] = useState(template.enabled)
@@ -262,8 +173,9 @@ function CanonicalEmailCard({
           onClick={async () => {
             setIsSaving(true)
             try {
-              await update({
-                templateId: template._id,
+              await save({
+                orgId,
+                kind: template.kind,
                 subject,
                 markdownBody: body,
                 enabled,

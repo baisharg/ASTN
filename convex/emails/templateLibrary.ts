@@ -21,8 +21,7 @@ import {
 // *missing* template: a decision that should send no email is expressed by
 // `enabled: false`, an explicit choice (waitlisted starts disabled).
 // Opportunities link a set via emailTemplateSetId and inherit everything;
-// per-opportunity overrides live in the same table keyed by opportunityId
-// (phase 2 UI).
+// per-opportunity overrides live in the same table keyed by opportunityId.
 
 export const EMAIL_KINDS = [
   'application_received',
@@ -262,6 +261,81 @@ export const deleteSet = mutation({
   },
 })
 
+const updateResultValidator = v.object({
+  queued: v.number(),
+  discarded: v.number(),
+  keptEdited: v.number(),
+})
+
+type TemplateUpdate = {
+  subject: string
+  markdownBody: string
+  enabled?: boolean
+  includePollLink?: boolean
+  includeSurveyLink?: boolean
+}
+
+// Saves a template and keeps the outbox in step. Returns what the change did
+// to the pending queue, so the UI can say it out loud instead of silently
+// adding or removing a dozen drafts.
+async function applyTemplateUpdate(
+  ctx: MutationCtx,
+  template: Doc<'emailTemplates'>,
+  {
+    subject,
+    markdownBody,
+    enabled,
+    includePollLink,
+    includeSurveyLink,
+  }: TemplateUpdate,
+): Promise<{ queued: number; discarded: number; keptEdited: number }> {
+  if (!subject.trim()) throw new ConvexError('Subject cannot be empty')
+  // A typo'd {{variable}} is rejected here — it can never reach an applicant.
+  assertOnlyKnownVariables(subject)
+  assertOnlyKnownVariables(markdownBody)
+
+  // A template that was off and is now on has a backlog: every decision of
+  // this kind made while it was off queued nothing. Enabling it looks back.
+  const turnedOn = template.enabled === false && enabled === true
+  let queued = 0
+  let discarded = 0
+  let keptEdited = 0
+
+  const now = Date.now()
+  await ctx.db.patch('emailTemplates', template._id, {
+    subject,
+    markdownBody,
+    ...(enabled !== undefined ? { enabled } : {}),
+    ...(includePollLink !== undefined ? { includePollLink } : {}),
+    ...(includeSurveyLink !== undefined ? { includeSurveyLink } : {}),
+    updatedAt: now,
+  })
+  const scope = template.setId
+    ? { setId: template.setId }
+    : template.opportunityId
+      ? { opportunityId: template.opportunityId }
+      : null
+  if (!scope) return { queued, discarded, keptEdited }
+  if (template.setId) {
+    await ctx.db.patch('emailTemplateSets', template.setId, { updatedAt: now })
+  }
+  // Bring already-queued drafts up to the new wording. Hand-edited ones are
+  // left alone; nothing is sent.
+  await refreshPendingDraftsForTemplate(ctx, { kind: template.kind, ...scope })
+  if (turnedOn) {
+    queued = await enqueueMissingDraftsForKind(ctx, {
+      kind: template.kind,
+      ...scope,
+    })
+  }
+  // And the reverse: a kind that is off must not leave queued drafts behind.
+  ;({ discarded, keptEdited } = await discardPendingDraftsForKind(ctx, {
+    kind: template.kind,
+    ...scope,
+  }))
+  return { queued, discarded, keptEdited }
+}
+
 export const updateTemplate = mutation({
   args: {
     templateId: v.id('emailTemplates'),
@@ -271,24 +345,8 @@ export const updateTemplate = mutation({
     includePollLink: v.optional(v.boolean()),
     includeSurveyLink: v.optional(v.boolean()),
   },
-  // What the toggle did to the pending queue, so the UI can say it out loud
-  // instead of silently adding or removing a dozen drafts.
-  returns: v.object({
-    queued: v.number(),
-    discarded: v.number(),
-    keptEdited: v.number(),
-  }),
-  handler: async (
-    ctx,
-    {
-      templateId,
-      subject,
-      markdownBody,
-      enabled,
-      includePollLink,
-      includeSurveyLink,
-    },
-  ) => {
+  returns: updateResultValidator,
+  handler: async (ctx, { templateId, ...update }) => {
     const template = await ctx.db.get('emailTemplates', templateId)
     if (!template) throw new ConvexError('Template not found')
     // An opportunity's own override is edited like the rest of the
@@ -298,64 +356,7 @@ export const updateTemplate = mutation({
     } else {
       await requireAdmin(ctx, template.orgId)
     }
-
-    if (!subject.trim()) throw new ConvexError('Subject cannot be empty')
-    // A typo'd {{variable}} is rejected here — it can never reach an applicant.
-    assertOnlyKnownVariables(subject)
-    assertOnlyKnownVariables(markdownBody)
-
-    // A template that was off and is now on has a backlog: every decision of
-    // this kind made while it was off queued nothing. Enabling it looks back.
-    const turnedOn = template.enabled === false && enabled === true
-    let queued = 0
-    let discarded = 0
-    let keptEdited = 0
-
-    const now = Date.now()
-    await ctx.db.patch('emailTemplates', templateId, {
-      subject,
-      markdownBody,
-      ...(enabled !== undefined ? { enabled } : {}),
-      ...(includePollLink !== undefined ? { includePollLink } : {}),
-      ...(includeSurveyLink !== undefined ? { includeSurveyLink } : {}),
-      updatedAt: now,
-    })
-    if (template.setId) {
-      await ctx.db.patch('emailTemplateSets', template.setId, {
-        updatedAt: now,
-      })
-      // Bring already-queued drafts up to the new wording. Hand-edited ones are
-      // left alone; nothing is sent.
-      await refreshPendingDraftsForTemplate(ctx, {
-        kind: template.kind,
-        setId: template.setId,
-      })
-      if (turnedOn)
-        queued = await enqueueMissingDraftsForKind(ctx, {
-          kind: template.kind,
-          setId: template.setId,
-        })
-        // And the reverse: a kind that is off must not leave queued drafts behind.
-      ;({ discarded, keptEdited } = await discardPendingDraftsForKind(ctx, {
-        kind: template.kind,
-        setId: template.setId,
-      }))
-    } else if (template.opportunityId) {
-      await refreshPendingDraftsForTemplate(ctx, {
-        kind: template.kind,
-        opportunityId: template.opportunityId,
-      })
-      if (turnedOn)
-        queued = await enqueueMissingDraftsForKind(ctx, {
-          kind: template.kind,
-          opportunityId: template.opportunityId,
-        })
-      ;({ discarded, keptEdited } = await discardPendingDraftsForKind(ctx, {
-        kind: template.kind,
-        opportunityId: template.opportunityId,
-      }))
-    }
-    return { queued, discarded, keptEdited }
+    return await applyTemplateUpdate(ctx, template, update)
   },
 })
 
@@ -699,73 +700,100 @@ export async function canonicalSetFor(
   return set._id
 }
 
+const canonicalEmailValidator = v.object({
+  kind: emailKindValidator,
+  enabled: v.boolean(),
+  subject: v.string(),
+  markdownBody: v.string(),
+  includePollLink: v.boolean(),
+  includeSurveyLink: v.boolean(),
+})
+
+/** The canonical emails, one per kind, and the footer. */
 export const getCanonical = query({
   args: { orgId: v.id('organizations') },
   returns: v.object({
-    setId: v.union(v.id('emailTemplateSets'), v.null()),
     footer: v.string(),
+    emails: v.array(canonicalEmailValidator),
   }),
   handler: async (ctx, { orgId }) => {
     await requireAdmin(ctx, orgId)
     const set = await canonicalSetOf(ctx, orgId)
+    const rows = set
+      ? await ctx.db
+          .query('emailTemplates')
+          .withIndex('by_set_and_kind', (q) => q.eq('setId', set._id))
+          .collect()
+      : []
     const org = await ctx.db.get('organizations', orgId)
-    return { setId: set?._id ?? null, footer: org?.emailFooter ?? '' }
+    return {
+      footer: org?.emailFooter ?? '',
+      emails: EMAIL_KINDS.map((kind) => {
+        const row = rows.find((t) => t.kind === kind)
+        return {
+          kind,
+          enabled: row ? (row.enabled ?? true) : !DISABLED_BY_DEFAULT.has(kind),
+          subject: row?.subject ?? DEFAULT_TEMPLATES[kind].subject,
+          markdownBody:
+            row?.markdownBody ?? DEFAULT_TEMPLATES[kind].markdownBody,
+          includePollLink: row?.includePollLink ?? false,
+          includeSurveyLink: row?.includeSurveyLink ?? false,
+        }
+      }),
+    }
   },
 })
 
 /**
- * Make the canonical emails: a copy of an existing set's emails (the one the
- * team uses most, so nothing is written from scratch), or the defaults.
- * Opportunities keep the set they link; only new editions get the canonical.
+ * Save one canonical email. The org's canonical set is created on the first
+ * save, so new course editions only start linking it once someone wrote it.
  */
-export const createCanonical = mutation({
+export const saveCanonicalEmail = mutation({
   args: {
     orgId: v.id('organizations'),
-    fromSetId: v.optional(v.id('emailTemplateSets')),
+    kind: emailKindValidator,
+    subject: v.string(),
+    markdownBody: v.string(),
+    enabled: v.boolean(),
+    includePollLink: v.boolean(),
+    includeSurveyLink: v.boolean(),
   },
-  returns: v.id('emailTemplateSets'),
-  handler: async (ctx, { orgId, fromSetId }) => {
+  returns: updateResultValidator,
+  handler: async (ctx, { orgId, kind, ...update }) => {
     const userId = await requireAdmin(ctx, orgId)
-    if (await canonicalSetOf(ctx, orgId)) {
-      throw new ConvexError('The canonical emails already exist.')
-    }
-    const source = fromSetId
-      ? await ctx.db
-          .query('emailTemplates')
-          .withIndex('by_set_and_kind', (q) => q.eq('setId', fromSetId))
-          .collect()
-      : []
-    if (fromSetId) {
-      const set = await ctx.db.get('emailTemplateSets', fromSetId)
-      if (!set || set.orgId !== orgId) {
-        throw new ConvexError('Template set not found')
-      }
-    }
-    const now = Date.now()
-    const setId = await ctx.db.insert('emailTemplateSets', {
-      orgId,
-      name: 'Canonical',
-      isCanonical: true,
-      createdBy: userId,
-      createdAt: now,
-      updatedAt: now,
-    })
-    for (const kind of EMAIL_KINDS) {
-      const from = source.find((t) => t.kind === kind)
-      await ctx.db.insert('emailTemplates', {
+    let setId = (await canonicalSetOf(ctx, orgId))?._id
+    if (!setId) {
+      const now = Date.now()
+      setId = await ctx.db.insert('emailTemplateSets', {
         orgId,
-        setId,
-        kind,
-        enabled: from ? (from.enabled ?? true) : !DISABLED_BY_DEFAULT.has(kind),
-        subject: from?.subject ?? DEFAULT_TEMPLATES[kind].subject,
-        markdownBody:
-          from?.markdownBody ?? DEFAULT_TEMPLATES[kind].markdownBody,
-        includePollLink: from?.includePollLink ?? false,
-        includeSurveyLink: from?.includeSurveyLink ?? false,
+        name: 'Canonical',
+        isCanonical: true,
+        createdBy: userId,
+        createdAt: now,
         updatedAt: now,
       })
+      for (const k of EMAIL_KINDS) {
+        await ctx.db.insert('emailTemplates', {
+          orgId,
+          setId,
+          kind: k,
+          enabled: !DISABLED_BY_DEFAULT.has(k),
+          subject: DEFAULT_TEMPLATES[k].subject,
+          markdownBody: DEFAULT_TEMPLATES[k].markdownBody,
+          includePollLink: false,
+          includeSurveyLink: false,
+          updatedAt: now,
+        })
+      }
     }
-    return setId
+    const template = await ctx.db
+      .query('emailTemplates')
+      .withIndex('by_set_and_kind', (q) =>
+        q.eq('setId', setId).eq('kind', kind),
+      )
+      .first()
+    if (!template) throw new ConvexError('Template not found')
+    return await applyTemplateUpdate(ctx, template, update)
   },
 })
 
