@@ -18,11 +18,18 @@ import { addressOf, verifySvixSignature } from '../lib/inboundMail'
  * address of the org that last emailed the sender, with Reply-To set to the
  * sender so the team answers them directly.
  *
- * Setup: run emails/inbound:setupWebhook once against a deployment and store
- * the signing secret it returns in RESEND_INBOUND_WEBHOOK_SECRET.
+ * Setup: RESEND_API_KEY only sends, so reading received mail takes a
+ * full-access key in RESEND_RECEIVING_API_KEY. Then run
+ * emails/inbound:setupWebhook once against the deployment and store the
+ * signing secret it returns in RESEND_INBOUND_WEBHOOK_SECRET (or create the
+ * webhook for email.received in the Resend dashboard and copy its secret).
  */
 
 const RESEND_API = 'https://api.resend.com'
+
+const receivingAuth = () => ({
+  Authorization: `Bearer ${process.env.RESEND_RECEIVING_API_KEY}`,
+})
 
 export const resendInboundHandler = httpAction(async (ctx, request) => {
   const secret = process.env.RESEND_INBOUND_WEBHOOK_SECRET
@@ -80,7 +87,7 @@ export const forwardReceived = internalAction({
   returns: v.null(),
   handler: async (ctx, { emailId }) => {
     const response = await fetch(`${RESEND_API}/emails/receiving/${emailId}`, {
-      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
+      headers: receivingAuth(),
     })
     if (!response.ok) {
       throw new Error(
@@ -158,7 +165,7 @@ export const setupWebhook = internalAction({
   args: {},
   returns: v.any(),
   handler: async () => {
-    const auth = { Authorization: `Bearer ${process.env.RESEND_API_KEY}` }
+    const auth = receivingAuth()
     const endpoint = `${process.env.CONVEX_SITE_URL}/resend-inbound`
     const created = await fetch(`${RESEND_API}/webhooks`, {
       method: 'POST',
