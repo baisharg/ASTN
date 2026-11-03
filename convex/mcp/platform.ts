@@ -25,6 +25,7 @@ import {
 import {
   assertNoApplications,
   createOpportunityFor,
+  duplicateOpportunityFor,
   normalizeTags,
   opportunityAttachments,
 } from '../orgOpportunities'
@@ -285,6 +286,8 @@ export const list = internalQuery({
     level: v.optional(v.string()),
     date: v.optional(v.string()),
     limit: v.optional(v.number()),
+    // applications only: the nextCursor of the previous page.
+    cursor: v.optional(v.string()),
     // events only. `now` comes from the calling action: queries don't read
     // the clock.
     when: v.optional(v.string()),
@@ -332,6 +335,7 @@ export const list = internalQuery({
       }
 
       case 'applications': {
+        let query
         if (args.opportunityId) {
           const oppId = ctx.db.normalizeId(
             'orgOpportunities',
@@ -341,21 +345,29 @@ export const list = internalQuery({
           const opp = await ctx.db.get(oppId)
           if (!opp || opp.orgId !== orgId)
             throw new Error('opportunityId not found')
-          const rows = await ctx.db
+          query = ctx.db
             .query('opportunityApplications')
             .withIndex('by_opportunity_and_status', (qq) =>
               args.status
                 ? qq.eq('opportunityId', oppId).eq('status', args.status as any)
                 : qq.eq('opportunityId', oppId),
             )
-            .take(limit)
-          return rows
+        } else {
+          const base = ctx.db
+            .query('opportunityApplications')
+            .withIndex('by_org', (qq) => qq.eq('orgId', orgId))
+          query = args.status
+            ? base.filter((qq) => qq.eq(qq.field('status'), args.status))
+            : base
         }
-        const rows = await ctx.db
-          .query('opportunityApplications')
-          .withIndex('by_org', (qq) => qq.eq('orgId', orgId))
-          .take(limit)
-        return args.status ? rows.filter((r) => r.status === args.status) : rows
+        const page = await query.paginate({
+          numItems: limit,
+          cursor: args.cursor ?? null,
+        })
+        return {
+          records: page.page,
+          nextCursor: page.isDone ? null : page.continueCursor,
+        }
       }
 
       case 'programs': {
@@ -1190,6 +1202,20 @@ export const createOpportunity = internalMutation({
     })
     const created = await ctx.db.get(id)
     return { id, slug: created?.slug ?? null, status: created?.status }
+  },
+})
+
+export const duplicateOpportunity = internalMutation({
+  args: { userId: v.string(), orgSlug: v.string(), id: v.string() },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const org = await resolveOrgForAdmin(ctx, args.userId, args.orgSlug)
+    const id = ctx.db.normalizeId('orgOpportunities', args.id)
+    const source = id ? await ctx.db.get(id) : null
+    if (!source || source.orgId !== org._id) throw new Error('Record not found')
+    const copyId = await duplicateOpportunityFor(ctx, source, args.userId)
+    const copy = await ctx.db.get(copyId)
+    return { id: copyId, slug: copy?.slug ?? null, status: copy?.status }
   },
 })
 

@@ -151,6 +151,8 @@ export const TOOL_DEFS = [
       'call with the same resource and search; `labels: true` keys `fields` by label. A call ' +
       'reads at most 5000 records, so with filters a page can be short while nextCursor is still ' +
       'set (a `note` says so); nextCursor is null only when everything was read. ' +
+      'applications return {records, nextCursor} too; pass nextCursor as `cursor` (same ' +
+      'opportunityId and status) for the next page, until it is null. ' +
       'crm_activities needs `contactId` (optional `kind`, `source`), newest first. ' +
       'events: `when` upcoming (ascending) | past (descending) | all (default, descending), ' +
       '`from`/`to` ISO dates on the start time, `includePrivate` (default true; each event ' +
@@ -188,7 +190,7 @@ export const TOOL_DEFS = [
         cursor: {
           type: 'string',
           description:
-            'crm_contacts/crm_organizations: nextCursor from the last call.',
+            'crm_contacts/crm_organizations/applications: nextCursor from the last call.',
         },
         labels: {
           type: 'boolean',
@@ -353,6 +355,24 @@ export const TOOL_DEFS = [
       required: ['org', 'resource', 'id'],
     },
     annotations: { readOnlyHint: false, destructiveHint: true },
+  },
+  {
+    name: 'astn_duplicate_opportunity',
+    description:
+      'Duplicate an opportunity, e.g. to open the next edition of a course. The copy is a draft ' +
+      'titled "<title> (copy)" with the same description, type, tags and EOI flag; its form and, ' +
+      'for a course edition, its decision emails come from the canonicals; it gets a fresh ' +
+      'availability poll and no applications, surveys, deadline or redirect. Rename it and set ' +
+      'the deadline with astn_update, then set status to active when it is ready.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...orgProp,
+        id: { type: 'string', description: 'The opportunity to copy.' },
+      },
+      required: ['org', 'id'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
     name: 'crm_person',
@@ -850,6 +870,7 @@ export async function callTool(
         level: args.level as string | undefined,
         date: args.date as string | undefined,
         limit: args.limit as number | undefined,
+        cursor: resource === 'applications' ? str('cursor') : undefined,
         ...(resource === 'events'
           ? {
               when: str('when'),
@@ -1005,6 +1026,13 @@ export async function callTool(
       throw new Error(
         `Resource '${String(resource)}' is not deletable. Use astn_update to set status to archived/closed.`,
       )
+
+    case 'astn_duplicate_opportunity':
+      return await ctx.runMutation(internal.mcp.platform.duplicateOpportunity, {
+        userId,
+        orgSlug: org,
+        id: args.id as string,
+      })
 
     case 'crm_person':
       return await ctx.runQuery(internal.mcp.people.person, {

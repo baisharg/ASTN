@@ -615,70 +615,76 @@ export const remove = mutation({
 })
 
 /**
- * Duplicate an opportunity (org admin only). Asked for by Koren on 15-ago:
- * opening next term's cohort meant rebuilding the whole application form by
- * hand, because tags only group opportunities and `sourceOpportunityId` only
- * pre-fills a returning applicant's answers — neither copies the setup.
- *
- * What carries over is the configuration: title (suffixed), description, type,
- * tags, the EOI flag, the course name and the linked email template set. The
- * form comes fresh from the canonical. What does
- * not is everything tied to the run that just happened — applications, polls
- * (the copy gets a fresh default one), surveys, the deadline, the featured flag
- * and the redirect target. The copy is
- * born as a `draft` so nothing can go live by accident, and it records the
- * original in `sourceOpportunityId`, which is also what pre-fills answers for
- * applicants who already applied to the previous edition.
+ * Duplicate an opportunity. What carries over is the configuration: title
+ * (suffixed), description, type, tags, the EOI flag and the on-apply email
+ * switch. The form and, for a course edition, the decision emails come from
+ * the canonicals, never from the source edition; a custom form is copied.
+ * Nothing tied to the run that just happened carries over: applications,
+ * polls (the copy gets a fresh default one), surveys, the deadline, the
+ * featured flag and the redirect target. The copy is born as a `draft` so
+ * nothing can go live by accident, and it records the original in
+ * `sourceOpportunityId`, which pre-fills answers for applicants who already
+ * applied to the previous edition.
  */
+export async function duplicateOpportunityFor(
+  ctx: MutationCtx,
+  source: Doc<'orgOpportunities'>,
+  createdBy: string,
+): Promise<Id<'orgOpportunities'>> {
+  const now = Date.now()
+  const title = `${source.title} (copy)`
+  const formSource = formSourceOf(source)
+  const copyId = await ctx.db.insert('orgOpportunities', {
+    orgId: source.orgId,
+    title,
+    slug: await uniqueSlug(ctx, source.orgId, title),
+    description: source.description,
+    type: source.type,
+    status: 'draft',
+    featured: false,
+    formFields:
+      formSource === 'custom'
+        ? source.formFields
+        : await copyCanonicalForm(ctx, {
+            orgId: source.orgId,
+            source: formSource,
+            tags: source.tags,
+          }),
+    formSource,
+    tags: source.tags,
+    isEOI: source.isEOI,
+    emailTemplateSetId:
+      (await canonicalSetFor(ctx, {
+        orgId: source.orgId,
+        formSource,
+        tags: source.tags,
+      })) ?? source.emailTemplateSetId,
+    // Inherit the on-apply kill switch so a duplicated EOI does not start
+    // emailing people the original deliberately kept quiet.
+    sendApplicationReceivedEmail: source.sendApplicationReceivedEmail,
+    externalUrl: source.externalUrl,
+    sourceOpportunityId: source._id,
+    createdAt: now,
+    updatedAt: now,
+  })
+  // The original's poll stays with its run, but the copy needs one of its
+  // own: the application form asks for availability through it.
+  await createDefaultPollForOpportunity(ctx, {
+    opportunityId: copyId,
+    orgId: source.orgId,
+    createdBy,
+  })
+  return copyId
+}
+
 export const duplicate = mutation({
   args: { id: v.id('orgOpportunities') },
   returns: v.id('orgOpportunities'),
   handler: async (ctx, { id }) => {
     const source = await ctx.db.get('orgOpportunities', id)
     if (!source) throw new ConvexError('Opportunity not found')
-
     const userId = await requireOpportunityAccess(ctx, source, 'edit')
-
-    const now = Date.now()
-    const title = `${source.title} (copy)`
-    const copyId = await ctx.db.insert('orgOpportunities', {
-      orgId: source.orgId,
-      title,
-      slug: await uniqueSlug(ctx, source.orgId, title),
-      description: source.description,
-      type: source.type,
-      status: 'draft',
-      featured: false,
-      // From the canonical, not from the source: an edition never inherits
-      // another edition's form. Only a custom form (not an edition) is copied.
-      formFields:
-        formSourceOf(source) === 'custom'
-          ? source.formFields
-          : await copyCanonicalForm(ctx, {
-              orgId: source.orgId,
-              source: formSourceOf(source),
-              tags: source.tags,
-            }),
-      formSource: formSourceOf(source),
-      tags: source.tags,
-      isEOI: source.isEOI,
-      emailTemplateSetId: source.emailTemplateSetId,
-      // Inherit the on-apply kill switch so a duplicated EOI does not start
-      // emailing people the original deliberately kept quiet.
-      sendApplicationReceivedEmail: source.sendApplicationReceivedEmail,
-      externalUrl: source.externalUrl,
-      sourceOpportunityId: source._id,
-      createdAt: now,
-      updatedAt: now,
-    })
-    // The original's poll stays with its run, but the copy needs one of its
-    // own: the application form asks for availability through it.
-    await createDefaultPollForOpportunity(ctx, {
-      opportunityId: copyId,
-      orgId: source.orgId,
-      createdBy: userId,
-    })
-    return copyId
+    return await duplicateOpportunityFor(ctx, source, userId)
   },
 })
 
