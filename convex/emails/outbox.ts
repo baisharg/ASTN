@@ -15,9 +15,9 @@ import { resend } from './send'
 import { coursePlaceholderValues, fillText } from '../canonicalForms'
 import { replyToFor, withOrgFooter } from './replyTo'
 
-// Outbox for applicant decision emails (issue #20). Changing an application's
-// status never sends anything — it enqueues a pending draft prefilled from the
-// opportunity's template set. Admins review drafts and send explicitly
+// Outbox for applicant decision emails. Changing an application's status
+// never sends anything — it enqueues a pending draft prefilled from the
+// opportunity's emails (its overrides, else the canonical). Admins review drafts and send explicitly
 // (convex/emails/outboxSend.ts). Design invariants:
 //   - at most one pending draft per application (a status change replaces it)
 //   - hard idempotency: one 'sent' emailLog row per (application, kind)
@@ -90,7 +90,7 @@ export function fillCourseVariables(
   return fillText(text, coursePlaceholderValues(opportunity?.tags))
 }
 
-// An opportunity sends decision emails only when it links a template set.
+// An opportunity sends decision emails only when it uses the canonical emails.
 export function isOutboxActive(opportunity: Doc<'orgOpportunities'>): boolean {
   return opportunity.emailTemplateSetId != null
 }

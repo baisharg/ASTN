@@ -905,8 +905,8 @@ export const update = internalMutation({
     // every table in UPDATE_FIELDS has the column.
     await ctx.db.patch(id, { ...patch, updatedAt: Date.now() } as any)
 
-    // Outbox (issue #20): a status change on an opportunity with a linked
-    // template set replaces/enqueues the pending decision-email draft. Still
+    // Outbox: a status change on an opportunity that uses the canonical emails
+    // replaces/enqueues the pending decision-email draft. Still
     // no email is ever sent from this path.
     if (args.resource === 'applications' && 'status' in patch) {
       const updated: any = await ctx.db.get(id)

@@ -605,7 +605,7 @@ const PLATFORM_UPDATE_HINTS: Record<string, string> = {
     'days (0=Mon…6=Sun) change the grid; answers are kept, slots outside the range are only ' +
     'hidden. Finalizing (picking the chosen slot) is done in the web app.',
   applications:
-    'status ∈ submitted|under_review|accepted|next_edition|rejected|redirected|waitlisted|participated (redirected = "Fit for another course"; next_edition = accepted for a later edition of the same course — whoever has it is accepted automatically when they apply or give availability to a later edition sharing a course tag); reviewNotes is free text. Setting these records the decision in ASTN and stamps reviewedAt/reviewedBy — it does NOT email the applicant (decision emails are drafted into the outbox when the opportunity has a template set).',
+    'status ∈ submitted|under_review|accepted|next_edition|rejected|redirected|waitlisted|participated (redirected = "Fit for another course"; next_edition = accepted for a later edition of the same course — whoever has it is accepted automatically when they apply or give availability to a later edition sharing a course tag); reviewNotes is free text. Setting these records the decision in ASTN and stamps reviewedAt/reviewedBy — it does NOT email the applicant (decision emails are drafted into the outbox when the opportunity uses the canonical emails).',
 }
 
 const PLATFORM_READ_HINTS: Record<string, string> = {

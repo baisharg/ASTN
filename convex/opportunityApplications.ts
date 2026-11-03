@@ -85,11 +85,9 @@ async function maybeAddPollRespondent(
   }
 }
 
-// Applicant emails run through the outbox system (issue #20): the on-apply
-// confirmation is scheduled from the submit handlers when the opportunity
-// links a template set, and decision emails are drafted by
-// syncOutboxOnStatusChange. The legacy auto-email paths were removed in
-// phase 3.
+// Applicant emails run through the outbox: the on-apply confirmation is
+// scheduled from the submit handlers when the opportunity uses the canonical
+// emails, and decision emails are drafted by syncOutboxOnStatusChange.
 
 // Submit an application (idempotent — returns existing if already applied)
 // Auto-joins the org if the user is not already a member.
@@ -963,8 +961,8 @@ export const updateStatus = mutation({
       ...(reviewNotes !== undefined ? { reviewNotes } : {}),
     })
 
-    // Outbox system (issue #20): opportunities with a linked template set get
-    // a pending decision-email draft.
+    // Opportunities that use the canonical emails get a pending decision-email
+    // draft.
     // Deciding never sends — admins review and send from the outbox.
     const opportunity = await ctx.db.get(
       'orgOpportunities',

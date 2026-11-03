@@ -1468,8 +1468,8 @@ export default defineSchema({
     formSource: v.optional(
       v.union(v.literal('course'), v.literal('eoi'), v.literal('custom')),
     ),
-    // Email template set this opportunity inherits (issue #20). When set, the
-    // outbox system handles decision emails and legacy auto-emails are skipped.
+    // The canonical email set, when this opportunity uses the canonical emails.
+    // Only then does it draft decision emails and send the confirmation.
     emailTemplateSetId: v.optional(v.id('emailTemplateSets')),
     // On-apply confirmation email kill switch (outbox system only). undefined
     // defaults to ON, except EOIs which default OFF. Toggling never sends
@@ -1660,11 +1660,10 @@ export default defineSchema({
     .index('by_poll', ['pollId'])
     .index('by_poll_and_respondent', ['pollId', 'respondentId']),
 
-  // ── Email redesign (issue #20): template sets, outbox, unified log ────────
+  // ── Emails: canonical templates, outbox, unified log ──────────────────────
 
-  // Org-level library of email template sets (e.g. "TAIS", "Governance").
-  // A set always holds one template per kind — created together, so a linked
-  // opportunity can never hit a missing template.
+  // The org's canonical emails (isCanonical). It always holds one template per
+  // kind, so a linked opportunity can never hit a missing template.
   emailTemplateSets: defineTable({
     orgId: v.id('organizations'),
     name: v.string(),

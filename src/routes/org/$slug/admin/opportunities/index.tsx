@@ -688,8 +688,8 @@ function AdminOpportunitiesPage() {
                     </p>
                     <p>
                       <strong className="text-foreground">Copied:</strong> the
-                      description, type, tags, the application form, the EOI
-                      flag and the linked email template set.
+                      description, type, tags and the EOI flag. The form and,
+                      for a course edition, the emails come from the canonicals.
                     </p>
                     <p>
                       <strong className="text-foreground">Not copied:</strong>{' '}

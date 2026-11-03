@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useAction, useMutation, useQuery } from 'convex/react'
+import { ConvexError } from 'convex/values'
 import {
   CalendarClock,
   Check,
@@ -47,13 +48,6 @@ import {
 } from '~/components/ui/alert-dialog'
 import { Input } from '~/components/ui/input'
 import { Label } from '~/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '~/components/ui/select'
 import { Spinner } from '~/components/ui/spinner'
 import { Switch } from '~/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
@@ -631,35 +625,21 @@ function TemplatesSection({
     sendApplicationReceivedEmail?: boolean
   }
 }) {
-  const sets = useQuery(api.emails.templateLibrary.listSets, {
-    orgId: opportunity.orgId,
-  })
   const effective = useQuery(api.emails.templateLibrary.getEffectiveTemplates, {
     opportunityId: opportunity._id,
   })
-  const linkSet = useMutation(
-    api.emails.templateLibrary.setOpportunityTemplateSet,
+  const setUseCanonical = useMutation(
+    api.emails.templateLibrary.setUseCanonicalEmails,
   )
-  const createSet = useMutation(api.emails.templateLibrary.createSet)
   const setOnApply = useMutation(
     api.emails.templateLibrary.setSendApplicationReceivedEmail,
   )
 
-  const [newSetName, setNewSetName] = useState('')
-  const [isCreating, setIsCreating] = useState(false)
-
-  const linkedSetId = opportunity.emailTemplateSetId
+  const usesCanonical = opportunity.emailTemplateSetId != null
   const onApplyEnabled =
     opportunity.sendApplicationReceivedEmail ?? !(opportunity.isEOI ?? false)
 
-  const setTemplateIds = useMemo(() => {
-    const map = new Map<string, Id<'emailTemplates'>>()
-    const linked = sets?.find((s) => s._id === linkedSetId)
-    for (const t of linked?.templates ?? []) map.set(t.kind, t._id)
-    return map
-  }, [sets, linkedSetId])
-
-  if (sets === undefined) {
+  if (effective === undefined) {
     return (
       <div className="py-12 text-center">
         <Spinner className="size-8 mx-auto" />
@@ -669,79 +649,38 @@ function TemplatesSection({
 
   return (
     <div className="space-y-6">
-      {/* Set selector */}
       <Card>
-        <CardHeader>
-          <CardTitle>Email template set</CardTitle>
-          <CardDescription>
-            Link a set (e.g. TAIS, Governance) and this opportunity inherits all
-            its emails. Linking activates the outbox: every decision — past and
-            future — gets a pending draft. Nothing is sent until you press Send,
-            and applicants who already got an email are never re-queued.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-3">
-            <Select
-              value={linkedSetId ?? 'none'}
-              onValueChange={async (val) => {
-                await linkSet({
+        <CardContent className="flex items-center justify-between gap-4 py-4">
+          <div>
+            <p className="text-sm font-medium">Use the canonical emails</p>
+            <p className="text-xs text-muted-foreground">
+              The org&apos;s emails for each decision, edited in Admin →
+              Canonicals. Customize any of them for this opportunity below.
+              Turning this on gives every decision already made a pending draft
+              in the Outbox; nothing is sent until you press Send.
+            </p>
+          </div>
+          <Switch
+            checked={usesCanonical}
+            onCheckedChange={async (checked) => {
+              try {
+                await setUseCanonical({
                   opportunityId: opportunity._id,
-                  setId:
-                    val === 'none'
-                      ? undefined
-                      : (val as Id<'emailTemplateSets'>),
+                  enabled: checked,
                 })
                 toast.success(
-                  val === 'none' ? 'Set unlinked' : 'Template set linked',
+                  checked ? 'Canonical emails on' : 'Canonical emails off',
                 )
-              }}
-            >
-              <SelectTrigger className="w-[240px]">
-                <SelectValue placeholder="No set linked" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">No set (legacy emails)</SelectItem>
-                {sets.map((s) => (
-                  <SelectItem key={s._id} value={s._id}>
-                    {s.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <div className="flex items-center gap-2">
-              <Input
-                placeholder="New set name…"
-                value={newSetName}
-                onChange={(e) => setNewSetName(e.target.value)}
-                className="w-[180px]"
-              />
-              <Button
-                variant="outline"
-                disabled={!newSetName.trim() || isCreating}
-                onClick={async () => {
-                  setIsCreating(true)
-                  try {
-                    const setId = await createSet({
-                      orgId: opportunity.orgId,
-                      name: newSetName.trim(),
-                    })
-                    await linkSet({ opportunityId: opportunity._id, setId })
-                    setNewSetName('')
-                    toast.success('Set created and linked')
-                  } catch {
-                    toast.error('Failed to create set')
-                  } finally {
-                    setIsCreating(false)
-                  }
-                }}
-              >
-                {isCreating && <Loader2 className="size-4 mr-2 animate-spin" />}
-                Create set
-              </Button>
-            </div>
-          </div>
+              } catch (err) {
+                toast.error("Couldn't change it", {
+                  description:
+                    err instanceof ConvexError && typeof err.data === 'string'
+                      ? err.data
+                      : 'Please try again.',
+                })
+              }
+            }}
+          />
         </CardContent>
       </Card>
 
@@ -779,14 +718,12 @@ function TemplatesSection({
 
           {/* Template cards */}
           {effective.templates.map((t) => (
-            // Key includes `overridden` so reverting to the set (or creating
-            // an override) remounts the card and re-inits its fields from the
-            // now-effective template.
+            // Key includes `overridden` so reverting to the canonical (or
+            // creating an override) remounts the card and re-inits its fields
+            // from the now-effective template.
             <TemplateCard
               key={`${t.kind}:${t.overridden}`}
               opportunityId={opportunity._id}
-              setName={effective.setName}
-              setTemplateId={setTemplateIds.get(t.kind) ?? null}
               template={t}
             />
           ))}
@@ -817,13 +754,9 @@ function queueEffect(r: {
 
 function TemplateCard({
   opportunityId,
-  setName,
-  setTemplateId,
   template,
 }: {
   opportunityId: Id<'orgOpportunities'>
-  setName: string
-  setTemplateId: Id<'emailTemplates'> | null
   template: {
     kind: EmailKind
     enabled: boolean
@@ -839,9 +772,6 @@ function TemplateCard({
   )
   const clearOverride = useMutation(
     api.emails.templateLibrary.clearOpportunityTemplate,
-  )
-  const updateSetTemplate = useMutation(
-    api.emails.templateLibrary.updateTemplate,
   )
 
   const [subject, setSubject] = useState(template.subject)
@@ -876,28 +806,6 @@ function TemplateCard({
         includeSurveyLink: surveyLink,
       })
       toast.success('Saved for this opportunity', {
-        description: queueEffect(result),
-      })
-    } catch (err) {
-      toast.error(varError(err instanceof Error ? err.message : ''))
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
-  const saveToSet = async () => {
-    if (!setTemplateId) return
-    setIsSaving(true)
-    try {
-      const result = await updateSetTemplate({
-        templateId: setTemplateId,
-        subject,
-        markdownBody: body,
-        enabled,
-        includePollLink: pollLink,
-        includeSurveyLink: surveyLink,
-      })
-      toast.success(`Saved to the ${setName} set`, {
         description: queueEffect(result),
       })
     } catch (err) {
@@ -947,27 +855,17 @@ function TemplateCard({
             {isSaving && <Loader2 className="size-4 mr-2 animate-spin" />}
             Save for this opportunity
           </Button>
-          {!template.overridden && setTemplateId && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={saveToSet}
-              disabled={!dirty || isSaving}
-            >
-              Save to the {setName} set
-            </Button>
-          )}
           {template.overridden && (
             <Button
               size="sm"
               variant="ghost"
               onClick={async () => {
                 await clearOverride({ opportunityId, kind: template.kind })
-                toast.success(`Reverted to the ${setName} set`)
+                toast.success('Reverted to the canonical')
               }}
             >
               <RotateCcw className="size-4 mr-2" />
-              Revert to set
+              Revert to canonical
             </Button>
           )}
         </div>
