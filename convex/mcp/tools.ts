@@ -300,10 +300,11 @@ export const TOOL_DEFS = [
       'Only allowlisted fields can be changed (see astn_resources). For applications you ' +
       'can set `status` (submitted/under_review/accepted/next_edition/rejected/redirected/waitlisted/participated) and ' +
       '`reviewNotes`; this records the decision inside ASTN and never emails the applicant. ' +
-      'For surveys you can also replace `formFields`, the survey questions. Application forms are ' +
-      'not editable here: each opportunity copies the org canonical form when created, and the ' +
-      'canonical is edited by hand in the web admin. Pass the whole array (astn_get returns the ' +
-      'current one); keys are sanitised on write. Adding questions is always allowed, at any status: a published ' +
+      "For surveys you can also replace `formFields`, the survey questions. An opportunity's " +
+      'application form can be changed only while nobody has applied: `formFields` saves its ' +
+      'questions, `formSource` (course|eoi|custom) replaces them with a fresh copy of that ' +
+      'canonical. The canonical itself is edited by hand in the web admin. Pass the whole array ' +
+      '(astn_get returns the current one); keys are sanitised on write. Adding questions is always allowed, at any status: a published ' +
       'survey is not frozen. Removing or renaming a question that people already answered is refused ' +
       'the first time, with the count of answers it would strand, and goes through on a repeat call ' +
       'with confirmDiscardsAnswers: true. ' +
@@ -543,7 +544,9 @@ const PLATFORM_FIELD_HINTS: Record<string, string> = {
     'one when isEOI) and cannot be passed. A readable slug and the default availability poll are ' +
     'created for you.',
   surveys:
-    'create requires: opportunityId, title, formFields (the questions). optional: description, ' +
+    "create requires: opportunityId. Without formFields it starts from the org's canonical " +
+    'feedback survey (course or anonymous), title and intro included, filled for the course — ' +
+    'the usual way. optional: title, description, formFields (the questions), ' +
     'applicantStatuses (which applicants get a personal link, e.g. ["accepted"]), anonymous. ' +
     'Always created as a draft — publish it by setting status to open. Returns the accessToken, ' +
     'which is the shareable link and, for an anonymous survey, the only way in. ' +
@@ -553,17 +556,21 @@ const PLATFORM_FIELD_HINTS: Record<string, string> = {
     'anonymous feedback about the facilitators. What is refused is a second survey of the same ' +
     'kind while one is draft or open; close the first one, or edit it instead of creating another.',
   polls:
-    'create requires: opportunityId. everything else defaults to how BAISH runs them: Mon–Sat ' +
-    '08:00–22:00 in 30-minute slots, Buenos Aires. optional: title, timezone, days (0=Mon…6=Sun), ' +
-    'startMinutes, endMinutes, slotDurationMinutes (15|30|60). Opens immediately and seeds a ' +
-    'respondent per applicant. One active poll per opportunity.',
+    'Every opportunity already gets a poll (Mon–Sat 08:00–22:00, half hours) when it is ' +
+    'created, so to change days or hours use astn_update on that poll. create is only for an ' +
+    'opportunity whose poll was deleted. requires: opportunityId. optional: title, timezone, ' +
+    'days (0=Mon…6=Sun), startMinutes, endMinutes, slotDurationMinutes (15|30|60). One active ' +
+    'poll per opportunity.',
 }
 
 const PLATFORM_UPDATE_HINTS: Record<string, string> = {
   opportunities:
     'archived: true|false takes it out of / back into the admin list without touching anything ' +
-    'that references it — use it for finished cohorts and for mistakes. The application form ' +
-    'is not editable here (it comes from the canonical form). astn_delete only works on an opportunity with ' +
+    'that references it — use it for finished cohorts and for mistakes. While nobody has applied, ' +
+    'formFields replaces the questions and formSource (course|eoi|custom) recopies that canonical ' +
+    '(do it after changing the course tag, so the form names the right course). ' +
+    'redirectOpportunityId: for an EOI, the application its link opens while that is active. ' +
+    'astn_delete only works on an opportunity with ' +
     'nothing attached: no applications, surveys, extra polls or sent emails.',
   surveys:
     'status ∈ draft|open|closed. Opening publishes it — and an identified survey and an anonymous ' +
@@ -574,7 +581,9 @@ const PLATFORM_UPDATE_HINTS: Record<string, string> = {
     'refused while somebody has answered it, and the refusal names the questions and the count. ' +
     'Repeat with confirmDiscardsAnswers: true to strand those answers on purpose.',
   polls:
-    'status ∈ open|closed. Finalizing (picking the chosen slot) is done in the web app.',
+    'status ∈ open|closed. startMinutes/endMinutes (minutes after midnight, on the slot size) and ' +
+    'days (0=Mon…6=Sun) change the grid; answers are kept, slots outside the range are only ' +
+    'hidden. Finalizing (picking the chosen slot) is done in the web app.',
   applications:
     'status ∈ submitted|under_review|accepted|next_edition|rejected|redirected|waitlisted|participated (redirected = "Fit for another course"; next_edition = accepted for a later edition of the same course — whoever has it is accepted automatically when they apply or give availability to a later edition sharing a course tag); reviewNotes is free text. Setting these records the decision in ASTN and stamps reviewedAt/reviewedBy — it does NOT email the applicant (decision emails are drafted into the outbox when the opportunity has a template set).',
 }
@@ -913,9 +922,9 @@ export async function callTool(
       if (resource === 'opportunities') {
         if (args.fields && 'formFields' in (args.fields as object)) {
           throw new Error(
-            'formFields cannot be passed: the application form is a copy of the org canonical ' +
-              'form, edited by hand in the web admin. Drop formFields; pass the course tag in tags ' +
-              '(e.g. "TAIS Course") so the form names the course.',
+            'formFields cannot be passed on create: the form starts as a copy of the org ' +
+              'canonical. Pass the course tag in tags (e.g. "TAIS Course") so the form names the ' +
+              'course, then adjust it with astn_update formFields before anyone applies.',
           )
         }
         return await ctx.runMutation(internal.mcp.platform.createOpportunity, {

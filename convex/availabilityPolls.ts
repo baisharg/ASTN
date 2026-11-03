@@ -466,6 +466,33 @@ export const backfillRespondents = mutation({
   },
 })
 
+/**
+ * Validate new hours and days for a poll (UI and MCP): within the day, on the
+ * poll's slot size, at least one day. Returns the days sorted and deduped.
+ */
+export function checkPollRange(
+  poll: Pick<
+    Doc<'availabilityPolls'>,
+    'startMinutes' | 'endMinutes' | 'slotDurationMinutes' | 'days'
+  >,
+  updates: { startMinutes?: number; endMinutes?: number; days?: Array<number> },
+): { days: Array<number> } {
+  const start = updates.startMinutes ?? poll.startMinutes
+  const end = updates.endMinutes ?? poll.endMinutes
+  const step = poll.slotDurationMinutes
+  if (start < 0 || end > 24 * 60 || start >= end) {
+    throw new ConvexError('The poll has to end after it starts.')
+  }
+  if (start % step !== 0 || end % step !== 0) {
+    throw new ConvexError(`Hours must fall on ${step}-minute slots.`)
+  }
+  const days = [...new Set(updates.days ?? poll.days)].sort((a, b) => a - b)
+  if (days.length === 0 || days.some((d) => d < 0 || d > 6)) {
+    throw new ConvexError('Pick at least one day.')
+  }
+  return { days }
+}
+
 export const updatePoll = mutation({
   args: {
     pollId: v.id('availabilityPolls'),
@@ -500,21 +527,10 @@ export const updatePoll = mutation({
     )
       throw new ConvexError('Edit access required')
 
-    const start = updates.startMinutes ?? poll.startMinutes
-    const end = updates.endMinutes ?? poll.endMinutes
-    const step = poll.slotDurationMinutes
-    if (start < 0 || end > 24 * 60 || start >= end) {
-      throw new ConvexError('The poll has to end after it starts.')
-    }
-    if (start % step !== 0 || end % step !== 0) {
-      throw new ConvexError(`Hours must fall on ${step}-minute slots.`)
-    }
     if (updates.days !== undefined) {
-      const days = [...new Set(updates.days)].sort((a, b) => a - b)
-      if (days.length === 0 || days.some((d) => d < 0 || d > 6)) {
-        throw new ConvexError('Pick at least one day.')
-      }
-      updates.days = days
+      updates.days = checkPollRange(poll, updates).days
+    } else {
+      checkPollRange(poll, updates)
     }
 
     await ctx.db.patch('availabilityPolls', pollId, {

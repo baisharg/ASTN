@@ -4,19 +4,36 @@ import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc, Id } from '../_generated/dataModel'
 import { requireOrgAdminFor } from '../lib/auth'
 import { isOutboxActive, syncOutboxOnStatusChange } from '../emails/outbox'
-import { assertFormFieldsShape, sanitizeFormFieldKeys } from '../lib/formFields'
+import {
+  assertFormFieldsShape,
+  fillFormPlaceholders,
+  sanitizeFormFieldKeys,
+} from '../lib/formFields'
 import type { FormField } from '../lib/formFields'
-import { formSourceValidator } from '../canonicalForms'
+import {
+  cleanAdminForm,
+  copyCanonicalForm,
+  coursePlaceholderValues,
+  fillText,
+  formSourceValidator,
+} from '../canonicalForms'
+import type { FormSource } from '../canonicalForms'
 import {
   describeImpact,
   impactOnSurveyResponses,
 } from '../lib/formFieldChanges'
 import {
+  assertNoApplications,
   createOpportunityFor,
+  normalizeTags,
   opportunityAttachments,
 } from '../orgOpportunities'
 import { createSurveyFor } from '../feedbackSurveys'
-import { DEFAULT_POLL, createPollFor } from '../availabilityPolls'
+import {
+  DEFAULT_POLL,
+  checkPollRange,
+  createPollFor,
+} from '../availabilityPolls'
 
 // Platform data layer for the MCP endpoint (convex/mcp/server.ts). Like
 // convex/mcp/data.ts (the CRM layer), these are internal functions: the HTTP
@@ -132,9 +149,13 @@ export const UPDATE_FIELDS: Record<string, Set<string>> = {
     'externalUrl',
     'featured',
     'tags',
-    // formFields is deliberately absent (since 2026-10-27): an edition's form
-    // is a copy of the org's canonical form, made when the opportunity is
-    // created, and the canonical is edited by hand from the admin only.
+    'redirectOpportunityId',
+    // The form, like in the web admin: editable only while nobody applied.
+    // `formFields` saves questions; `formSource` (course|eoi|custom) replaces
+    // them with a fresh copy of that canonical. The canonical itself is
+    // edited by hand from the admin only.
+    'formFields',
+    'formSource',
     // Pseudo-field: `archived: true|false` maps to the archivedAt timestamp.
     // Reads better from the agent side than asking it to invent a timestamp.
     'archived',
@@ -146,7 +167,7 @@ export const UPDATE_FIELDS: Record<string, Set<string>> = {
   // it: a feedback form is expensive to build by hand, the team lives in Claude
   // Code, and refusing here only pushes the edit somewhere with no validation.
   surveys: new Set(['title', 'description', 'status', 'formFields']),
-  polls: new Set(['title', 'status']),
+  polls: new Set(['title', 'status', 'startMinutes', 'endMinutes', 'days']),
   // Application decision + review notes. Non-notifying (see `update` handler).
   applications: new Set(['status', 'reviewNotes']),
   spaces: new Set([
@@ -762,6 +783,66 @@ export const update = internalMutation({
       patch.reviewedBy = args.userId
     }
 
+    // Applications: the same decision again (an agent retrying) changes nothing.
+    if (
+      args.resource === 'applications' &&
+      'status' in patch &&
+      patch.status === (doc as any).status &&
+      (!('reviewNotes' in patch) ||
+        patch.reviewNotes === (doc as any).reviewNotes)
+    ) {
+      return { id, resource: args.resource, updated: [] }
+    }
+
+    if (args.resource === 'opportunities') {
+      const opp = doc as Doc<'orgOpportunities'>
+      if (Array.isArray(patch.tags)) {
+        patch.tags = normalizeTags(patch.tags as Array<string>)
+      }
+      if ('redirectOpportunityId' in patch) {
+        const raw = patch.redirectOpportunityId
+        if (raw != null && typeof raw !== 'string')
+          throw new Error(
+            'redirectOpportunityId must be an opportunity id or null',
+          )
+        const target = raw ? ctx.db.normalizeId('orgOpportunities', raw) : null
+        if (raw && !target) throw new Error('redirectOpportunityId not found')
+        if (target) {
+          const t = await ctx.db.get(target)
+          if (!t || t.orgId !== org._id)
+            throw new Error('redirectOpportunityId not found')
+        }
+        patch.redirectOpportunityId = target ?? undefined
+      }
+      if ('formFields' in patch || 'formSource' in patch) {
+        await assertNoApplications(ctx, opp._id)
+        if ('formSource' in patch) {
+          const source = patch.formSource as FormSource
+          if (!['course', 'eoi', 'custom'].includes(source))
+            throw new Error('formSource must be course, eoi or custom')
+          patch.formFields = await copyCanonicalForm(ctx, {
+            orgId: org._id,
+            source,
+            tags: (patch.tags as Array<string> | undefined) ?? opp.tags,
+          })
+        } else {
+          patch.formFields = cleanAdminForm(patch.formFields)
+        }
+      }
+    }
+
+    if (args.resource === 'polls') {
+      const poll = doc as Doc<'availabilityPolls'>
+      for (const key of ['startMinutes', 'endMinutes'] as const) {
+        if (key in patch && typeof patch[key] !== 'number')
+          throw new Error(`${key} must be a number of minutes after midnight`)
+      }
+      if ('days' in patch || 'startMinutes' in patch || 'endMinutes' in patch) {
+        const days = checkPollRange(poll, patch as any).days
+        if ('days' in patch) patch.days = days
+      }
+    }
+
     // Opportunities: `archived` is a boolean on the way in, a timestamp on the
     // way out. Archiving touches nothing that references the opportunity.
     if (args.resource === 'opportunities' && 'archived' in patch) {
@@ -1117,9 +1198,11 @@ export const createSurvey = internalMutation({
     userId: v.string(),
     orgSlug: v.string(),
     opportunityId: v.string(),
-    title: v.string(),
+    title: v.optional(v.string()),
     description: v.optional(v.string()),
-    formFields: v.any(),
+    // Omitted: the canonical feedback survey for its kind, filled for the
+    // opportunity's course (title and intro too, unless given).
+    formFields: v.optional(v.any()),
     applicantStatuses: v.optional(v.array(v.string())),
     anonymous: v.optional(v.boolean()),
   },
@@ -1135,13 +1218,38 @@ export const createSurvey = internalMutation({
     if (!opportunity || opportunity.orgId !== org._id)
       throw new Error('opportunityId not found')
 
+    let { title, description, formFields } = args
+    if (formFields === undefined) {
+      const canonical = await ctx.db
+        .query('canonicalForms')
+        .withIndex('by_org_and_kind', (q) =>
+          q
+            .eq('orgId', org._id)
+            .eq('kind', args.anonymous ? 'feedback_anonymous' : 'feedback'),
+        )
+        .unique()
+      if (!canonical)
+        throw new Error(
+          'There is no canonical feedback survey yet: pass formFields, or set it up in Admin → Canonicals.',
+        )
+      const values = coursePlaceholderValues(opportunity.tags)
+      formFields = fillFormPlaceholders(
+        canonical.formFields as Array<FormField>,
+        values,
+      )
+      title ??= fillText(canonical.title ?? '', values)
+      description ??= canonical.description
+        ? fillText(canonical.description, values)
+        : undefined
+    }
+    if (!title?.trim()) throw new Error('title is required')
     const id = await createSurveyFor(ctx, {
       opportunityId,
       orgId: org._id,
       createdBy: args.userId,
-      title: args.title,
-      description: args.description,
-      formFields: args.formFields,
+      title,
+      description,
+      formFields,
       applicantStatuses: args.applicantStatuses,
       anonymous: args.anonymous,
     })

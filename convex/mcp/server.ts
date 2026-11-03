@@ -110,7 +110,8 @@ export const mcpHandler = httpAction(async (ctx, request) => {
           'with the user first. Application status can be set via ' +
           'astn_update — it records the decision in ASTN without emailing the ' +
           'applicant. Sending emails/broadcasts, any Luma write, membership ' +
-          'changes and publishing/finalizing are not exposed.',
+          'and course access changes, editing the canonicals and finalizing ' +
+          'a poll are not exposed.',
       })
     }
     case 'ping':
