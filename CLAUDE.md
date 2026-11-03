@@ -1,138 +1,64 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+ASTN (AI Safety Talent Network) is live at safetytalent.org. Orgs like BAISH use it to run their courses: opportunities with application forms, decision emails, availability polls and feedback surveys. Individuals keep a profile and get matched to opportunities. Real applicants use it every day, so treat `main` as production.
 
-## Project Overview
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before shipping anything: it covers how a change reaches production and which areas need extra care.
 
-AI Safety Talent Network (ASTN) - A career command center for AI safety talent. Users maintain profiles and get matched to opportunities. Initial pilot targets BAISH (Buenos Aires AI Safety Hub) with 50-100 profiles. Live at safetytalent.org with ~40 users.
-
-## Development Commands
+## Commands
 
 ```bash
-# Start dev (runs Convex + Vite concurrently)
-bun run dev
-
-# Run only the web frontend
-bun run dev:web
-
-# Run only Convex backend
-bun run dev:convex
-
-# Type check and lint
-bun run lint
-
-# Format code
-bun run format
-
-# Build for production
-bun run build
+pnpm install                 # the only package manager; never bun install / npm install
+bun run dev                  # your own Convex dev deployment + the site
+vp check --no-fmt            # fast frontend lint + types
+pnpm run lint && pnpm run lint:convex
+pnpm exec tsc -p convex/tsconfig.json --noEmit
+bun test src convex
+vp build
+npx convex codegen           # after adding a file under convex/
 ```
 
-## Architecture
+Bun only runs scripts and tests. `vp` (Vite+) wraps Vite, Oxlint and Oxfmt: use `vp dev`, `vp build`, `vp lint`, `vp fmt`, never the underlying tools. The commit hook runs `vp staged`; don't skip it.
 
-### Frontend Stack
+If a tool fails for reasons unrelated to the code (e.g. "Failed to convert napi value into rust type `bool`", `MISSING_EXPORT` from `@tanstack/router-core`), the installed packages are mixed: `rm -rf node_modules && pnpm install`.
 
-- **TanStack Start** with file-based routing in `src/routes/`
-- **TanStack Router + Query** integrated with Convex for data fetching
-- **React 19** with React Compiler enabled (via babel-plugin-react-compiler)
-- **shadcn/ui** (new-york style) with Tailwind v4
-- Path alias: `~/` maps to `src/`
+## Deploy
 
-### Backend Stack
+- Pushing to `main` deploys: Vercel updates Convex first, then the frontend. CI (`.github/workflows/ci.yml`) runs in parallel and does not block the release, so wait for it.
+- Preview deployments have no backend of their own.
+- Never run anything against production (`--prod`, a prod deploy key, writes through the MCP) unless the user explicitly asks for it.
 
-- **Convex** for database, real-time sync, and serverless functions
-- **Clerk** for authentication (GitHub, Google, Email+Password) via `@clerk/clerk-react` + `convex/react-clerk`
-- **Claude API** + Gemini + Kimi for LLM features
+## Stack
 
-### Key Patterns
+- **Frontend:** TanStack Start with file-based routes in `src/routes/`, React 19 with the React Compiler, shadcn/ui on Tailwind v4. `~/` maps to `src/`.
+- **Backend:** Convex. Clerk for auth. Resend for email (`convex/emails/`). LLM models are configured in `convex/lib/models.ts`.
+- **MCP server:** `convex/mcp/`, admin-only, authenticated with a Clerk OAuth token.
 
-**Convex Actions with Node.js**: Files using external APIs (like Claude) require `"use node"` at the top.
+## Domain
 
-**Internal vs Public Functions**: Use `internal` from `_generated/api` for functions that should only be called by other Convex functions, not the client.
+- **Opportunities** (`orgOpportunities`) are `draft`, `active` or `closed`. A draft's application link only works for admins and people with course access. Access checks live in `convex/lib/courseAccess.ts`.
+- **Courses** are identified by a course tag (`COURSE_TAGS` in `convex/lib/courses.ts`). An **EOI** (expression of interest, `isEOI`) collects interest for a course's next edition; `redirectOpportunityId` points it at the edition that opened.
+- **Canonicals** (Admin → Canonicals) are the org's defaults: the course form, the EOI form, the two feedback surveys (`canonicalForms`), the canonical email set (`emailTemplateSets.isCanonical`) and the footer of every email (`organizations.emailFooter`). New opportunities copy them. Text may use `{{course}}` and `{{area}}`, filled from the course tag.
+- **Forms** (`convex/lib/formFields.ts`): an opportunity's questions can be edited until its first application, then they are locked. Question keys are sanitized there; keep them valid field names.
+- **Emails:** a status change only adds a draft to the opportunity's Outbox; someone sends it by hand. Only the application confirmation and poll emails send on their own. Template variables: `{{applicant_name}}`, `{{course}}`, `{{area}}`, and `{{apply_link}}` in broadcasts (a personal, pre-filled link to the course's open application; `convex/applicationInvites.ts`).
+- Shared links (apply, poll, survey) must keep working: an opportunity resolves by slug or by id.
 
-<!--VITE PLUS START-->
+## Rules that have broken production before
 
-# Using Vite+, the Unified Toolchain for the Web
+- Every field added to `orgOpportunities` must also go in `opportunityReturnValidator` (`convex/orgOpportunities.ts`), or admin pages stop loading.
+- Changing the shape of existing data takes two releases: widen the schema and migrate (idempotently, after a `convex export` backup), then narrow it.
+- React Compiler: initialize component state from props or query results at mount (or in render, guarded by a `loaded` flag). Never set a Radix `Select` value from a `useEffect` after mount; it stays empty.
 
-This project is using Vite+, a unified toolchain built on top of Vite, Rolldown, Vitest, tsdown, Oxlint, Oxfmt, and Vite Task. Vite+ wraps runtime management, package management, and frontend tooling in a single global CLI called `vp`. Vite+ is distinct from Vite, but it invokes Vite through `vp dev` and `vp build`.
+## Conventions
 
-## Vite+ Workflow
-
-`vp` is a global binary that handles the full development lifecycle. Run `vp help` to print a list of commands and `vp <command> --help` for information about a specific command.
-
-### Start
-
-- create - Create a new project from a template
-- migrate - Migrate an existing project to Vite+
-- config - Configure hooks and agent integration
-- staged - Run linters on staged files
-- install (`i`) - Install dependencies
-- env - Manage Node.js versions
-
-### Develop
-
-- dev - Run the development server
-- check - Run format, lint, and TypeScript type checks
-- lint - Lint code
-- fmt - Format code
-- test - Run tests
-
-### Execute
-
-- run - Run monorepo tasks
-- exec - Execute a command from local `node_modules/.bin`
-- dlx - Execute a package binary without installing it as a dependency
-- cache - Manage the task cache
-
-### Build
-
-- build - Build for production
-- pack - Build libraries
-- preview - Preview production build
-
-### Manage Dependencies
-
-Vite+ automatically detects and wraps the underlying package manager such as pnpm, npm, or Yarn through the `packageManager` field in `package.json` or package manager-specific lockfiles.
-
-- add - Add packages to dependencies
-- remove (`rm`, `un`, `uninstall`) - Remove packages from dependencies
-- update (`up`) - Update packages to latest versions
-- dedupe - Deduplicate dependencies
-- outdated - Check for outdated packages
-- list (`ls`) - List installed packages
-- why (`explain`) - Show why a package is installed
-- info (`view`, `show`) - View package information from the registry
-- link (`ln`) / unlink - Manage local package links
-- pm - Forward a command to the package manager
-
-### Maintain
-
-- upgrade - Update `vp` itself to the latest version
-
-These commands map to their corresponding tools. For example, `vp dev --port 3000` runs Vite's dev server and works the same as Vite. `vp test` runs JavaScript tests through the bundled Vitest. The version of all tools can be checked using `vp --version`. This is useful when researching documentation, features, and bugs.
-
-## Common Pitfalls
-
-- **Using the package manager directly:** Do not use pnpm, npm, or Yarn directly. Vite+ can handle all package manager operations.
-- **Always use Vite commands to run tools:** Don't attempt to run `vp vitest` or `vp oxlint`. They do not exist. Use `vp test` and `vp lint` instead.
-- **Running scripts:** Vite+ commands take precedence over `package.json` scripts. If there is a `test` script defined in `scripts` that conflicts with the built-in `vp test` command, run it using `vp run test`.
-- **Do not install Vitest, Oxlint, Oxfmt, or tsdown directly:** Vite+ wraps these tools. They must not be installed directly. You cannot upgrade these tools by installing their latest versions. Always use Vite+ commands.
-- **Use Vite+ wrappers for one-off binaries:** Use `vp dlx` instead of package-manager-specific `dlx`/`npx` commands.
-- **Import JavaScript modules from `vite-plus`:** Instead of importing from `vite` or `vitest`, all modules should be imported from the project's `vite-plus` dependency. For example, `import { defineConfig } from 'vite-plus';` or `import { expect, test, vi } from 'vite-plus/test';`. You must not install `vitest` to import test utilities.
-- **Type-Aware Linting:** There is no need to install `oxlint-tsgolint`, `vp lint --type-aware` works out of the box.
-
-## Review Checklist for Agents
-
-- [ ] Run `vp install` after pulling remote changes and before getting started.
-- [ ] Run `vp check` and `vp test` to validate changes.
-<!--VITE PLUS END-->
+- Admin UI text is in English. Text applicants read (emails, apply-page messages) is in Spanish (Argentina).
+- Comments describe what the code does now. No history, no notes about removed features or past versions.
+- Tests are `*.test.ts` files under `src/` (mostly `src/lib/`) and run with `bun test`. They declare `describe`/`test`/`expect` themselves instead of importing `bun:test`, which the type check can't resolve.
+- Small conventional commits: `fix(polls): ...`, `feat(forms): ...`, `chore: ...`.
 
 <!-- convex-ai-start -->
 
 This project uses [Convex](https://convex.dev) as its backend.
 
-When working on Convex code, **always read `convex/_generated/ai/guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns. The file contains rules that override what you may have learned about Convex from training data.
-
-Convex agent skills for common tasks can be installed by running `npx convex ai-files install`.
+When working on Convex code, **always read `convex/_generated/ai/guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns. The file contains rules that override what you may have learned about Convex from training data. `convex/CLAUDE.md` adds this repo's Convex rules.
 
 <!-- convex-ai-end -->
