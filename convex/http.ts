@@ -1,6 +1,7 @@
 import { httpRouter } from 'convex/server'
 import { corsHandler, streamChat } from './enrichment/streaming'
 import { unsubscribeHandler } from './emails/unsubscribe'
+import { resendInboundHandler } from './emails/inbound'
 import { lumaWebhookHandler } from './social/webhook'
 import {
   mcpHandler,
@@ -52,6 +53,13 @@ http.route({
   path: '/unsubscribe',
   method: 'GET',
   handler: unsubscribeHandler,
+})
+
+// Replies that reach notifications@safetytalent.org (Resend inbound)
+http.route({
+  path: '/resend-inbound',
+  method: 'POST',
+  handler: resendInboundHandler,
 })
 
 // Luma guest webhooks (registrations and approval changes)

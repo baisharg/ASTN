@@ -15,7 +15,7 @@ export const resend = new Resend(components.resend, {
 })
 
 // From address for all ASTN emails
-const FROM_ADDRESS = 'ASTN <notifications@safetytalent.org>'
+export const FROM_ADDRESS = 'ASTN <notifications@safetytalent.org>'
 
 /**
  * Send a match alert email

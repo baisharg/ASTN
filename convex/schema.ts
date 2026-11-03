@@ -1751,7 +1751,8 @@ export default defineSchema({
     error: v.optional(v.string()),
   })
     .index('by_opportunity', ['opportunityId'])
-    .index('by_application_and_kind', ['applicationId', 'kind']),
+    .index('by_application_and_kind', ['applicationId', 'kind'])
+    .index('by_recipient_email', ['recipientEmail']),
 
   // Admin agent chat history (per admin per org)
   adminAgentChats: defineTable({

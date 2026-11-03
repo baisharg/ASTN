@@ -78,6 +78,7 @@ import type * as crons from "../crons.js";
 import type * as emails_adminBroadcast from "../emails/adminBroadcast.js";
 import type * as emails_adminBroadcastAction from "../emails/adminBroadcastAction.js";
 import type * as emails_batchActions from "../emails/batchActions.js";
+import type * as emails_inbound from "../emails/inbound.js";
 import type * as emails_outbox from "../emails/outbox.js";
 import type * as emails_outboxSend from "../emails/outboxSend.js";
 import type * as emails_replyTo from "../emails/replyTo.js";
@@ -284,6 +285,7 @@ declare const fullApi: ApiFromModules<{
   "emails/adminBroadcast": typeof emails_adminBroadcast;
   "emails/adminBroadcastAction": typeof emails_adminBroadcastAction;
   "emails/batchActions": typeof emails_batchActions;
+  "emails/inbound": typeof emails_inbound;
   "emails/outbox": typeof emails_outbox;
   "emails/outboxSend": typeof emails_outboxSend;
   "emails/replyTo": typeof emails_replyTo;

@@ -222,8 +222,7 @@ export const sendBroadcastToApplicants = action({
  *
  * Template variables (`{{poll_link}}` / `{{survey_link}}`) are replaced with the
  * illustrative example links computed on the client — no real respondent tokens
- * are generated. The subject is prefixed with `[TEST]` and the greeting uses a
- * sample name.
+ * are generated. The subject is prefixed with `[TEST]`.
  */
 export const sendTestEmail = action({
   args: {
