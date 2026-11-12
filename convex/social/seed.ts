@@ -341,6 +341,7 @@ export const clearDemoEvent = internalMutation({
         'socialAttendeeStatus',
         'socialMeetingRequests',
         'socialMeetings',
+        'socialMeetingNotes',
         'socialSuggestions',
         'socialSuggestionCandidates',
         'socialSuggestionRuns',

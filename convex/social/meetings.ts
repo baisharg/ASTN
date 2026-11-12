@@ -5,10 +5,13 @@ import { getUserId, requireAuth } from '../lib/auth'
 import {
   DECLINE_COOLDOWN_MS,
   MAX_MEETING_EXTENSION_MINUTES,
+  MAX_MY_MEETINGS,
   MAX_NOTE_LENGTH,
   MAX_OUTGOING_PENDING,
   compareAttendees,
   extensionMinutesGranted,
+  latestMeetingsFirst,
+  meetingNoteToStore,
   meetingsOpenNow,
   requestExpiryTime,
   requestPastExpiry,
@@ -1070,6 +1073,179 @@ export const endIfDue = internalMutation({
     await ctx.db.patch('socialMeetings', meetingId, {
       status: 'ended',
       endedAt: now,
+    })
+    return null
+  },
+})
+
+// ── "Mis reuniones" ─────────────────────────────────────────────────────
+
+/**
+ * The 1:1s the caller finished at the event, most recent first, for the
+ * "Mis reuniones" page. Empty for anyone who isn't an approved attendee.
+ * The caller's notes are not in here: getMyNoteAbout returns each one.
+ */
+export const listMyMeetings = query({
+  args: { eventId: v.id('socialEvents') },
+  returns: v.array(
+    v.object({
+      _id: v.id('socialMeetings'),
+      partner: cardValidator,
+      startedAt: v.number(),
+      endedAt: v.number(),
+      // Where they met; null when no spot was free or it no longer exists.
+      spot: v.union(
+        v.null(),
+        v.object({
+          number: v.number(),
+          label: v.union(v.string(), v.null()),
+        }),
+      ),
+      // From the suggestion that links the two, when one is still stored.
+      topics: v.array(v.string()),
+    }),
+  ),
+  handler: async (ctx, { eventId }) => {
+    const userId = await getUserId(ctx)
+    if (!userId) return []
+    const guest = await getGuestByUser(ctx, eventId, userId)
+    if (guest?.status !== 'approved') return []
+
+    const [asked, accepted] = await Promise.all([
+      ctx.db
+        .query('socialMeetings')
+        .withIndex('by_eventId_and_userA_and_status', (q) =>
+          q.eq('eventId', eventId).eq('userA', userId).eq('status', 'ended'),
+        )
+        .order('desc')
+        .take(MAX_MY_MEETINGS),
+      ctx.db
+        .query('socialMeetings')
+        .withIndex('by_eventId_and_userB_and_status', (q) =>
+          q.eq('eventId', eventId).eq('userB', userId).eq('status', 'ended'),
+        )
+        .order('desc')
+        .take(MAX_MY_MEETINGS),
+    ])
+    const meetings = latestMeetingsFirst(asked, accepted)
+
+    // A person met twice is looked up once.
+    const partnerIdOf = (meeting: Doc<'socialMeetings'>) =>
+      meeting.userA === userId ? meeting.userB : meeting.userA
+    const partners = new Map(
+      await Promise.all(
+        [...new Set(meetings.map(partnerIdOf))].map(
+          async (partnerId) =>
+            [
+              partnerId,
+              {
+                card: await attendeeCard(ctx, eventId, partnerId),
+                topics: await meetingTopics(ctx, eventId, userId, partnerId),
+              },
+            ] as const,
+        ),
+      ),
+    )
+
+    return await Promise.all(
+      meetings.map(async (meeting) => {
+        const partner = partners.get(partnerIdOf(meeting))!
+        const spot = meeting.spotId
+          ? await ctx.db.get('socialEventSpots', meeting.spotId)
+          : null
+        return {
+          _id: meeting._id,
+          partner: partner.card,
+          startedAt: meeting.startedAt,
+          endedAt: endedAtOf(meeting),
+          spot: spot
+            ? { number: spot.number, label: spot.label ?? null }
+            : null,
+          topics: partner.topics,
+        }
+      }),
+    )
+  },
+})
+
+// ── Private notes ───────────────────────────────────────────────────────
+
+/** The note `userId` wrote about `aboutUserId` at the event, if any. */
+async function meetingNoteRow(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+  userId: string,
+  aboutUserId: string,
+): Promise<Doc<'socialMeetingNotes'> | null> {
+  return await ctx.db
+    .query('socialMeetingNotes')
+    .withIndex('by_eventId_and_userId_and_aboutUserId', (q) =>
+      q
+        .eq('eventId', eventId)
+        .eq('userId', userId)
+        .eq('aboutUserId', aboutUserId),
+    )
+    .first()
+}
+
+/**
+ * The private note the caller wrote about a person at the event: its text,
+ * or null when there is none. Only ever the caller's own note.
+ */
+export const getMyNoteAbout = query({
+  args: { eventId: v.id('socialEvents'), aboutUserId: v.string() },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, { eventId, aboutUserId }) => {
+    const userId = await requireAuth(ctx)
+    await requireApprovedAttendee(ctx, eventId, userId)
+    const note = await meetingNoteRow(ctx, eventId, userId, aboutUserId)
+    return note?.text ?? null
+  },
+})
+
+/**
+ * Write the caller's private note about a person at the event. The text is
+ * trimmed and cut at MAX_MEETING_NOTE_LENGTH; an empty text deletes the
+ * note. A new note can only be about another approved attendee, so nobody
+ * stores rows about made-up people; a note that exists can always be
+ * changed or deleted.
+ */
+export const setMyNoteAbout = mutation({
+  args: {
+    eventId: v.id('socialEvents'),
+    aboutUserId: v.string(),
+    text: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, { eventId, aboutUserId, text }) => {
+    const userId = await requireAuth(ctx)
+    await requireApprovedAttendee(ctx, eventId, userId)
+    const existing = await meetingNoteRow(ctx, eventId, userId, aboutUserId)
+    const stored = meetingNoteToStore(text)
+    if (stored === null) {
+      if (existing) await ctx.db.delete('socialMeetingNotes', existing._id)
+      return null
+    }
+    if (existing) {
+      await ctx.db.patch('socialMeetingNotes', existing._id, {
+        text: stored,
+        updatedAt: Date.now(),
+      })
+      return null
+    }
+    const about =
+      aboutUserId === userId
+        ? null
+        : await getGuestByUser(ctx, eventId, aboutUserId)
+    if (about?.status !== 'approved') {
+      refuse('not_found', 'A note is about another attendee of the event')
+    }
+    await ctx.db.insert('socialMeetingNotes', {
+      eventId,
+      userId,
+      aboutUserId,
+      text: stored,
+      updatedAt: Date.now(),
     })
     return null
   },

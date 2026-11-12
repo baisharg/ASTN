@@ -3,6 +3,7 @@ import { useMutation } from 'convex/react'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../convex/_generated/api'
+import { showsMyMeetings } from '../../../../../../convex/social/constants'
 import type { LiveMeeting, LiveState } from '~/components/social/live'
 import type { TimeUpWatch } from '~/lib/social-live'
 import { useNow, useSocialEvent } from '~/components/social/SocialEventContext'
@@ -72,6 +73,8 @@ const copy = {
     breakFailed: 'No pudimos cambiar tu estado. Probá de nuevo.',
     seeRequest: 'Ver solicitud',
     findMore: 'Buscar a alguien más',
+    writeNote: (name: string) =>
+      `Ver mis reuniones y escribir una nota sobre ${name}`,
     noneTitle: 'No tenés una reunión en curso',
     noneBody:
       'Cuando alguien acepte tu solicitud, o vos aceptes una, acá vas a ver con quién y dónde se reúnen.',
@@ -120,6 +123,8 @@ const copy = {
     breakFailed: "We couldn't change your status. Please try again.",
     seeRequest: 'See request',
     findMore: 'Find someone else',
+    writeNote: (name: string) =>
+      `See my meetings and write a note about ${name}`,
     noneTitle: "You don't have a meeting in progress",
     noneBody:
       "When someone accepts your request, or you accept one, you'll see who you're meeting and where.",
@@ -483,6 +488,15 @@ function EndedCard({
         <p className="text-[13px] leading-normal text-muted-foreground">
           {t.breakHint(sentWaiting)}
         </p>
+      )}
+      {showsMyMeetings(event) && (
+        <Link
+          to="/org/$slug/e/$eventSlug/meetings"
+          params={{ slug, eventSlug }}
+          className="flex min-h-11 items-center self-start text-sm font-semibold text-[var(--baish-brand-text)] underline-offset-2 hover:underline"
+        >
+          {t.writeNote(partnerName.split(' ')[0] ?? partnerName)}
+        </Link>
       )}
     </Panel>
   )

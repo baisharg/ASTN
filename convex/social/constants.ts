@@ -5,6 +5,8 @@
 
 export const MAX_OUTGOING_PENDING = 5
 export const MAX_NOTE_LENGTH = 280
+// A private note about a person at the event can be this long.
+export const MAX_MEETING_NOTE_LENGTH = 2000
 export const DEFAULT_MEETING_MINUTES = 20
 // A meeting can run at most this long past its original length.
 export const MAX_MEETING_EXTENSION_MINUTES = 15
@@ -156,6 +158,51 @@ export function suggestionOutcome(input: {
       .length,
     chanceShare: pairs > 0 ? Math.min(1, input.suggestionCount / pairs) : null,
   }
+}
+
+// How many of a person's finished 1:1s the "Mis reuniones" page lists.
+export const MAX_MY_MEETINGS = 100
+
+/**
+ * Whether the event shows attendees "Mis reuniones": the list of the 1:1s
+ * they had, with a private note per person. Off unless an admin switched it
+ * on for the event, so an event nobody touched keeps its pages as they were.
+ */
+export function showsMyMeetings(event: {
+  myMeetingsEnabled?: boolean | null
+}): boolean {
+  return event.myMeetingsEnabled === true
+}
+
+/**
+ * One person's finished meetings, most recent first: the ones they asked
+ * for and the ones they accepted, merged by when each started and cut at
+ * MAX_MY_MEETINGS.
+ */
+export function latestMeetingsFirst<T extends { startedAt: number }>(
+  asked: ReadonlyArray<T>,
+  accepted: ReadonlyArray<T>,
+): Array<T> {
+  return [...asked, ...accepted]
+    .sort((a, b) => b.startedAt - a.startedAt)
+    .slice(0, MAX_MY_MEETINGS)
+}
+
+/** How long a finished meeting lasted, in milliseconds. */
+export function meetingLengthMs(meeting: {
+  startedAt: number
+  endedAt: number
+}): number {
+  return Math.max(0, meeting.endedAt - meeting.startedAt)
+}
+
+/**
+ * What is stored for a private note the author wrote as `text`: the text
+ * without surrounding whitespace, cut at MAX_MEETING_NOTE_LENGTH. Null means
+ * there is nothing to keep, so the note is deleted.
+ */
+export function meetingNoteToStore(text: string): string | null {
+  return text.trim().slice(0, MAX_MEETING_NOTE_LENGTH).trimEnd() || null
 }
 
 // How many approved guests the attendee pages read per event (the list of
