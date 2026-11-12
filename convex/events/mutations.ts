@@ -24,6 +24,7 @@ export const upsertEvents = internalMutation({
       }),
     ),
   },
+  returns: v.null(),
   handler: async (ctx, { orgId, events }) => {
     const now = Date.now()
 
@@ -38,9 +39,14 @@ export const upsertEvents = internalMutation({
         .first()
 
       if (existing) {
-        // Update existing event
+        // This endpoint reports an end time, a cover and an address for
+        // every event, so one that is missing was removed in Luma and is
+        // removed here. It has no descriptions, so the row keeps its own.
         await ctx.db.patch('events', existing._id, {
           ...event,
+          endAt: event.endAt,
+          coverUrl: event.coverUrl,
+          location: event.location,
           syncedAt: now,
         })
       } else {
@@ -59,6 +65,7 @@ export const upsertEvents = internalMutation({
         )
       }
     }
+    return null
   },
 })
 

@@ -59,7 +59,7 @@ async function syncEventsImpl(
       full ? undefined : { after: now - RECENT_WINDOW_MS },
     )
     const mirrored = events
-      .map(mirrorFromLuma)
+      .map((e) => mirrorFromLuma(e, { listed: true }))
       .filter((e) => e.title && !Number.isNaN(e.startAt))
     let inserted = 0
     let updated = 0

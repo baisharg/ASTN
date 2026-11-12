@@ -15,7 +15,9 @@ import {
   attendanceExternalId,
   attendanceGuestValidator,
   eventEnd,
+  mirrorChanges,
   mirroredEventValidator,
+  newMirrorFields,
   recomputeLumaCounts,
   syncTotalsValidator,
 } from './shared'
@@ -169,14 +171,6 @@ function needsGuestSync(
   return existing.lastGuestSyncAt < settlesAt
 }
 
-function differs(existing: Doc<'events'>, event: MirroredEvent): boolean {
-  for (const [key, value] of Object.entries(event)) {
-    if (value === undefined) continue
-    if (existing[key as keyof Doc<'events'>] !== value) return true
-  }
-  return existing.canceled === true
-}
-
 /** The org's mirror row for a Luma event (each org has its own rows). */
 export async function getOrgEventRow(
   ctx: QueryCtx | MutationCtx,
@@ -198,11 +192,12 @@ async function upsertEvent(
   options: { notify: boolean; now: number },
 ): Promise<'inserted' | 'updated' | 'unchanged'> {
   const existing = await getOrgEventRow(ctx, orgId, event.lumaEventId)
-  const syncNeeded = needsGuestSync(event, existing, options.now)
+  const fields = newMirrorFields(event)
+  const syncNeeded = needsGuestSync(fields, existing, options.now)
 
   if (!existing) {
     const eventId = await ctx.db.insert('events', {
-      ...event,
+      ...fields,
       orgId,
       syncedAt: options.now,
       canceled: false,
@@ -223,15 +218,13 @@ async function upsertEvent(
     return 'inserted'
   }
 
-  const changed = differs(existing, event)
+  // A canceled row that Luma reports again is no longer canceled.
+  const changes = mirrorChanges(existing, event)
+  const changed = Object.keys(changes).length > 0 || existing.canceled === true
   const flagChange = syncNeeded && !existing.guestSyncNeeded
   if (!changed && !flagChange) return 'unchanged'
   const patch: Partial<Doc<'events'>> = { syncedAt: options.now }
-  if (changed) {
-    Object.assign(patch, event, { canceled: false })
-    // The list endpoint has no description; keep the one we have.
-    if (event.description === undefined) delete patch.description
-  }
+  if (changed) Object.assign(patch, changes, { canceled: false })
   if (syncNeeded) patch.guestSyncNeeded = true
   await ctx.db.patch('events', existing._id, patch)
   return changed ? 'updated' : 'unchanged'

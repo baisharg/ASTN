@@ -10,23 +10,29 @@ import type { LumaEvent, LumaGuest } from '../social/luma'
  * event becomes a `crmActivities` row on their CRM contact.
  */
 
-/** An event as stored in `events`, from the official API. */
+/**
+ * An event as a Luma source (calendar listing, /v1/events/get, webhook)
+ * reported it, in the shape of an `events` row. In the fields that take
+ * null, null means the source reported the field empty, so the mirror
+ * removes it; a missing key means the source said nothing about it, so the
+ * mirror keeps what it has.
+ */
 export const mirroredEventValidator = v.object({
   lumaEventId: v.string(),
   title: v.string(),
   // Only from /v1/events/get and webhooks; the list endpoint has none.
-  description: v.optional(v.string()),
+  description: v.optional(v.union(v.string(), v.null())),
   startAt: v.number(),
-  endAt: v.optional(v.number()),
+  endAt: v.optional(v.union(v.number(), v.null())),
   timezone: v.string(),
-  coverUrl: v.optional(v.string()),
+  coverUrl: v.optional(v.union(v.string(), v.null())),
   url: v.string(),
-  location: v.optional(v.string()),
+  location: v.optional(v.union(v.string(), v.null())),
   isVirtual: v.boolean(),
   visibility: v.string(),
   lumaAccess: v.string(),
   requireApproval: v.optional(v.boolean()),
-  maxCapacity: v.optional(v.number()),
+  maxCapacity: v.optional(v.union(v.number(), v.null())),
 })
 export type MirroredEvent = Infer<typeof mirroredEventValidator>
 
@@ -44,20 +50,40 @@ export function lumaEventUrl(url: string): string {
   return /^https?:\/\//.test(url) ? url : `https://luma.com/${url}`
 }
 
-export function mirrorFromLuma(e: LumaEvent): MirroredEvent {
+/**
+ * A field of a Luma payload as the mirror takes it: undefined when the
+ * payload has no such key (not reported), null when the key is there with
+ * no value (reported empty), else the value.
+ */
+function reported<T>(raw: unknown, value: T | undefined): T | null | undefined {
+  if (raw === undefined) return undefined
+  return value ?? null
+}
+
+/**
+ * `listed`: the payload is an entry of the calendar listing, which carries
+ * no descriptions, so it never reports one as empty.
+ */
+export function mirrorFromLuma(
+  e: LumaEvent,
+  options: { listed?: boolean } = {},
+): MirroredEvent {
   const endAt = e.end_at ? Date.parse(e.end_at) : NaN
   const geo = e.geo_address_json
   const location = geo?.full_address || geo?.address || geo?.city || undefined
+  const description = e.description_md?.trim() || undefined
   return {
     lumaEventId: e.id,
     title: e.name,
-    description: e.description_md?.trim() || undefined,
+    description: options.listed
+      ? description
+      : reported(e.description_md, description),
     startAt: Date.parse(e.start_at),
-    endAt: Number.isNaN(endAt) ? undefined : endAt,
+    endAt: reported(e.end_at, Number.isNaN(endAt) ? undefined : endAt),
     timezone: e.timezone,
-    coverUrl: e.cover_url || undefined,
+    coverUrl: reported(e.cover_url, e.cover_url || undefined),
     url: lumaEventUrl(e.url),
-    location,
+    location: reported(geo, location),
     isVirtual:
       ONLINE_LOCATIONS.has(e.location_type ?? '') ||
       (!location && !!e.meeting_url),
@@ -65,8 +91,43 @@ export function mirrorFromLuma(e: LumaEvent): MirroredEvent {
       e.platform === 'external' ? 'public' : (e.visibility ?? 'public'),
     lumaAccess: e.access ?? 'manage',
     requireApproval: e.require_approval,
-    maxCapacity: e.max_capacity ?? undefined,
+    maxCapacity: reported(e.max_capacity, e.max_capacity ?? undefined),
   }
+}
+
+/** The fields of a new mirror row: what the source reported with a value. */
+export function newMirrorFields(event: MirroredEvent) {
+  return {
+    ...event,
+    description: event.description ?? undefined,
+    endAt: event.endAt ?? undefined,
+    coverUrl: event.coverUrl ?? undefined,
+    location: event.location ?? undefined,
+    maxCapacity: event.maxCapacity ?? undefined,
+  }
+}
+
+/**
+ * The patch that brings a mirror row in line with what the source reported:
+ * a value that differs is set, a field reported empty is removed (its patch
+ * value is undefined), and a field the source didn't report is left alone.
+ * Empty when the row already matches.
+ */
+export function mirrorChanges(
+  existing: Pick<Doc<'events'>, keyof MirroredEvent>,
+  event: MirroredEvent,
+): Partial<Pick<Doc<'events'>, keyof MirroredEvent>> {
+  const patch: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(event)) {
+    if (value === undefined) continue
+    const current = existing[key as keyof MirroredEvent]
+    if (value === null) {
+      if (current !== undefined) patch[key] = undefined
+    } else if (current !== value) {
+      patch[key] = value
+    }
+  }
+  return patch
 }
 
 /** When an event is over, for sync purposes. */
