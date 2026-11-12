@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from 'convex/react'
 import { formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { RefreshCw, Users } from 'lucide-react'
+import { ExternalLink, RefreshCw, Users } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
@@ -38,7 +38,13 @@ export function EventLumaTab({ event }: { event: AdminEvent }) {
         <LinkedLumaEvent orgId={event.orgId} lumaEventId={lumaEventId}>
           {(lumaEvent) => (
             <>
-              <LumaGuestsCard orgId={event.orgId} lumaEvent={lumaEvent} />
+              <LumaGuestsCard
+                orgId={event.orgId}
+                lumaEvent={lumaEvent}
+                // The link card has "Abrir en Luma" once the first sync has
+                // stored the event's address; until then it goes here.
+                showLumaLink={!event.lumaUrl}
+              />
               <LumaEventSettingsCard
                 // A different linked event starts the card over.
                 key={lumaEventId}
@@ -124,9 +130,11 @@ function LinkedLumaEvent({
 function LumaGuestsCard({
   orgId,
   lumaEvent,
+  showLumaLink,
 }: {
   orgId: Id<'organizations'>
   lumaEvent: LumaEventRow
+  showLumaLink: boolean
 }) {
   const refreshGuests = useMutation(api.luma.admin.refreshGuests)
   const { busy, run } = useBusyAction<'refresh'>()
@@ -192,6 +200,14 @@ function LumaGuestsCard({
             />
             Actualizar CRM
           </Button>
+          {showLumaLink && (
+            <Button variant="outline" className="min-h-11" asChild>
+              <a href={lumaEvent.url} target="_blank" rel="noreferrer">
+                <ExternalLink className="size-4 mr-2" />
+                Abrir en Luma
+              </a>
+            </Button>
+          )}
         </div>
       </CardContent>
       <LumaGuestsDialog
