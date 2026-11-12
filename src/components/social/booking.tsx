@@ -23,7 +23,11 @@ import {
   useCopy,
   useSocialLang,
 } from '~/lib/social-i18n'
-import { bookingsDueNow, openProposals } from '~/lib/social-live'
+import {
+  bookingsDueNow,
+  openProposals,
+  slotPickerFrom,
+} from '~/lib/social-live'
 import { spotName } from '~/lib/social-spot'
 import { useBusyAction } from '~/lib/use-busy-action'
 
@@ -382,6 +386,7 @@ function SlotPicker({
   const slots = useQuery(api.social.bookings.getSlotsWith, {
     eventId: event._id,
     withUserId: userId,
+    from: slotPickerFrom(event.meetingsOpenAt, event.meetingMinutes, now),
   })
   const propose = useMutation(api.social.bookings.propose)
   const { busy, run } = useBusyAction<'send'>()

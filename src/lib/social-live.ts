@@ -267,6 +267,22 @@ export function openProposals<T extends { slotStart: number }>(
   return proposals.filter((p) => p.slotStart > now)
 }
 
+/**
+ * The time the slot picker asks the server for slots from: the start of the
+ * slot that is on at `now` (or the window's opening, before it). It stays
+ * the same for a whole slot, so the query isn't asked again every tick, and
+ * slots that are over are left out.
+ */
+export function slotPickerFrom(
+  openAt: number,
+  meetingMinutes: number,
+  now: number,
+): number {
+  const length = meetingMinutes * 60 * 1000
+  if (!(length > 0) || now <= openAt) return openAt
+  return openAt + Math.floor((now - openAt) / length) * length
+}
+
 /** What the event layout has already alerted about the viewer's agenda. */
 export type AgendaSeen = {
   /** The event and account this belongs to. */

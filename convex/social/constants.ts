@@ -371,7 +371,11 @@ export function slotStartingAt(
   )
 }
 
-/** A booked 1:1's time and the number of the place reserved for it, if any. */
+/**
+ * A stretch of time with the number of the place it holds, if any: a booked
+ * 1:1 and its reserved place, or a meeting in progress and the place it is
+ * at.
+ */
 export type Reservation = TimeSpan & { spotNumber: number | null }
 
 /**
@@ -383,7 +387,9 @@ export type Reservation = TimeSpan & { spotNumber: number | null }
  *   places books S per slot; the booking gets the highest-numbered place
  *   that is free in the slot (meet-now takes the lowest, so the two rarely
  *   want the same one);
- * - once every place is reserved, the slot is not bookable.
+ * - a place where a meeting in progress runs into the slot is not free in
+ *   it either: `reservations` carries those meetings too;
+ * - once every place is taken, the slot is not bookable.
  */
 export function placeForBooking(
   spotNumbers: ReadonlyArray<number>,
@@ -418,7 +424,8 @@ export function slotBlock(input: {
   mine: ReadonlyArray<TimeSpan>
   theirs: ReadonlyArray<TimeSpan>
   spotNumbers: ReadonlyArray<number>
-  // Every booked 1:1 of the event.
+  // The places held around the slot: by booked 1:1s and by meetings in
+  // progress.
   reservations: ReadonlyArray<Reservation>
 }): SlotBlock | null {
   const { slot } = input
@@ -592,4 +599,54 @@ export function bookingNoticeFor(
     default:
       return null
   }
+}
+
+/**
+ * What declining a proposal records: 'declined', which the proposer is told
+ * as "they can't", while the proposal could still be answered; 'expired'
+ * once its slot has started, because by then nobody answered in time.
+ */
+export function declinedProposalStatus(
+  proposal: { slotStart: number },
+  now: number,
+): 'declined' | 'expired' {
+  return proposal.slotStart > now ? 'declined' : 'expired'
+}
+
+/**
+ * What becomes of a proposal or booking when one of its two people stops
+ * being a confirmed attendee (an admin declines them, or Luma reports them
+ * as no longer approved): their proposals are taken back, the ones sent to
+ * them are declined, and their booked 1:1s are cancelled, so the other
+ * person is told and gets their time and the place back. Null for rows that
+ * stay as they are: ones already closed, and a meeting that already started.
+ */
+export function statusWhenAttendeeLeaves(
+  row: { status: BookingStatus; fromUserId: string },
+  leavingUserId: string,
+): 'withdrawn' | 'declined' | 'cancelled' | null {
+  if (row.status === 'booked') return 'cancelled'
+  if (row.status !== 'proposed') return null
+  return row.fromUserId === leavingUserId ? 'withdrawn' : 'declined'
+}
+
+/**
+ * The places an admin can't remove right now: the numbers that booked 1:1s
+ * which haven't ended have reserved and that `newSpotNumbers` no longer has.
+ * Empty when the new set keeps every reserved number (moving or renaming a
+ * place, or adding places, is always fine).
+ */
+export function reservedSpotsRemoved(
+  newSpotNumbers: ReadonlyArray<number>,
+  reservations: ReadonlyArray<Reservation>,
+  now: number,
+): Array<number> {
+  const kept = new Set(newSpotNumbers)
+  const removed = new Set<number>()
+  for (const r of reservations) {
+    if (r.spotNumber !== null && r.end > now && !kept.has(r.spotNumber)) {
+      removed.add(r.spotNumber)
+    }
+  }
+  return [...removed].sort((a, b) => a - b)
 }

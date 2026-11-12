@@ -763,11 +763,12 @@ export async function startMeeting(
   const bookingEnabled = event.bookingEnabled === true
   const held = spotsHeldForBookings({
     bookingEnabled,
-    reservations: bookingEnabled
-      ? (await bookedRowsAround(ctx, event._id, now, endsAt))
-          .filter((row) => row._id !== plan.bookingId)
-          .map(reservationOf)
-      : [],
+    reservations:
+      bookingEnabled && spots.length > 0
+        ? (await bookedRowsAround(ctx, event._id, now, endsAt))
+            .filter((row) => row._id !== plan.bookingId)
+            .map(reservationOf)
+        : [],
     from: now,
     to: endsAt,
   })

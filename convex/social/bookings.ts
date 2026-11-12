@@ -9,6 +9,7 @@ import {
   bookingOpen,
   bookingSlots,
   bookingStage,
+  declinedProposalStatus,
   placeForBooking,
   proposalOpen,
   slotBlock,
@@ -17,15 +18,23 @@ import {
 } from './constants'
 import {
   attendeeCard,
-  bookedRowsAround,
+  bookedRowsFrom,
   bookedRowsOf,
   findSuggestion,
   getGuestByUser,
   meetingsWindow,
+  placesHeldAround,
+  placesOfActiveMeetings,
   reservationOf,
 } from './lib'
 import { activeMeetingFor, recordArrival, startMeeting } from './meetings'
-import type { BookingErrorCode, SlotBlock, TimeSpan } from './constants'
+import type {
+  BookingErrorCode,
+  BookingStatus,
+  Reservation,
+  SlotBlock,
+  TimeSpan,
+} from './constants'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 
@@ -99,29 +108,42 @@ function partnerOf(row: Doc<'socialBookings'>, userId: string): string {
   return row.fromUserId === userId ? row.toUserId : row.fromUserId
 }
 
-// A person's proposals and bookings at one event, read in one go. Far more
-// than a person makes; only bounds the read.
-const ROWS_PER_PERSON = 300
+// How many of the event's booked 1:1s the slot picker reads to mark full
+// slots (see getSlotsWith).
+const SLOT_PICKER_BOOKINGS = 2000
+// How many rows of one status a person's pages read per side. For the
+// statuses that are still going (proposed, booked, started) it is more than
+// a person can hold: one per slot, or one proposal per other attendee.
+const LIVE_ROWS = 600
+// For the ones that fell through, the latest are enough to tell the person.
+const NOTICE_ROWS = 50
 
-/** Every row `userId` proposed or was proposed, whatever became of it. */
-async function rowsOf(
+/**
+ * `userId`'s rows in `status`, the ones they proposed and the ones proposed
+ * to them, latest slot first and at most `limit` of each.
+ */
+async function rowsInStatus(
   ctx: QueryCtx | MutationCtx,
   eventId: Id<'socialEvents'>,
   userId: string,
+  status: BookingStatus,
+  limit: number,
 ): Promise<Array<Doc<'socialBookings'>>> {
   const [asFrom, asTo] = await Promise.all([
     ctx.db
       .query('socialBookings')
-      .withIndex('by_eventId_and_fromUserId_and_status', (q) =>
-        q.eq('eventId', eventId).eq('fromUserId', userId),
+      .withIndex('by_eventId_and_fromUserId_and_status_and_slotStart', (q) =>
+        q.eq('eventId', eventId).eq('fromUserId', userId).eq('status', status),
       )
-      .take(ROWS_PER_PERSON),
+      .order('desc')
+      .take(limit),
     ctx.db
       .query('socialBookings')
-      .withIndex('by_eventId_and_toUserId_and_status', (q) =>
-        q.eq('eventId', eventId).eq('toUserId', userId),
+      .withIndex('by_eventId_and_toUserId_and_status_and_slotStart', (q) =>
+        q.eq('eventId', eventId).eq('toUserId', userId).eq('status', status),
       )
-      .take(ROWS_PER_PERSON),
+      .order('desc')
+      .take(limit),
   ])
   return [...asFrom, ...asTo]
 }
@@ -132,27 +154,27 @@ async function pendingProposalsOf(
   eventId: Id<'socialEvents'>,
   userId: string,
 ): Promise<Array<Doc<'socialBookings'>>> {
-  const [sent, received] = await Promise.all([
-    ctx.db
-      .query('socialBookings')
-      .withIndex('by_eventId_and_fromUserId_and_status', (q) =>
-        q
-          .eq('eventId', eventId)
-          .eq('fromUserId', userId)
-          .eq('status', 'proposed'),
-      )
-      .take(ROWS_PER_PERSON),
-    ctx.db
-      .query('socialBookings')
-      .withIndex('by_eventId_and_toUserId_and_status', (q) =>
-        q
-          .eq('eventId', eventId)
-          .eq('toUserId', userId)
-          .eq('status', 'proposed'),
-      )
-      .take(ROWS_PER_PERSON),
+  return await rowsInStatus(ctx, eventId, userId, 'proposed', LIVE_ROWS)
+}
+
+/**
+ * What the agenda shows: the person's proposals and bookings that are still
+ * going, and the latest that fell through (for the notices).
+ */
+async function agendaRowsOf(
+  ctx: QueryCtx,
+  eventId: Id<'socialEvents'>,
+  userId: string,
+): Promise<Array<Doc<'socialBookings'>>> {
+  const going = ['proposed', 'booked', 'started'] as const
+  const fellThrough = ['declined', 'expired', 'cancelled', 'no_show'] as const
+  const rows = await Promise.all([
+    ...going.map((s) => rowsInStatus(ctx, eventId, userId, s, LIVE_ROWS)),
+    ...fellThrough.map((s) =>
+      rowsInStatus(ctx, eventId, userId, s, NOTICE_ROWS),
+    ),
   ])
-  return [...sent, ...received]
+  return rows.flat()
 }
 
 /**
@@ -185,14 +207,19 @@ async function slotAvailability(
   otherId: string,
   now: number,
 ) {
-  const [mine, theirs, around, spots] = await Promise.all([
-    bookedRowsOf(ctx, eventId, selfId),
-    bookedRowsOf(ctx, eventId, otherId),
-    bookedRowsAround(ctx, eventId, slot.start, slot.end),
+  const [mine, theirs, spots] = await Promise.all([
+    bookedRowsOf(ctx, eventId, selfId, now),
+    bookedRowsOf(ctx, eventId, otherId, now),
     eventSpots(ctx, eventId),
   ])
   const spotNumbers = spots.map((s) => s.number)
-  const reservations = around.map(reservationOf)
+  const reservations = await placesHeldAround(
+    ctx,
+    eventId,
+    spots,
+    slot.start,
+    slot.end,
+  )
   return {
     alreadyBooked: mine.some(
       (row) => partnerOf(row, selfId) === otherId && row.slotEnd > now,
@@ -354,7 +381,7 @@ export const getMyAgenda = query({
     if (!(await isApprovedAttendee(ctx, eventId, userId))) return null
 
     const [rows, spots] = await Promise.all([
-      rowsOf(ctx, eventId, userId),
+      agendaRowsOf(ctx, eventId, userId),
       eventSpots(ctx, eventId),
     ])
     const byStart = (a: { slotStart: number }, b: { slotStart: number }) =>
@@ -445,7 +472,14 @@ export const getMyAgenda = query({
  * with booking on.
  */
 export const getSlotsWith = query({
-  args: { eventId: v.id('socialEvents'), withUserId: v.string() },
+  args: {
+    eventId: v.id('socialEvents'),
+    withUserId: v.string(),
+    // Leave out the slots that ended by this time. The page passes the start
+    // of the slot that is on, so the answer is the same for a whole slot and
+    // the bookings of slots gone by are not read.
+    from: v.optional(v.number()),
+  },
   returns: v.union(
     v.null(),
     v.array(
@@ -461,7 +495,7 @@ export const getSlotsWith = query({
       }),
     ),
   ),
-  handler: async (ctx, { eventId, withUserId }) => {
+  handler: async (ctx, { eventId, withUserId, from }) => {
     const userId = await getUserId(ctx)
     if (!userId || userId === withUserId) return null
     const event = await ctx.db.get('socialEvents', eventId)
@@ -473,19 +507,40 @@ export const getSlotsWith = query({
       return null
     }
 
-    const slots = bookingSlots(meetingsWindow(event), event.meetingMinutes)
+    const slots = bookingSlots(
+      meetingsWindow(event),
+      event.meetingMinutes,
+    ).filter((slot) => from === undefined || slot.end > from)
     if (slots.length === 0) return []
-    const [mine, theirs, booked, spots] = await Promise.all([
-      bookedRowsOf(ctx, eventId, userId),
-      bookedRowsOf(ctx, eventId, withUserId),
-      bookedRowsAround(
-        ctx,
-        eventId,
-        slots[0].start,
-        slots[slots.length - 1].end,
-      ),
+    const firstStart = slots[0].start
+    const [mine, theirs, spots] = await Promise.all([
+      bookedRowsOf(ctx, eventId, userId, firstStart),
+      bookedRowsOf(ctx, eventId, withUserId, firstStart),
       eventSpots(ctx, eventId),
     ])
+
+    // Which slots are full. Only an event with places has full slots. The
+    // read is capped: past the last booking read, a slot's places are not
+    // known and it is shown as free. That is only what the page offers:
+    // accepting a proposal counts the slot's places again, exactly.
+    let reservations: Array<Reservation> = []
+    let placesKnownBefore = Infinity
+    if (spots.length > 0) {
+      const booked = await bookedRowsFrom(
+        ctx,
+        eventId,
+        firstStart,
+        SLOT_PICKER_BOOKINGS,
+      )
+      if (booked.length === SLOT_PICKER_BOOKINGS) {
+        placesKnownBefore = booked[booked.length - 1].slotStart
+      }
+      reservations = [
+        ...booked.map(reservationOf),
+        ...(await placesOfActiveMeetings(ctx, eventId, spots)),
+      ]
+    }
+
     const input = {
       // Every slot counts as still to come: the page hides the ones that
       // started.
@@ -493,10 +548,13 @@ export const getSlotsWith = query({
       mine: await takenTimesOf(ctx, eventId, userId, mine),
       theirs: await takenTimesOf(ctx, eventId, withUserId, theirs),
       spotNumbers: spots.map((s) => s.number),
-      reservations: booked.map(reservationOf),
     }
     return slots.map((slot) => {
-      const block = slotBlock({ ...input, slot })
+      const block = slotBlock({
+        ...input,
+        slot,
+        reservations: slot.start < placesKnownBefore ? reservations : [],
+      })
       return { ...slot, block: block === 'slot_past' ? null : block }
     })
   },
@@ -616,12 +674,14 @@ export const respond = mutation({
       return null
     }
     if (row.status !== 'proposed') return null
+    // Declining what nobody answered before its slot records that it
+    // expired, which is what the proposer is told.
     const now = Date.now()
+    const status = declinedProposalStatus(row, now)
     await ctx.db.patch('socialBookings', bookingId, {
-      status: 'declined',
+      status,
       respondedAt: now,
-      closedBy: userId,
-      closedAt: now,
+      ...(status === 'declined' ? { closedBy: userId, closedAt: now } : {}),
     })
     return null
   },
@@ -695,10 +755,21 @@ export const confirmHere = mutation({
       refuse('self_in_meeting', 'Finish your current meeting first')
     }
 
+    const partnerId = partnerOf(row, userId)
+    if (!(await isApprovedAttendee(ctx, row.eventId, partnerId))) {
+      // The other person is no longer a confirmed attendee: the 1:1 is off,
+      // and the caller is told it was cancelled.
+      await ctx.db.patch('socialBookings', bookingId, {
+        status: 'cancelled',
+        closedBy: partnerId,
+        closedAt: now,
+      })
+      return null
+    }
+
     // Saying so means being at the event.
     await recordArrival(ctx, row.eventId, userId)
     const ready = fromSelf ? { fromReadyAt: now } : { toReadyAt: now }
-    const partnerId = partnerOf(row, userId)
     const partnerReady = fromSelf ? row.toReadyAt : row.fromReadyAt
     if (partnerReady === undefined) {
       if (stage === 'confirm') {

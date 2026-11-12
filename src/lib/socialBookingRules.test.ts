@@ -5,15 +5,18 @@ import {
   bookingOpen,
   bookingSlots,
   bookingStage,
+  declinedProposalStatus,
   extensionBeforeBooking,
   extensionMinutesGranted,
   meetNowWindow,
   nextBookingStart,
   placeForBooking,
   proposalOpen,
+  reservedSpotsRemoved,
   slotBlock,
   slotStartingAt,
   spotsHeldForBookings,
+  statusWhenAttendeeLeaves,
 } from '../../convex/social/constants'
 
 // The rules for booked 1:1s in convex/social/constants.ts: the slots of an
@@ -167,6 +170,25 @@ describe('placeForBooking: capacity', () => {
     // Bookings keep their times when an admin changes the meeting length.
     expect(placeForBooking([1], slot, [reserved(30, 45, 1)])).toEqual({
       bookable: false,
+    })
+  })
+
+  test('a place where a meeting in progress runs into the slot is not free in it', () => {
+    // One place. A meet-now meeting is there from 16:10 to 16:30, so a 1:1
+    // booked for 16:20 can't be told to go there.
+    expect(placeForBooking([1], slot, [reserved(10, 30, 1)])).toEqual({
+      bookable: false,
+    })
+    expect(placeForBooking([1, 2], slot, [reserved(10, 30, 2)])).toEqual({
+      bookable: true,
+      spotNumber: 1,
+    })
+  })
+
+  test('a meeting that ends as the slot starts leaves its place free', () => {
+    expect(placeForBooking([1], slot, [reserved(0, 20, 1)])).toEqual({
+      bookable: true,
+      spotNumber: 1,
     })
   })
 
@@ -477,5 +499,93 @@ describe('bookingNoticeFor: who is told that a 1:1 fell through', () => {
       expect(bookingNoticeFor({ ...row, status }, 'ana')).toBe(null)
       expect(bookingNoticeFor({ ...row, status }, 'bruno')).toBe(null)
     }
+  })
+})
+
+describe('declinedProposalStatus', () => {
+  test('declining a proposal that could still be answered declines it', () => {
+    expect(declinedProposalStatus({ slotStart: at(20) }, at(19))).toBe(
+      'declined',
+    )
+  })
+
+  test('declining after its slot started records that it expired', () => {
+    expect(declinedProposalStatus({ slotStart: at(20) }, at(20))).toBe(
+      'expired',
+    )
+    expect(declinedProposalStatus({ slotStart: at(20) }, at(30))).toBe(
+      'expired',
+    )
+  })
+})
+
+describe('statusWhenAttendeeLeaves: a guest stops being a confirmed attendee', () => {
+  const row = { fromUserId: 'ana' }
+
+  test('their booked 1:1s are cancelled, whoever proposed them', () => {
+    expect(statusWhenAttendeeLeaves({ ...row, status: 'booked' }, 'ana')).toBe(
+      'cancelled',
+    )
+    expect(
+      statusWhenAttendeeLeaves({ ...row, status: 'booked' }, 'bruno'),
+    ).toBe('cancelled')
+  })
+
+  test('the proposals they sent are taken back', () => {
+    expect(
+      statusWhenAttendeeLeaves({ ...row, status: 'proposed' }, 'ana'),
+    ).toBe('withdrawn')
+  })
+
+  test('the proposals sent to them are declined, so the proposer is told', () => {
+    expect(
+      statusWhenAttendeeLeaves({ ...row, status: 'proposed' }, 'bruno'),
+    ).toBe('declined')
+  })
+
+  test('the other person of a cancelled booking gets the cancelled notice', () => {
+    // The row is closed in the name of the person who left.
+    expect(
+      bookingNoticeFor(
+        { ...row, status: 'cancelled', closedBy: 'bruno' },
+        'ana',
+      ),
+    ).toBe('cancelled')
+  })
+
+  test('a meeting that started, and rows already closed, stay as they are', () => {
+    for (const status of [
+      'started',
+      'declined',
+      'withdrawn',
+      'expired',
+      'cancelled',
+      'no_show',
+    ] as const) {
+      expect(statusWhenAttendeeLeaves({ ...row, status }, 'ana')).toBe(null)
+    }
+  })
+})
+
+describe('reservedSpotsRemoved: an admin changes the places', () => {
+  const upcoming = [reserved(20, 40, 3), reserved(40, 60, 5)]
+
+  test('a new set that keeps every reserved number removes none', () => {
+    expect(reservedSpotsRemoved([1, 3, 5, 9], upcoming, at(0))).toEqual([])
+  })
+
+  test('the reserved numbers the new set drops are named, in order', () => {
+    expect(reservedSpotsRemoved([1, 2], upcoming, at(0))).toEqual([3, 5])
+    expect(reservedSpotsRemoved([5], upcoming, at(0))).toEqual([3])
+  })
+
+  test('a place whose booked 1:1s are all over can be removed', () => {
+    expect(reservedSpotsRemoved([5], upcoming, at(40))).toEqual([])
+  })
+
+  test('a booking without a place keeps nothing', () => {
+    expect(reservedSpotsRemoved([], [reserved(20, 40, null)], at(0))).toEqual(
+      [],
+    )
   })
 })

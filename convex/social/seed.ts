@@ -4,11 +4,10 @@ import { acceptProposal } from './bookings'
 import { bookingOpen, bookingSlots, placeForBooking } from './constants'
 import {
   addToAllowlist,
-  bookedRowsAround,
   getGuestByUser,
   meetingsWindow,
   normalizeEmail,
-  reservationOf,
+  placesHeldAround,
 } from './lib'
 import type { Id } from '../_generated/dataModel'
 import type { MutationCtx } from '../_generated/server'
@@ -370,12 +369,10 @@ export const seedBookings = internalMutation({
     ).filter((slot) => slot.start >= firstSlotStart)
     if (slots.length < 3) throw new Error('The demo event is about to close')
 
-    const spotNumbers = (
-      await ctx.db
-        .query('socialEventSpots')
-        .withIndex('by_eventId_and_number', (q) => q.eq('eventId', event._id))
-        .take(200)
-    ).map((spot) => spot.number)
+    const spots = await ctx.db
+      .query('socialEventSpots')
+      .withIndex('by_eventId_and_number', (q) => q.eq('eventId', event._id))
+      .take(200)
 
     let booked = 0
     const plans = [
@@ -383,16 +380,10 @@ export const seedBookings = internalMutation({
       { slot: slots[1], seed: 3, there: false },
     ]
     for (const { slot, seed, there } of plans) {
-      const around = await bookedRowsAround(
-        ctx,
-        event._id,
-        slot.start,
-        slot.end,
-      )
       const place = placeForBooking(
-        spotNumbers,
+        spots.map((spot) => spot.number),
         slot,
-        around.map(reservationOf),
+        await placesHeldAround(ctx, event._id, spots, slot.start, slot.end),
       )
       if (!place.bookable) continue
       await ctx.db.insert('socialBookings', {
@@ -435,7 +426,7 @@ export const seedAcceptProposals = internalMutation({
     const { event, userId } = await demoBookingContext(ctx, orgSlug, email)
     const sent = await ctx.db
       .query('socialBookings')
-      .withIndex('by_eventId_and_fromUserId_and_status', (q) =>
+      .withIndex('by_eventId_and_fromUserId_and_status_and_slotStart', (q) =>
         q
           .eq('eventId', event._id)
           .eq('fromUserId', userId)

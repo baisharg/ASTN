@@ -11,12 +11,14 @@ import {
   PREAPPROVED_ADD_APPROVED_LIMIT,
   bookingOpen,
   looksLikeEmail,
+  reservedSpotsRemoved,
   planPreapprovedAdd,
   showsMyMeetings,
 } from './constants'
 import {
   addToAllowlist,
   autoApprovesKnownGuests,
+  bookedRowsFrom,
   findGuestForIdentity,
   focusFromPrompt,
   getGuestByEmail,
@@ -29,6 +31,7 @@ import {
   normalizeEmail,
   profileMissingForMatching,
   requireEventAdmin,
+  reservationOf,
   safeLinkedinUrl,
   shouldAutoApprove,
   updateGuestAndSync,
@@ -1114,7 +1117,7 @@ export const setSpots = mutation({
   },
   returns: v.null(),
   handler: async (ctx, { eventId, spots }) => {
-    await requireEventAdmin(ctx, eventId)
+    const { event } = await requireEventAdmin(ctx, eventId)
     if (spots.length > 200) throw new ConvexError('At most 200 spots')
     const numbers = new Set(spots.map((s) => s.number))
     if (numbers.size !== spots.length) {
@@ -1128,6 +1131,22 @@ export const setSpots = mutation({
       .first()
     if (active) {
       throw new ConvexError("Spots can't change while meetings are in progress")
+    }
+    // With booking on, a place that a booked 1:1 still to come has reserved
+    // can be moved or renamed but not removed: two people were told to meet
+    // there.
+    if (event.bookingEnabled === true) {
+      const now = Date.now()
+      const removed = reservedSpotsRemoved(
+        spots.map((s) => s.number),
+        (await bookedRowsFrom(ctx, eventId, now, null)).map(reservationOf),
+        now,
+      )
+      if (removed.length > 0) {
+        throw new ConvexError(
+          `Booked 1:1s have these places reserved, so they can't be removed: ${removed.join(', ')}. Keep those numbers, or wait until those 1:1s are over.`,
+        )
+      }
     }
 
     const existing = await ctx.db

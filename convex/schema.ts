@@ -2461,15 +2461,17 @@ export default defineSchema({
     // When the person told about the outcome dismissed the notice.
     acknowledgedAt: v.optional(v.number()),
   })
-    .index('by_eventId_and_fromUserId_and_status', [
+    .index('by_eventId_and_fromUserId_and_status_and_slotStart', [
       'eventId',
       'fromUserId',
       'status',
+      'slotStart',
     ])
-    .index('by_eventId_and_toUserId_and_status', [
+    .index('by_eventId_and_toUserId_and_status_and_slotStart', [
       'eventId',
       'toUserId',
       'status',
+      'slotStart',
     ])
     .index('by_eventId_and_status_and_slotStart', [
       'eventId',

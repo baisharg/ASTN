@@ -10,6 +10,7 @@ import {
   meetingRanOut,
   openProposals,
   requestBlock,
+  slotPickerFrom,
   titleWithCount,
   visibleOutcomes,
   watchTimeUp,
@@ -383,5 +384,30 @@ describe('agendaAlerts', () => {
       0,
     )
     expect(other.newProposals).toEqual([])
+  })
+})
+
+describe('slotPickerFrom', () => {
+  const MIN = 60_000
+  const openAt = 1_000 * MIN
+
+  test('before the 1:1 window opens, slots are asked from its opening', () => {
+    expect(slotPickerFrom(openAt, 20, openAt - 5 * MIN)).toBe(openAt)
+    expect(slotPickerFrom(openAt, 20, openAt)).toBe(openAt)
+  })
+
+  test('during the window, from the start of the slot that is on', () => {
+    expect(slotPickerFrom(openAt, 20, openAt + 1)).toBe(openAt)
+    expect(slotPickerFrom(openAt, 20, openAt + 19 * MIN)).toBe(openAt)
+    expect(slotPickerFrom(openAt, 20, openAt + 20 * MIN)).toBe(
+      openAt + 20 * MIN,
+    )
+    expect(slotPickerFrom(openAt, 20, openAt + 47 * MIN)).toBe(
+      openAt + 40 * MIN,
+    )
+  })
+
+  test('a meeting length of zero falls back to the opening', () => {
+    expect(slotPickerFrom(openAt, 0, openAt + 30 * MIN)).toBe(openAt)
   })
 })

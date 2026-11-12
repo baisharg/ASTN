@@ -11,6 +11,7 @@ import { flagGuestSync } from '../luma/mirror'
 import {
   addToAllowlist,
   detailsToFillFromLuma,
+  closeBookingsOfFormerAttendee,
   getGuestByEmail,
   guestStatusFromLuma,
   isOnAllowlist,
@@ -255,6 +256,9 @@ async function applyLumaGuest(
   if (Object.keys(patch).length === 0) return 'unchanged'
   patch.updatedAt = now
   await ctx.db.patch('socialEventGuests', existing._id, patch)
+  if (patch.status !== undefined) {
+    await closeBookingsOfFormerAttendee(ctx, event, existing, patch.status)
+  }
   return 'updated'
 }
 

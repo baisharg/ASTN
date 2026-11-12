@@ -5,6 +5,7 @@ import {
   APPROVED_GUESTS_READ_LIMIT,
   DEFAULT_EVENT_HOURS,
   nextBookingStart,
+  statusWhenAttendeeLeaves,
 } from './constants'
 import type { Reservation } from './constants'
 import type { Doc, Id } from '../_generated/dataModel'
@@ -572,6 +573,12 @@ export async function updateGuestAndSync(
     lumaSyncError: undefined,
     updatedAt: Date.now(),
   })
+  if (event.bookingEnabled === true && patch.status !== undefined) {
+    const guest = await ctx.db.get('socialEventGuests', guestId)
+    if (guest) {
+      await closeBookingsOfFormerAttendee(ctx, event, guest, patch.status)
+    }
+  }
   if (event.lumaEventId) {
     await ctx.scheduler.runAfter(0, internal.social.lumaSync.pushGuest, {
       guestId,
@@ -667,32 +674,40 @@ export function reservationOf(row: Doc<'socialBookings'>): Reservation {
 }
 
 /**
- * A person's 1:1s that are booked: accepted, and neither started nor called
- * off. Past ones stay 'booked', so callers compare the times with the clock.
+ * A person's booked 1:1s (accepted, and neither started nor called off)
+ * that can still be going on at `from` or later: those whose slot starts no
+ * more than the longest slot before `from`. Read by time and to the end, so
+ * the ones that came and went (a missed 1:1 stays 'booked') never crowd out
+ * a current one. A person holds one booking per slot, which bounds it.
  */
 export async function bookedRowsOf(
   ctx: QueryCtx | MutationCtx,
   eventId: Id<'socialEvents'>,
   userId: string,
+  from: number,
 ): Promise<Array<Doc<'socialBookings'>>> {
-  const [asFrom, asTo] = await Promise.all([
-    ctx.db
-      .query('socialBookings')
-      .withIndex('by_eventId_and_fromUserId_and_status', (q) =>
-        q
-          .eq('eventId', eventId)
-          .eq('fromUserId', userId)
-          .eq('status', 'booked'),
-      )
-      .take(200),
-    ctx.db
-      .query('socialBookings')
-      .withIndex('by_eventId_and_toUserId_and_status', (q) =>
-        q.eq('eventId', eventId).eq('toUserId', userId).eq('status', 'booked'),
-      )
-      .take(200),
-  ])
-  return [...asFrom, ...asTo]
+  const rows: Array<Doc<'socialBookings'>> = []
+  const asFrom = ctx.db
+    .query('socialBookings')
+    .withIndex('by_eventId_and_fromUserId_and_status_and_slotStart', (q) =>
+      q
+        .eq('eventId', eventId)
+        .eq('fromUserId', userId)
+        .eq('status', 'booked')
+        .gt('slotStart', from - MAX_SLOT_MS),
+    )
+  for await (const row of asFrom) rows.push(row)
+  const asTo = ctx.db
+    .query('socialBookings')
+    .withIndex('by_eventId_and_toUserId_and_status_and_slotStart', (q) =>
+      q
+        .eq('eventId', eventId)
+        .eq('toUserId', userId)
+        .eq('status', 'booked')
+        .gt('slotStart', from - MAX_SLOT_MS),
+    )
+  for await (const row of asTo) rows.push(row)
+  return rows
 }
 
 /** When a person's next booked 1:1 starts (see nextBookingStart). */
@@ -702,7 +717,7 @@ export async function nextBookingStartFor(
   userId: string,
   now: number,
 ): Promise<number | null> {
-  const rows = await bookedRowsOf(ctx, eventId, userId)
+  const rows = await bookedRowsOf(ctx, eventId, userId, now)
   return nextBookingStart(rows.map(reservationOf), now)
 }
 
@@ -712,8 +727,9 @@ export async function nextBookingStartFor(
  * before `from`. Callers still check the overlap itself.
  *
  * Reads every row in that range, because capacity is decided from it: a
- * row left out would have its place given away twice. The range bounds the
- * read (at most one booking per place, or per pair of attendees, per slot).
+ * row left out would have its place given away twice. Meant for the time
+ * of one slot or one meeting, where the range bounds the read (one booking
+ * per place per slot); only call it at an event that has places.
  */
 export async function bookedRowsAround(
   ctx: QueryCtx | MutationCtx,
@@ -733,4 +749,132 @@ export async function bookedRowsAround(
     )
   for await (const row of inRange) rows.push(row)
   return rows
+}
+
+/**
+ * The event's booked 1:1s that can still be going on at `from` or later, in
+ * slot order. With `limit`, at most that many: for a page that only shows
+ * them, where the earliest ones matter most. With `limit` null, all of
+ * them: only for the rare admin action that must not miss one.
+ */
+export async function bookedRowsFrom(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+  from: number,
+  limit: number | null,
+): Promise<Array<Doc<'socialBookings'>>> {
+  const upcoming = ctx.db
+    .query('socialBookings')
+    .withIndex('by_eventId_and_status_and_slotStart', (q) =>
+      q
+        .eq('eventId', eventId)
+        .eq('status', 'booked')
+        .gt('slotStart', from - MAX_SLOT_MS),
+    )
+  if (limit !== null) return await upcoming.take(limit)
+  const rows: Array<Doc<'socialBookings'>> = []
+  for await (const row of upcoming) rows.push(row)
+  return rows
+}
+
+/**
+ * The places meetings in progress are at, each held until the meeting is
+ * due to end. A meeting without a place, or whose place was since removed,
+ * holds none.
+ */
+export async function placesOfActiveMeetings(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+  spots: ReadonlyArray<Doc<'socialEventSpots'>>,
+): Promise<Array<Reservation>> {
+  const active = await ctx.db
+    .query('socialMeetings')
+    .withIndex('by_eventId_and_status', (q) =>
+      q.eq('eventId', eventId).eq('status', 'active'),
+    )
+    .take(500)
+  return active.flatMap((meeting) => {
+    const spot = spots.find((s) => s._id === meeting.spotId)
+    return spot
+      ? [
+          {
+            start: meeting.startedAt,
+            end: meeting.endsAt,
+            spotNumber: spot.number,
+          },
+        ]
+      : []
+  })
+}
+
+/**
+ * Every place held around the time from `from` to `to`, for deciding the
+ * place of a booking in it: the ones booked 1:1s have reserved and the ones
+ * meetings in progress are at. None at an event without places, where
+ * bookings have no place and nothing needs reading.
+ */
+export async function placesHeldAround(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+  spots: ReadonlyArray<Doc<'socialEventSpots'>>,
+  from: number,
+  to: number,
+): Promise<Array<Reservation>> {
+  if (spots.length === 0) return []
+  const [booked, meetings] = await Promise.all([
+    bookedRowsAround(ctx, eventId, from, to),
+    placesOfActiveMeetings(ctx, eventId, spots),
+  ])
+  return [...booked.map(reservationOf), ...meetings]
+}
+
+/**
+ * Close the proposals and booked 1:1s of a guest who stops being a
+ * confirmed attendee, so the people they involved are told and get their
+ * time and place back (see statusWhenAttendeeLeaves). Does nothing unless
+ * the event has booking on, the guest has an account and `newStatus` is not
+ * 'approved'. Every place that changes a guest's status calls it.
+ */
+export async function closeBookingsOfFormerAttendee(
+  ctx: MutationCtx,
+  event: Pick<Doc<'socialEvents'>, '_id' | 'bookingEnabled'>,
+  guest: Pick<Doc<'socialEventGuests'>, 'userId'>,
+  newStatus: GuestStatus,
+): Promise<void> {
+  const userId = guest.userId
+  if (event.bookingEnabled !== true || newStatus === 'approved' || !userId) {
+    return
+  }
+  const now = Date.now()
+  for (const status of ['proposed', 'booked'] as const) {
+    const asFrom = ctx.db
+      .query('socialBookings')
+      .withIndex('by_eventId_and_fromUserId_and_status_and_slotStart', (q) =>
+        q
+          .eq('eventId', event._id)
+          .eq('fromUserId', userId)
+          .eq('status', status),
+      )
+    const asTo = ctx.db
+      .query('socialBookings')
+      .withIndex('by_eventId_and_toUserId_and_status_and_slotStart', (q) =>
+        q.eq('eventId', event._id).eq('toUserId', userId).eq('status', status),
+      )
+    const rows: Array<Doc<'socialBookings'>> = []
+    for await (const row of asFrom) rows.push(row)
+    for await (const row of asTo) rows.push(row)
+    for (const row of rows) {
+      // A booked 1:1 whose time has passed is history, not something to
+      // cancel.
+      if (row.status === 'booked' && row.slotEnd <= now) continue
+      const closed = statusWhenAttendeeLeaves(row, userId)
+      if (closed === null) continue
+      await ctx.db.patch('socialBookings', row._id, {
+        status: closed,
+        closedBy: userId,
+        closedAt: now,
+        ...(row.status === 'proposed' ? { respondedAt: now } : {}),
+      })
+    }
+  }
 }
