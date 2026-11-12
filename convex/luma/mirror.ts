@@ -395,7 +395,12 @@ export const flagAllForGuestSync = internalMutation({
 })
 
 export const nextGuestSyncBatch = internalQuery({
-  args: { orgId: v.id('organizations'), limit: v.number() },
+  args: {
+    orgId: v.id('organizations'),
+    limit: v.number(),
+    // Flagged events the running chain already failed to read.
+    skip: v.optional(v.array(v.id('events'))),
+  },
   returns: v.array(
     v.object({
       _id: v.id('events'),
@@ -403,7 +408,8 @@ export const nextGuestSyncBatch = internalQuery({
       lumaAccess: v.union(v.string(), v.null()),
     }),
   ),
-  handler: async (ctx, { orgId, limit }) => {
+  handler: async (ctx, { orgId, limit, skip }) => {
+    const skipped = new Set(skip ?? [])
     // Newest first: upcoming events matter most.
     const rows = await ctx.db
       .query('events')
@@ -411,12 +417,15 @@ export const nextGuestSyncBatch = internalQuery({
         q.eq('orgId', orgId).eq('guestSyncNeeded', true),
       )
       .order('desc')
-      .take(limit)
-    return rows.map((r) => ({
-      _id: r._id,
-      lumaEventId: r.lumaEventId,
-      lumaAccess: r.lumaAccess ?? null,
-    }))
+      .take(limit + skipped.size)
+    return rows
+      .filter((r) => !skipped.has(r._id))
+      .slice(0, limit)
+      .map((r) => ({
+        _id: r._id,
+        lumaEventId: r.lumaEventId,
+        lumaAccess: r.lumaAccess ?? null,
+      }))
   },
 })
 
@@ -429,17 +438,22 @@ export const renewOrReleaseChain = internalMutation({
     holdMs: v.optional(v.number()),
     // Stop even if events are still flagged (e.g. the org lost the key).
     release: v.optional(v.boolean()),
+    // Flagged events this chain already failed to read. They wait for the
+    // next chain, so they don't keep this one going.
+    skip: v.optional(v.array(v.id('events'))),
   },
   returns: v.boolean(), // true: keep going
-  handler: async (ctx, { orgId, error, holdMs, release }) => {
+  handler: async (ctx, { orgId, error, holdMs, release, skip }) => {
     const state = await ensureState(ctx, orgId)
     const now = Date.now()
-    const pending = await ctx.db
+    const skipped = new Set(skip ?? [])
+    const flagged = await ctx.db
       .query('events')
       .withIndex('by_org_and_guestSyncNeeded_and_startAt', (q) =>
         q.eq('orgId', orgId).eq('guestSyncNeeded', true),
       )
-      .first()
+      .take(skipped.size + 1)
+    const pending = flagged.some((row) => !skipped.has(row._id))
     if (pending && !release) {
       await ctx.db.patch('lumaSyncState', state._id, {
         chainLockedUntil: now + Math.max(CHAIN_LOCK_MS, holdMs ?? 0),
@@ -695,19 +709,23 @@ export const finishEventGuestSync = internalMutation({
       }),
     ),
     error: v.optional(v.string()),
+    // With `error`: the failure may pass (see guestReadFailure), so the
+    // event stays flagged and the next chain reads it again.
+    retry: v.optional(v.boolean()),
     totals: syncTotalsValidator,
   },
   returns: v.null(),
-  handler: async (ctx, { eventRowId, counts, error, totals }) => {
+  handler: async (ctx, { eventRowId, counts, error, retry, totals }) => {
     const event = await ctx.db.get('events', eventRowId)
     if (!event) return null
     const now = Date.now()
-    await ctx.db.patch('events', eventRowId, {
+    const patch: Partial<Doc<'events'>> = {
       ...counts,
-      guestSyncNeeded: undefined,
       lastGuestSyncAt: error ? event.lastGuestSyncAt : now,
       guestSyncError: error,
-    })
+    }
+    if (!(error && retry)) patch.guestSyncNeeded = undefined
+    await ctx.db.patch('events', eventRowId, patch)
     const state = await ensureState(ctx, event.orgId)
     await ctx.db.patch('lumaSyncState', state._id, {
       totals: addTotals(state.totals, totals),

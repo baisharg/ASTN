@@ -1,14 +1,17 @@
 import {
+  guestReadFailure,
   mirrorChanges,
   mirrorFromLuma,
   newMirrorFields,
 } from '../../convex/luma/shared'
+import { LumaApiError } from '../../convex/social/luma'
 import type { MirroredEvent } from '../../convex/luma/shared'
 import type { LumaEvent } from '../../convex/social/luma'
 
 // How the Luma calendar mirror turns a Luma payload into changes to an
-// `events` row (convex/luma/mirror.ts upsertEvent). Kept under src/ so the
-// Convex bundler never sees a test file.
+// `events` row (convex/luma/mirror.ts upsertEvent), and how it treats a
+// failed read of a guest list. Kept under src/ so the Convex bundler never
+// sees a test file.
 
 type BunTestFn = (name: string, fn: () => void | Promise<void>) => void
 
@@ -175,6 +178,46 @@ describe('mirrorChanges', () => {
         }),
       ),
     ).toEqual([])
+  })
+})
+
+// A transient failure keeps the event flagged for the next guest-sync chain;
+// a permanent one clears the flag (convex/luma/sync.ts guestChain).
+describe('guestReadFailure', () => {
+  test('a Luma 5xx is transient', () => {
+    expect(guestReadFailure(new LumaApiError('failed (500)', 500))).toBe(
+      'transient',
+    )
+    expect(guestReadFailure(new LumaApiError('failed (503)', 503))).toBe(
+      'transient',
+    )
+  })
+
+  test('no answer from Luma (a network error) is transient', () => {
+    expect(guestReadFailure(new TypeError('fetch failed'))).toBe('transient')
+  })
+
+  test('a 429 is a rate limit, handled by waiting', () => {
+    expect(guestReadFailure(new LumaApiError('failed (429)', 429))).toBe(
+      'rate_limited',
+    )
+  })
+
+  test('any other 4xx is permanent, e.g. an event Luma no longer has', () => {
+    expect(guestReadFailure(new LumaApiError('failed (404)', 404))).toBe(
+      'permanent',
+    )
+    expect(guestReadFailure(new LumaApiError('failed (403)', 403))).toBe(
+      'permanent',
+    )
+  })
+
+  test('a list this client refuses to read (status 0) is permanent', () => {
+    expect(
+      guestReadFailure(
+        new LumaApiError('Luma guest list has more than 50 pages', 0),
+      ),
+    ).toBe('permanent')
   })
 })
 

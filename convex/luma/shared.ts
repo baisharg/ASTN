@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import { LumaApiError } from '../social/luma'
 import type { Infer } from 'convex/values'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx } from '../_generated/server'
@@ -140,6 +141,23 @@ export function eventEnd(event: { startAt: number; endAt?: number }): number {
  * no-show cleanups). A sync after this point is final.
  */
 export const GUEST_LIST_SETTLES_AFTER_MS = 2 * 24 * 3600 * 1000
+
+/**
+ * What a failed read of an event's guest list means for its guest sync:
+ * - 'rate_limited': Luma answered 429. The chain waits and reads it again.
+ * - 'transient': Luma answered 5xx, or there was no answer (network). The
+ *   event stays flagged and the next chain reads it again.
+ * - 'permanent': Luma refused (another 4xx, e.g. 404 for an event it no
+ *   longer has) or this client did (status 0, e.g. a list too long to
+ *   read). Reading again would fail the same way, so the flag is cleared.
+ */
+export function guestReadFailure(
+  error: unknown,
+): 'rate_limited' | 'transient' | 'permanent' {
+  if (!(error instanceof LumaApiError)) return 'transient'
+  if (error.status === 429) return 'rate_limited'
+  return error.status >= 500 ? 'transient' : 'permanent'
+}
 
 // ── Attendance ──────────────────────────────────────────────────────────
 
