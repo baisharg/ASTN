@@ -30,6 +30,17 @@ export function guestStatusFromLuma(lumaStatus: string): GuestStatus {
   }
 }
 
+/**
+ * Whether a guest's status was decided in ASTN and Luma doesn't have it yet:
+ * the push is on its way ('pending') or failed ('error'). Such a status
+ * stays as it is whatever Luma reports, until a push succeeds.
+ */
+export function hasStatusLumaLacks(
+  lumaSync: Doc<'socialEventGuests'>['lumaSync'],
+): boolean {
+  return lumaSync === 'pending' || lumaSync === 'error'
+}
+
 export async function isOnAllowlist(
   ctx: QueryCtx | MutationCtx,
   orgId: Id<'organizations'>,
