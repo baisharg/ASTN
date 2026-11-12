@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from '~/components/ui/select'
 import { Spinner } from '~/components/ui/spinner'
+import { matchesSearch } from '~/lib/search-text'
 import { useBusyAction } from '~/lib/use-busy-action'
 
 const SOURCE_LABELS = { app: 'App', luma: 'Luma', admin: 'Admin' } as const
@@ -68,13 +69,9 @@ export function GuestsTab({ eventId }: { eventId: Id<'socialEvents'> }) {
     .filter((g) => g.status === 'pending_approval')
     .sort((a, b) => a.registeredAt - b.registeredAt)
 
-  const q = search.trim().toLowerCase()
   const visible = guests
     .filter((g) => statusFilter === 'all' || g.status === statusFilter)
-    .filter(
-      (g) =>
-        !q || g.email.includes(q) || (g.name ?? '').toLowerCase().includes(q),
-    )
+    .filter((g) => matchesSearch(search, [g.name, g.email]))
     .sort((a, b) => (a.name ?? a.email).localeCompare(b.name ?? b.email, 'es'))
 
   const statusCounts = new Map<GuestStatus, number>()
