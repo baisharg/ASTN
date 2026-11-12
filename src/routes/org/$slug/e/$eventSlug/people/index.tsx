@@ -9,11 +9,11 @@ import type { LiveState } from '~/components/social/live'
 import type { AttendeeState } from '~/components/social/ui'
 import { useNow, useSocialEvent } from '~/components/social/SocialEventContext'
 import {
+  ArrivalCard,
   AttendeeGate,
-  MeetingBanner,
   PageSpinner,
+  RequestOutcomes,
   formatDuration,
-  requestBlock,
   requestBlockCopy,
   useMeetingsOpen,
   useSocialErrorMessage,
@@ -31,6 +31,7 @@ import {
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
 import { cn } from '~/lib/utils'
+import { requestBlock } from '~/lib/social-live'
 import { useBusyAction } from '~/lib/use-busy-action'
 import { formatTime, useCopy, useSocialLang } from '~/lib/social-i18n'
 
@@ -60,6 +61,14 @@ const copy = {
     available: 'Disponible',
     busy: 'No disponible',
     statusFailed: 'No pudimos cambiar tu estado. Probá de nuevo.',
+    busyHint: (n: number) =>
+      n === 1
+        ? 'Si pasás a "No disponible", cancelamos la solicitud que enviaste.'
+        : `Si pasás a "No disponible", cancelamos las ${n} solicitudes que enviaste.`,
+    busyCancelled: (n: number) =>
+      n === 1
+        ? 'Cancelamos la solicitud que habías enviado.'
+        : `Cancelamos las ${n} solicitudes que habías enviado.`,
     focus: 'El foco de esta noche',
     tabsLabel: 'Asistentes',
     suggested: (n: number) => `Sugeridos (${n})`,
@@ -98,6 +107,14 @@ const copy = {
     available: 'Available',
     busy: 'Not available',
     statusFailed: "We couldn't change your status. Please try again.",
+    busyHint: (n: number) =>
+      n === 1
+        ? 'If you switch to "Not available", we cancel the request you sent.'
+        : `If you switch to "Not available", we cancel the ${n} requests you sent.`,
+    busyCancelled: (n: number) =>
+      n === 1
+        ? 'We cancelled the request you had sent.'
+        : `We cancelled the ${n} requests you had sent.`,
     focus: "Tonight's focus",
     tabsLabel: 'Attendees',
     suggested: (n: number) => `Suggested (${n})`,
@@ -171,6 +188,9 @@ function PeopleContent({ live }: { live: LiveState }) {
   const stateById = new Map<string, AttendeeState>(
     (attendees ?? []).map((a) => [a.userId, a.state]),
   )
+  const hereById = new Map<string, boolean>(
+    (attendees ?? []).map((a) => [a.userId, a.here]),
+  )
 
   return (
     <main className="flex flex-col gap-[18px] px-5 pb-8 pt-[18px]">
@@ -178,6 +198,10 @@ function PeopleContent({ live }: { live: LiveState }) {
         <PageTitle>{event.title}</PageTitle>
         <MeetingsWindowLine open={meetingsOpen} />
       </div>
+
+      <ArrivalCard live={live} />
+
+      <RequestOutcomes live={live} />
 
       <AvailabilityToggle live={live} />
 
@@ -234,6 +258,7 @@ function PeopleContent({ live }: { live: LiveState }) {
             suggestions={suggestions}
             suggestionState={suggestionState}
             stateById={stateById}
+            hereById={hereById}
             refreshResult={refresh.result}
             onRetry={refresh.request}
             onSeeEveryone={() => setTab('everyone')}
@@ -242,8 +267,6 @@ function PeopleContent({ live }: { live: LiveState }) {
           <EveryonePanel attendees={attendees} />
         )}
       </div>
-
-      <MeetingBanner meeting={live.meeting} />
     </main>
   )
 }
@@ -290,12 +313,19 @@ function AvailabilityToggle({ live }: { live: LiveState }) {
   const setAvailability = useMutation(api.social.meetings.setAvailability)
   const { busy, run } = useBusyAction<'status'>()
   const saving = busy !== null
+  // Becoming unavailable cancels the requests the viewer sent.
+  const sentWaiting = live.outgoing.length
 
   const choose = async (availability: LiveState['availability']) => {
     if (availability === live.availability || saving) return
     await run(
       'status',
-      () => setAvailability({ eventId: event._id, availability }),
+      async () => {
+        await setAvailability({ eventId: event._id, availability })
+        if (availability === 'busy' && sentWaiting > 0) {
+          toast.success(t.busyCancelled(sentWaiting))
+        }
+      },
       () => toast.error(t.statusFailed),
     )
   }
@@ -306,42 +336,49 @@ function AvailabilityToggle({ live }: { live: LiveState }) {
   ] as const
 
   return (
-    <div className="flex items-center justify-between gap-3">
-      <span
-        id="status-label"
-        className="text-sm font-semibold text-[var(--baish-strong)]"
-      >
-        {t.yourStatus}
-      </span>
-      <div
-        role="group"
-        aria-labelledby="status-label"
-        aria-busy={saving}
-        className="flex gap-0.5 rounded-xl border border-border bg-muted p-[3px]"
-      >
-        {options.map(({ value, label }) => {
-          const active = live.availability === value
-          return (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={active}
-              disabled={saving}
-              onClick={() => void choose(value)}
-              className={cn(
-                'h-11 rounded-[10px] px-3.5 text-sm font-semibold',
-                active
-                  ? 'bg-card shadow-[0_1px_2px_rgba(17,12,46,0.12)]'
-                  : 'text-muted-foreground hover:text-foreground',
-                active && value === 'available' && 'text-[var(--baish-ok)]',
-                active && value === 'busy' && 'text-[var(--baish-strong)]',
-              )}
-            >
-              {label}
-            </button>
-          )
-        })}
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between gap-3">
+        <span
+          id="status-label"
+          className="text-sm font-semibold text-[var(--baish-strong)]"
+        >
+          {t.yourStatus}
+        </span>
+        <div
+          role="group"
+          aria-labelledby="status-label"
+          aria-busy={saving}
+          className="flex gap-0.5 rounded-xl border border-border bg-muted p-[3px]"
+        >
+          {options.map(({ value, label }) => {
+            const active = live.availability === value
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={active}
+                disabled={saving}
+                onClick={() => void choose(value)}
+                className={cn(
+                  'h-11 rounded-[10px] px-3.5 text-sm font-semibold',
+                  active
+                    ? 'bg-card shadow-[0_1px_2px_rgba(17,12,46,0.12)]'
+                    : 'text-muted-foreground hover:text-foreground',
+                  active && value === 'available' && 'text-[var(--baish-ok)]',
+                  active && value === 'busy' && 'text-[var(--baish-strong)]',
+                )}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
       </div>
+      {live.availability === 'available' && sentWaiting > 0 && (
+        <p className="text-[13px] leading-normal text-muted-foreground">
+          {t.busyHint(sentWaiting)}
+        </p>
+      )}
     </div>
   )
 }
@@ -352,6 +389,7 @@ function SuggestedPanel({
   suggestions,
   suggestionState,
   stateById,
+  hereById,
   refreshResult,
   onRetry,
   onSeeEveryone,
@@ -361,6 +399,7 @@ function SuggestedPanel({
   suggestions: Array<Suggestion> | undefined
   suggestionState: SuggestionState | undefined
   stateById: Map<string, AttendeeState>
+  hereById: Map<string, boolean>
   refreshResult: RefreshResult | null
   onRetry: () => Promise<void>
   onSeeEveryone: () => void
@@ -491,6 +530,7 @@ function SuggestedPanel({
           meetingsOpen={meetingsOpen}
           suggestion={s}
           state={stateById.get(s.userId) ?? 'available'}
+          here={hereById.get(s.userId) ?? true}
         />
       ))}
     </div>
@@ -502,11 +542,13 @@ function SuggestionCard({
   meetingsOpen,
   suggestion: s,
   state,
+  here,
 }: {
   live: LiveState
   meetingsOpen: boolean
   suggestion: Suggestion
   state: AttendeeState
+  here: boolean
 }) {
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
@@ -514,12 +556,13 @@ function SuggestionCard({
   const errorMessage = useSocialErrorMessage()
   const startMeeting = useStartMeeting()
   const { busy, run } = useBusyAction<'send'>()
+  const now = useNow()
 
   const requested = live.outgoing.some((r) => r.to.userId === s.userId)
   const theyAsked = live.incoming.some((r) => r.from.userId === s.userId)
   const block = requested
     ? null
-    : requestBlock(live, meetingsOpen, s.userId, state)
+    : requestBlock(live, meetingsOpen, { userId: s.userId, state, here }, now)
   const firstName = s.name.split(' ')[0] ?? s.name
 
   const onMeet = async () => {
@@ -546,7 +589,7 @@ function SuggestionCard({
           )}
         </div>
       </div>
-      <StateLabel state={state} />
+      <StateLabel state={state} here={here} />
       <p className="text-sm leading-normal">
         <span className="font-semibold text-[var(--baish-strong)]">
           {t.why}
@@ -633,7 +676,7 @@ function EveryonePanel({
               )}
             </span>
             <span className="shrink-0">
-              <StateLabel state={a.state} compact />
+              <StateLabel state={a.state} here={a.here} compact />
             </span>
           </Link>
         </li>

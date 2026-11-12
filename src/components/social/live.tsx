@@ -1,19 +1,25 @@
 import { SignInButton } from '@clerk/clerk-react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useConvexAuth, useMutation, useQuery } from 'convex/react'
-import { ArrowRight, MapPin } from 'lucide-react'
+import { ArrowRight, MapPin, X } from 'lucide-react'
+import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
-import { MAX_OUTGOING_PENDING } from '../../../convex/social/constants'
+import {
+  MAX_OUTGOING_PENDING,
+  meetingsOpenNow,
+} from '../../../convex/social/constants'
+import { expiryMinutesLeft, visibleOutcomes } from '~/lib/social-live'
 import { useNow, useSocialEvent } from './SocialEventContext'
 import { Panel, primaryButtonClass, secondaryButtonClass } from './ui'
 import type { FunctionReturnType } from 'convex/server'
 import type { Id } from '../../../convex/_generated/dataModel'
 import type { MeetingErrorCode } from '../../../convex/social/constants'
-import type { AttendeeState } from './ui'
+import type { RequestBlock } from '~/lib/social-live'
 import type { SocialLang } from '~/lib/social-i18n'
 import { Spinner } from '~/components/ui/spinner'
 import { errorCode, errorText } from '~/lib/convex-error'
 import { useCopy, useSocialLang } from '~/lib/social-i18n'
+import { useBusyAction } from '~/lib/use-busy-action'
 
 /** Live state for the signed-in attendee (see meetings.getLiveState). */
 export type LiveState = NonNullable<
@@ -35,6 +41,16 @@ const copy = {
     bannerNoSpot: 'Tenés una reunión en curso',
     bannerWith: (name: string) => `con ${name}`,
     bannerOpen: 'Abrir',
+    arrivalTitle: '¿Ya llegaste?',
+    arrivalBody:
+      'Avisanos cuando estés en el evento. Hasta entonces los demás te ven como "Todavía no llegó" y no pueden pedirte un 1:1.',
+    arrivalButton: 'Ya llegué',
+    arrivalDone: 'Listo. Ya te pueden pedir un 1:1.',
+    outcomesLabel: 'Solicitudes que no se concretaron',
+    outcomeDeclined: (name: string) => `${name} no pudo ahora.`,
+    outcomeExpired: (name: string) =>
+      `${name} no llegó a responder tu solicitud.`,
+    dismissOutcome: (name: string) => `Descartar el aviso sobre ${name}`,
   },
   en: {
     signInTitle: 'Sign in to continue',
@@ -49,6 +65,16 @@ const copy = {
     bannerNoSpot: 'You have a meeting in progress',
     bannerWith: (name: string) => `with ${name}`,
     bannerOpen: 'Open',
+    arrivalTitle: 'Are you here yet?',
+    arrivalBody:
+      'Let us know once you\'re at the event. Until then others see you as "Not here yet" and can\'t ask you for a 1:1.',
+    arrivalButton: "I'm here",
+    arrivalDone: 'Done. People can now ask you for a 1:1.',
+    outcomesLabel: "Requests that didn't go through",
+    outcomeDeclined: (name: string) => `${name} couldn't right now.`,
+    outcomeExpired: (name: string) =>
+      `${name} didn't get to answer your request.`,
+    dismissOutcome: (name: string) => `Dismiss the notice about ${name}`,
   },
 }
 
@@ -71,10 +97,10 @@ export function useLiveState(): LiveState | null | undefined {
 export function useMeetingsOpen(): boolean {
   const event = useSocialEvent()
   const now = useNow()
-  return (
-    event.status === 'published' &&
-    now >= event.meetingsOpenAt &&
-    now <= event.meetingsCloseAt
+  return meetingsOpenNow(
+    event.status,
+    { openAt: event.meetingsOpenAt, closeAt: event.meetingsCloseAt },
+    now,
   )
 }
 
@@ -193,6 +219,116 @@ function AttendeeOnly({
   return <>{children(live)}</>
 }
 
+/**
+ * "¿Ya llegaste?": shown while 1:1s are open to an attendee who isn't known
+ * to be at the event, with the button that says they are.
+ */
+export function ArrivalCard({ live }: { live: LiveState }) {
+  const event = useSocialEvent()
+  const t = useCopy(copy)
+  const meetingsOpen = useMeetingsOpen()
+  const errorMessage = useSocialErrorMessage()
+  const markArrived = useMutation(api.social.meetings.markArrived)
+  const { busy, run } = useBusyAction<'arrive'>()
+
+  if (!meetingsOpen || live.here) return null
+
+  const onArrive = () =>
+    run(
+      'arrive',
+      async () => {
+        await markArrived({ eventId: event._id })
+        toast.success(t.arrivalDone)
+      },
+      (error) => toast.error(errorMessage(error)),
+    )
+
+  return (
+    <Panel
+      raised
+      aria-labelledby="arrival-title"
+      className="gap-3 border-input p-4"
+    >
+      <div className="flex flex-col gap-1">
+        <h2
+          id="arrival-title"
+          className="text-[17px] font-semibold text-[var(--baish-strong)]"
+        >
+          {t.arrivalTitle}
+        </h2>
+        <p className="text-[15px] leading-normal">{t.arrivalBody}</p>
+      </div>
+      <button
+        type="button"
+        disabled={busy !== null}
+        onClick={() => void onArrive()}
+        className={primaryButtonClass}
+      >
+        {busy ? <Spinner size="sm" /> : t.arrivalButton}
+      </button>
+    </Panel>
+  )
+}
+
+/**
+ * What became of the viewer's requests that didn't turn into a meeting: one
+ * line per person, each with a dismiss button. `onlyUserId` narrows it to
+ * one person (their profile page).
+ */
+export function RequestOutcomes({
+  live,
+  onlyUserId,
+}: {
+  live: LiveState
+  onlyUserId?: string
+}) {
+  const t = useCopy(copy)
+  const now = useNow()
+  const errorMessage = useSocialErrorMessage()
+  const dismiss = useMutation(api.social.meetings.dismissRequestOutcome)
+  const { busy, run } = useBusyAction()
+
+  const outcomes = visibleOutcomes(live.resolved, now).filter(
+    (o) => onlyUserId === undefined || o.to.userId === onlyUserId,
+  )
+  if (outcomes.length === 0) return null
+
+  return (
+    <ul aria-label={t.outcomesLabel} className="flex flex-col gap-2">
+      {outcomes.map((o) => {
+        const firstName = o.to.name.split(' ')[0] ?? o.to.name
+        return (
+          <li
+            key={o._id}
+            className="flex items-center gap-1 rounded-xl border border-border bg-muted py-1 pl-3.5 pr-1 text-sm leading-snug"
+          >
+            <span className="grow">
+              {o.outcome === 'declined'
+                ? t.outcomeDeclined(firstName)
+                : t.outcomeExpired(firstName)}
+            </span>
+            <button
+              type="button"
+              disabled={busy !== null}
+              aria-label={t.dismissOutcome(o.to.name)}
+              onClick={() =>
+                void run(
+                  o._id,
+                  () => dismiss({ requestId: o._id }),
+                  (error) => toast.error(errorMessage(error)),
+                )
+              }
+              className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-card hover:text-foreground disabled:opacity-60"
+            >
+              <X className="size-[18px]" aria-hidden="true" />
+            </button>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 export function PageSpinner() {
   return (
     <div className="flex justify-center px-5 py-16">
@@ -255,22 +391,37 @@ const meetingErrorCopy = {
     closed: 'Los 1:1 no están abiertos en este momento.',
     not_attendee: 'Esto es solo para asistentes confirmados.',
     self: 'No podés pedirte un 1:1 a vos mismo.',
+    self_busy:
+      'Estás como no disponible. Pasá a "Disponible" para pedir un 1:1.',
+    they_unavailable: 'Esta persona ya no está disponible.',
+    not_here: 'Esta persona todavía no llegó al evento.',
+    declined_recently:
+      'Esta persona no pudo recién. Probá de nuevo en unos minutos.',
     busy: 'Esta persona no está tomando solicitudes ahora.',
     limit: `Ya tenés ${MAX_OUTGOING_PENDING} solicitudes esperando. Cancelá alguna para mandar otra.`,
+    request_expired: 'Esta solicitud ya venció.',
     self_in_meeting: 'Primero terminá tu reunión actual.',
     they_in_meeting: 'Está en una reunión. Probá de nuevo cuando termine.',
     ended: 'Esta reunión ya terminó.',
+    extension_limit: 'Esta reunión ya no se puede extender más.',
     not_found: 'Eso ya no existe.',
   },
   en: {
     closed: '1:1s are not open right now.',
     not_attendee: 'This is only for confirmed attendees.',
     self: "You can't ask yourself for a 1:1.",
+    self_busy:
+      'You\'re marked as not available. Switch to "Available" to ask for a 1:1.',
+    they_unavailable: "They're no longer available.",
+    not_here: "They haven't arrived at the event yet.",
+    declined_recently: "They couldn't just now. Try again in a few minutes.",
     busy: "They're not taking requests right now.",
     limit: `You already have ${MAX_OUTGOING_PENDING} requests waiting. Cancel one to send another.`,
+    request_expired: 'This request has expired.',
     self_in_meeting: 'Finish your current meeting first.',
     they_in_meeting: "They're in a meeting. Try again when it ends.",
     ended: 'This meeting has already ended.',
+    extension_limit: "This meeting can't be extended any further.",
     not_found: 'That no longer exists.',
   },
 } satisfies Record<SocialLang, Record<MeetingErrorCode, string>>
@@ -300,6 +451,22 @@ export function timeAgo(from: number, now: number, lang: SocialLang): string {
   return lang === 'es' ? `hace ${amount}` : `${amount} ago`
 }
 
+/**
+ * "vence en 7 min" / "expires in 7 min" for a pending request, or null when
+ * it has no expiry.
+ */
+export function expiresIn(
+  expiresAt: number | null,
+  now: number,
+  lang: SocialLang,
+): string | null {
+  if (expiresAt === null) return null
+  const minutes = expiryMinutesLeft(expiresAt, now)
+  if (minutes === 0)
+    return lang === 'es' ? 'está por vencer' : 'about to expire'
+  return lang === 'es' ? `vence en ${minutes} min` : `expires in ${minutes} min`
+}
+
 /** "1 h 12 min", "12 min" or "<1 min". */
 export function formatDuration(ms: number): string {
   const minutes = Math.floor(ms / 60_000)
@@ -312,36 +479,17 @@ export function formatDuration(ms: number): string {
 
 // ── Requests ────────────────────────────────────────────────────────────
 
-export type RequestBlock = Extract<
-  MeetingErrorCode,
-  'closed' | 'busy' | 'limit' | 'self_in_meeting' | 'they_in_meeting'
->
-
-/**
- * Why the viewer can't ask `otherUserId` to meet right now, or null if they
- * can. Mirrors the checks in requestMeeting: when the other person already
- * asked, sending accepts their request, which needs both people free.
- */
-export function requestBlock(
-  live: LiveState,
-  meetingsOpen: boolean,
-  otherUserId: string,
-  otherState: AttendeeState,
-): RequestBlock | null {
-  if (!meetingsOpen) return 'closed'
-  if (live.incoming.some((r) => r.from.userId === otherUserId)) {
-    if (live.meeting) return 'self_in_meeting'
-    if (otherState === 'in_meeting') return 'they_in_meeting'
-    return null
-  }
-  if (otherState === 'busy') return 'busy'
-  if (live.outgoing.length >= MAX_OUTGOING_PENDING) return 'limit'
-  return null
-}
-
 export const requestBlockCopy = {
   es: {
     closed: () => 'Los 1:1 no están abiertos en este momento.',
+    self_busy: () =>
+      'Estás como no disponible. Pasá a "Disponible" para pedir un 1:1.',
+    they_unavailable: (name: string) =>
+      `${name} te pidió un 1:1, pero ya no está disponible.`,
+    declined_recently: (name: string) =>
+      `${name} no pudo recién. Vas a poder pedirle de nuevo en unos minutos.`,
+    not_here: (name: string) =>
+      `${name} todavía no llegó al evento. Vas a poder pedirle un 1:1 cuando llegue.`,
     busy: (name: string) => `${name} no está tomando solicitudes ahora.`,
     limit: () =>
       `Tenés ${MAX_OUTGOING_PENDING} solicitudes esperando. Cancelá alguna para mandar otra.`,
@@ -352,6 +500,14 @@ export const requestBlockCopy = {
   },
   en: {
     closed: () => '1:1s are not open right now.',
+    self_busy: () =>
+      'You\'re marked as not available. Switch to "Available" to ask for a 1:1.',
+    they_unavailable: (name: string) =>
+      `${name} asked you for a 1:1 but is no longer available.`,
+    declined_recently: (name: string) =>
+      `${name} couldn't just now. You can ask again in a few minutes.`,
+    not_here: (name: string) =>
+      `${name} hasn't arrived at the event yet. You can ask for a 1:1 once they're here.`,
     busy: (name: string) => `${name} isn't taking requests right now.`,
     limit: () =>
       `You have ${MAX_OUTGOING_PENDING} requests waiting. Cancel one to send another.`,
