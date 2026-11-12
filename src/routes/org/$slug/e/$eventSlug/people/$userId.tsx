@@ -15,7 +15,6 @@ import type { AttendeeState } from '~/components/social/ui'
 import type { Id } from '../../../../../../../convex/_generated/dataModel'
 import { useNow, useSocialEvent } from '~/components/social/SocialEventContext'
 import {
-  MeetingBanner,
   PageSpinner,
   RequestOutcomes,
   expiresIn,
@@ -324,8 +323,6 @@ function PersonContent() {
       ) : live === undefined ? (
         <PageSpinner />
       ) : null}
-
-      <MeetingBanner meeting={attendeeLive?.meeting ?? null} />
     </main>
   )
 }

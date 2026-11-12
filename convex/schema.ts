@@ -2366,6 +2366,7 @@ export default defineSchema({
 
   socialMeetings: defineTable({
     eventId: v.id('socialEvents'),
+    // userA asked for the 1:1 and userB accepted it.
     userA: v.string(),
     userB: v.string(),
     spotId: v.optional(v.id('socialEventSpots')),

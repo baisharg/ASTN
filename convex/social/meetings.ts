@@ -312,6 +312,9 @@ export const getLiveState = query({
           endsAt: v.number(),
           // Minutes the meeting can still be extended by; 0 at the limit.
           extensionMinutesLeft: v.number(),
+          // True when the viewer started it by accepting; false when the
+          // other person accepted the viewer's request.
+          viewerAccepted: v.boolean(),
           topics: v.array(v.string()),
         }),
       ),
@@ -446,6 +449,7 @@ export const getLiveState = query({
           0,
           MAX_MEETING_EXTENSION_MINUTES - (active.extendedMinutes ?? 0),
         ),
+        viewerAccepted: active.userB === userId,
         topics: await meetingTopics(ctx, eventId, userId, partnerId),
       }
     }
@@ -709,6 +713,7 @@ export const markArrived = mutation({
   },
 })
 
+/** Start the meeting `userA` asked for and `userB` accepted. */
 async function startMeeting(
   ctx: MutationCtx,
   event: Doc<'socialEvents'>,

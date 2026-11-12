@@ -4,10 +4,14 @@ import {
   OUTCOME_VISIBLE_MS,
   endedRecently,
   expiryMinutesLeft,
+  liveAlerts,
+  meetingRanOut,
   requestBlock,
+  titleWithCount,
   visibleOutcomes,
+  watchTimeUp,
 } from './social-live'
-import type { RequestBlockLive } from './social-live'
+import type { RequestBlockLive, TimeUpWatch } from './social-live'
 
 type BunTestFn = (name: string, fn: () => void | Promise<void>) => void
 
@@ -149,5 +153,145 @@ describe('visibleOutcomes', () => {
     const recent = { id: 'recent', resolvedAt: NOW - 60_000 }
     const old = { id: 'old', resolvedAt: NOW - OUTCOME_VISIBLE_MS }
     expect(visibleOutcomes([recent, old], NOW)).toEqual([recent])
+  })
+})
+
+describe('liveAlerts', () => {
+  const KEY = 'event:me'
+  const fromAna = { _id: 'r1', from: 'Ana' }
+  const fromBruno = { _id: 'r2', from: 'Bruno' }
+  const meeting = { _id: 'm1' }
+
+  test('what was already there when the page loaded does not alert', () => {
+    const first = liveAlerts(null, KEY, { incoming: [fromAna], meeting })
+    expect(first.newIncoming).toEqual([])
+    expect(first.startedMeeting).toBe(null)
+    expect(first.seen).toEqual({
+      key: KEY,
+      incomingIds: ['r1'],
+      meetingId: 'm1',
+    })
+  })
+
+  test('a request that arrives afterwards alerts once', () => {
+    const loaded = liveAlerts(null, KEY, { incoming: [fromAna], meeting: null })
+    const next = liveAlerts(loaded.seen, KEY, {
+      incoming: [fromAna, fromBruno],
+      meeting: null,
+    })
+    expect(next.newIncoming).toEqual([fromBruno])
+    const again = liveAlerts(next.seen, KEY, {
+      incoming: [fromAna, fromBruno],
+      meeting: null,
+    })
+    expect(again.newIncoming).toEqual([])
+  })
+
+  test('a meeting that starts afterwards is reported once', () => {
+    const loaded = liveAlerts(null, KEY, { incoming: [], meeting: null })
+    const started = liveAlerts(loaded.seen, KEY, { incoming: [], meeting })
+    expect(started.startedMeeting).toBe(meeting)
+    const still = liveAlerts(started.seen, KEY, { incoming: [], meeting })
+    expect(still.startedMeeting).toBe(null)
+    const ended = liveAlerts(still.seen, KEY, { incoming: [], meeting: null })
+    expect(ended.startedMeeting).toBe(null)
+  })
+
+  test('another event or account starts from a new baseline', () => {
+    const loaded = liveAlerts(null, KEY, { incoming: [], meeting: null })
+    const other = liveAlerts(loaded.seen, 'event:someone-else', {
+      incoming: [fromAna],
+      meeting,
+    })
+    expect(other.newIncoming).toEqual([])
+    expect(other.startedMeeting).toBe(null)
+  })
+})
+
+describe('titleWithCount', () => {
+  test('puts the number of waiting requests before the title', () => {
+    expect(titleWithCount('Social · BAISH', 2)).toBe('(2) Social · BAISH')
+  })
+
+  test('leaves the title alone when nothing is waiting', () => {
+    expect(titleWithCount('Social · BAISH', 0)).toBe('Social · BAISH')
+  })
+})
+
+describe('watchTimeUp', () => {
+  const END = NOW + 60_000
+  const meeting = { _id: 'm1', endsAt: END }
+  const running = { meeting, lastEnded: null }
+  const watching: TimeUpWatch = {
+    meetingId: 'm1',
+    endsAt: END,
+    signalled: false,
+  }
+
+  test('starts watching a meeting without signalling', () => {
+    expect(watchTimeUp(null, running, NOW)).toEqual({
+      watch: watching,
+      timeUp: false,
+    })
+  })
+
+  test('signals once when this device reaches the end time', () => {
+    const atZero = watchTimeUp(watching, running, END)
+    expect(atZero.timeUp).toBe(true)
+    expect(watchTimeUp(atZero.watch, running, END + 1_000).timeUp).toBe(false)
+  })
+
+  test('signals when the server ends the meeting first because its time ran out', () => {
+    const ended = {
+      meeting: null,
+      lastEnded: { _id: 'm1', endedAt: END, endsAt: END },
+    }
+    // This device's clock is 5 seconds behind the server.
+    const result = watchTimeUp(watching, ended, END - 5_000)
+    expect(result).toEqual({ watch: null, timeUp: true })
+  })
+
+  test('does not signal twice when the device reached zero before the server ended it', () => {
+    const atZero = watchTimeUp(watching, running, END)
+    const ended = {
+      meeting: null,
+      lastEnded: { _id: 'm1', endedAt: END + 200, endsAt: END },
+    }
+    expect(watchTimeUp(atZero.watch, ended, END + 1_000).timeUp).toBe(false)
+  })
+
+  test('does not signal when someone ended the meeting early', () => {
+    const endedEarly = {
+      meeting: null,
+      lastEnded: { _id: 'm1', endedAt: END - 30_000, endsAt: END },
+    }
+    expect(watchTimeUp(watching, endedEarly, END - 30_000).timeUp).toBe(false)
+  })
+
+  test('does not signal for a meeting that was already over when the page opened', () => {
+    const opened = watchTimeUp(null, running, END + 500)
+    expect(opened.timeUp).toBe(false)
+    expect(watchTimeUp(opened.watch, running, END + 1_500).timeUp).toBe(false)
+  })
+
+  test('an extension is watched again from its new end time', () => {
+    const extended = {
+      meeting: { _id: 'm1', endsAt: END + 300_000 },
+      lastEnded: null,
+    }
+    const rearmed = watchTimeUp(watching, extended, END - 1_000)
+    expect(rearmed.timeUp).toBe(false)
+    expect(watchTimeUp(rearmed.watch, extended, END).timeUp).toBe(false)
+    expect(watchTimeUp(rearmed.watch, extended, END + 300_000).timeUp).toBe(
+      true,
+    )
+  })
+})
+
+describe('meetingRanOut', () => {
+  test('a meeting ended at its end time ran out; one ended well before did not', () => {
+    expect(meetingRanOut({ endedAt: 60_000, endsAt: 60_000 })).toBe(true)
+    expect(meetingRanOut({ endedAt: 59_000, endsAt: 60_000 })).toBe(true)
+    expect(meetingRanOut({ endedAt: 20_000, endsAt: 60_000 })).toBe(false)
   })
 })

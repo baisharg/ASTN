@@ -1,9 +1,10 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation } from 'convex/react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../convex/_generated/api'
 import type { LiveMeeting, LiveState } from '~/components/social/live'
+import type { TimeUpWatch } from '~/lib/social-live'
 import { useNow, useSocialEvent } from '~/components/social/SocialEventContext'
 import { AttendeeGate, useSocialErrorMessage } from '~/components/social/live'
 import { FloorPlan } from '~/components/social/FloorPlan'
@@ -16,8 +17,9 @@ import {
   secondaryButtonClass,
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
+import { useHaptic } from '~/hooks/use-haptic'
 import { useCopy } from '~/lib/social-i18n'
-import { endedRecently } from '~/lib/social-live'
+import { endedRecently, meetingRanOut, watchTimeUp } from '~/lib/social-live'
 import { useBusyAction } from '~/lib/use-busy-action'
 
 export const Route = createFileRoute('/org/$slug/e/$eventSlug/meeting')({
@@ -42,6 +44,8 @@ const copy = {
     timeSection: 'Tiempo restante',
     remaining: 'restantes',
     timeUp: 'Se terminó el tiempo',
+    timeUpToast: (name: string) =>
+      `Se terminó el tiempo de tu reunión con ${name}.`,
     timeLeft: (clock: string) => `Quedan ${clock}`,
     addMinutes: (n: number) =>
       n === 1 ? 'Sumar 1 minuto' : `Sumar ${n} minutos`,
@@ -97,6 +101,7 @@ const copy = {
     timeSection: 'Time left',
     remaining: 'left',
     timeUp: "Time's up",
+    timeUpToast: (name: string) => `Time's up for your meeting with ${name}.`,
     timeLeft: (clock: string) => `${clock} left`,
     addMinutes: (n: number) => (n === 1 ? 'Add 1 minute' : `Add ${n} minutes`),
     added: (n: number) => (n === 1 ? 'Added 1 minute.' : `Added ${n} minutes.`),
@@ -141,12 +146,27 @@ function MeetingPage() {
 function MeetingContent({ live }: { live: LiveState }) {
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
-  const now = useNow()
+  const now = useNow(1000)
+  const { custom: vibrate } = useHaptic()
   // Said once the meeting is over, whether or not this page was open then.
   const justEnded =
     live.lastEnded && endedRecently(live.lastEnded.endedAt, now)
       ? live.lastEnded
       : null
+
+  // When the time runs out with this page open: a toast and, where the
+  // browser has one, a vibration.
+  const timeUpWatch = useRef<TimeUpWatch | null>(null)
+  const partnerName = (live.meeting ?? live.lastEnded)?.partner.name ?? ''
+  const timeUpMessage = t.timeUpToast(partnerName)
+  useEffect(() => {
+    const result = watchTimeUp(timeUpWatch.current, live, now)
+    timeUpWatch.current = result.watch
+    if (result.timeUp) {
+      vibrate([300, 150, 300])
+      toast(timeUpMessage, { duration: 10_000 })
+    }
+  }, [live, now, timeUpMessage, vibrate])
 
   const header = (
     <div className="-ml-3 flex items-center justify-between">
@@ -177,7 +197,11 @@ function MeetingContent({ live }: { live: LiveState }) {
     <main className="flex flex-col gap-[22px] px-5 pb-8 pt-2">
       {header}
       {justEnded ? (
-        <EndedCard live={live} partnerName={justEnded.partner.name} />
+        <EndedCard
+          live={live}
+          partnerName={justEnded.partner.name}
+          ranOut={meetingRanOut(justEnded)}
+        />
       ) : (
         <NoMeeting live={live} />
       )}
@@ -402,9 +426,12 @@ function Countdown({ meeting }: { meeting: LiveMeeting }) {
 function EndedCard({
   live,
   partnerName,
+  ranOut,
 }: {
   live: LiveState
   partnerName: string
+  // The meeting used up its time, as opposed to being ended early.
+  ranOut: boolean
 }) {
   const event = useSocialEvent()
   const { slug, eventSlug } = Route.useParams()
@@ -431,7 +458,7 @@ function EndedCard({
   return (
     <Panel raised role="status" className="gap-3 border-input p-4">
       <h1 className="text-[19px] font-semibold text-[var(--baish-strong)]">
-        {t.endedTitle}
+        {ranOut ? t.timeUp : t.endedTitle}
       </h1>
       <p className="text-[15px] leading-normal">
         {next ? t.nextInQueue(next.from.name) : t.endedWith(partnerName)}

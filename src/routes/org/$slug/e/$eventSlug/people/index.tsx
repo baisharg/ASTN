@@ -11,7 +11,6 @@ import { useNow, useSocialEvent } from '~/components/social/SocialEventContext'
 import {
   ArrivalCard,
   AttendeeGate,
-  MeetingBanner,
   PageSpinner,
   RequestOutcomes,
   formatDuration,
@@ -239,8 +238,6 @@ function PeopleContent({ live }: { live: LiveState }) {
           <EveryonePanel attendees={attendees} />
         )}
       </div>
-
-      <MeetingBanner meeting={live.meeting} />
     </main>
   )
 }

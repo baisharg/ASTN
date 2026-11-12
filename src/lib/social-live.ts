@@ -93,3 +93,129 @@ export function requestBlock(
   if (live.outgoing.length >= MAX_OUTGOING_PENDING) return 'limit'
   return null
 }
+
+// ── Alerts ──────────────────────────────────────────────────────────────
+
+/** What the event layout has already seen of the viewer's live state. */
+export type AlertsSeen = {
+  /** The event and account this belongs to. */
+  key: string
+  incomingIds: ReadonlyArray<string>
+  meetingId: string | null
+}
+
+/**
+ * Compare the viewer's live state with what was seen before: which incoming
+ * requests are new, and whether a meeting just started. The first state seen
+ * for a `key` only sets the baseline, so nothing that was already there when
+ * the page loaded alerts.
+ */
+export function liveAlerts<
+  Incoming extends { _id: string },
+  Meeting extends { _id: string },
+>(
+  seen: AlertsSeen | null,
+  key: string,
+  live: { incoming: ReadonlyArray<Incoming>; meeting: Meeting | null },
+): {
+  seen: AlertsSeen
+  newIncoming: Array<Incoming>
+  startedMeeting: Meeting | null
+} {
+  const incomingIds = live.incoming.map((r) => r._id)
+  if (!seen || seen.key !== key) {
+    return {
+      seen: { key, incomingIds, meetingId: live.meeting?._id ?? null },
+      newIncoming: [],
+      startedMeeting: null,
+    }
+  }
+  const newIncoming = live.incoming.filter(
+    (r) => !seen.incomingIds.includes(r._id),
+  )
+  const startedMeeting =
+    live.meeting && live.meeting._id !== seen.meetingId ? live.meeting : null
+  return {
+    seen: {
+      key,
+      // Ids stay seen after their request is gone, so nothing alerts twice.
+      incomingIds: [...seen.incomingIds, ...newIncoming.map((r) => r._id)],
+      meetingId: live.meeting?._id ?? seen.meetingId,
+    },
+    newIncoming,
+    startedMeeting,
+  }
+}
+
+/** The tab title while `count` requests wait for the viewer's answer. */
+export function titleWithCount(title: string, count: number): string {
+  return count > 0 ? `(${count}) ${title}` : title
+}
+
+// ── Time's up ───────────────────────────────────────────────────────────
+
+// The job that ends a meeting can run this much before its end time.
+const TIME_UP_SLACK_MS = 2000
+
+/** Whether an ended meeting used up its time, as opposed to being ended early. */
+export function meetingRanOut(ended: {
+  endedAt: number
+  endsAt: number
+}): boolean {
+  return ended.endedAt >= ended.endsAt - TIME_UP_SLACK_MS
+}
+
+/** The meeting the meeting page is timing, and whether it signalled its end. */
+export type TimeUpWatch = {
+  meetingId: string
+  endsAt: number
+  signalled: boolean
+}
+
+/**
+ * Whether the meeting page should signal "time's up" now. It does once per
+ * meeting and end time, on whichever comes first: this device's clock
+ * reaching the end time, or the meeting being ended by the server because
+ * its time ran out (the two race, and the device clock may be off). A
+ * meeting that was already over when the page opened, or that someone ended
+ * early, doesn't signal.
+ */
+export function watchTimeUp(
+  watch: TimeUpWatch | null,
+  live: {
+    meeting: { _id: string; endsAt: number } | null
+    lastEnded: { _id: string; endedAt: number; endsAt: number } | null
+  },
+  now: number,
+): { watch: TimeUpWatch | null; timeUp: boolean } {
+  const meeting = live.meeting
+  if (meeting) {
+    if (
+      !watch ||
+      watch.meetingId !== meeting._id ||
+      watch.endsAt !== meeting.endsAt
+    ) {
+      // A meeting just opened on this page, or it was extended.
+      return {
+        watch: {
+          meetingId: meeting._id,
+          endsAt: meeting.endsAt,
+          signalled: now >= meeting.endsAt,
+        },
+        timeUp: false,
+      }
+    }
+    if (!watch.signalled && now >= meeting.endsAt) {
+      return { watch: { ...watch, signalled: true }, timeUp: true }
+    }
+    return { watch, timeUp: false }
+  }
+  const ended = live.lastEnded
+  const timeUp =
+    watch !== null &&
+    !watch.signalled &&
+    ended !== null &&
+    ended._id === watch.meetingId &&
+    meetingRanOut(ended)
+  return { watch: null, timeUp }
+}
