@@ -8,6 +8,7 @@ import {
   query,
 } from '../_generated/server'
 import { getUserId, requireOrgAdmin } from '../lib/auth'
+import { BAISH_ORG_SLUG } from '../lib/baishCourseOpportunities'
 import { slugifyTitle } from '../orgOpportunities'
 import schema from '../schema'
 import { requireOrgOwnsApiCalendar } from '../luma/binding'
@@ -1196,15 +1197,15 @@ type PersonalLinkContext = typeof personalLinkContextValidator.type
 type PersonalLinkResult = typeof personalLinkResultValidator.type
 
 /**
- * Whether signing in with `email` for the first time would attach data from
- * outside `orgId` to the account: an account from before the move to Clerk
- * (migrated by email on first sign-in, memberships included), applications
- * sent to another organization without an account, or a place on another
- * organization's event.
+ * Whether an account with `email` would reach data from outside `org` the
+ * first time it signs in: an account from before the move to Clerk (migrated
+ * by email, memberships included), applications sent to another organization
+ * without an account, a place on another organization's event, or a BAISH
+ * import record (which the career agent reads by the account's email).
  */
 async function emailHasDataOutsideOrg(
   ctx: QueryCtx,
-  orgId: Id<'organizations'>,
+  org: Doc<'organizations'>,
   email: string,
 ): Promise<boolean> {
   const legacyUser = await ctx.db
@@ -1219,13 +1220,23 @@ async function emailHasDataOutsideOrg(
       q.eq('guestEmail', email),
     )
     .take(100)
-  if (guestApplications.some((a) => a.orgId !== orgId)) return true
+  if (guestApplications.some((a) => a.orgId !== org._id)) return true
 
   const guestRows = await ctx.db
     .query('socialEventGuests')
     .withIndex('by_email', (q) => q.eq('email', email))
     .take(100)
-  return guestRows.some((g) => g.orgId !== orgId)
+  if (guestRows.some((g) => g.orgId !== org._id)) return true
+
+  if (org.slug === BAISH_ORG_SLUG) return false
+  const baishImports = await ctx.db.query('baishImports').take(1000)
+  return baishImports.some(
+    (record) =>
+      normalizeEmail(record.email) === email ||
+      (record.otherEmails ?? []).some(
+        (other) => normalizeEmail(other) === email,
+      ),
+  )
 }
 
 /**
@@ -1267,11 +1278,7 @@ export const getPersonalLinkContext = internalQuery({
         email,
         name: guest.name ?? null,
         approved: guest.status === 'approved',
-        emailHasOtherData: await emailHasDataOutsideOrg(
-          ctx,
-          event.orgId,
-          email,
-        ),
+        emailHasOtherData: await emailHasDataOutsideOrg(ctx, org, email),
       })
     }
     return {
