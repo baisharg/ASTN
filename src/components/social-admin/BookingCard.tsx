@@ -83,14 +83,15 @@ export function BookingCard({ event }: { event: AdminEvent }) {
               ? 'El evento no tiene lugares cargados, así que los 1:1 se reservan sin lugar y sin límite por turno.'
               : `Con ${places} ${places === 1 ? 'lugar' : 'lugares'}, cada turno admite hasta ${places} ${places === 1 ? '1:1 reservado' : '1:1 reservados'}; un turno completo deja de ofrecerse.`)}
         </p>
-        {enabled && (
-          <p className="text-sm text-muted-foreground">
-            Si lo desactivás, los 1:1 ya reservados dejan de mostrarse y de
-            contar; no se borran, y vuelven si lo activás de nuevo. Cambiar el
-            horario o la duración de los 1:1 no mueve los que ya están
-            reservados.
-          </p>
-        )}
+        <p className="text-sm text-muted-foreground">
+          Desactivarlo pone las propuestas y los 1:1 reservados en pausa: no se
+          borran, pero nadie los ve y dejan de ocupar horarios y lugares. Al
+          activarlo de nuevo vuelven a aparecer, salvo los de quienes ya no son
+          asistentes aprobados (se cancelan, y a la otra persona le aparece el
+          aviso en su agenda) y las propuestas cuyo horario ya pasó (vencen).
+          Cambiar el horario o la duración de los 1:1 no mueve los que ya están
+          reservados.
+        </p>
       </CardContent>
     </Card>
   )

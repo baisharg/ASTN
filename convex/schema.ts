@@ -2477,6 +2477,12 @@ export default defineSchema({
       'eventId',
       'status',
       'slotStart',
+    ])
+    .index('by_eventId_and_status_and_spotNumber_and_slotStart', [
+      'eventId',
+      'status',
+      'spotNumber',
+      'slotStart',
     ]),
 
   // Who an attendee is suggested to meet: the picks the event-wide assignment

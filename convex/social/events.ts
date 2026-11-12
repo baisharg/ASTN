@@ -9,16 +9,17 @@ import {
   DEFAULT_MEETING_MINUTES,
   MAX_PREAPPROVED_GUESTS_PER_ADD,
   PREAPPROVED_ADD_APPROVED_LIMIT,
+  accountReplacedOnRelink,
   bookingOpen,
   looksLikeEmail,
   reservedSpotsRemoved,
   planPreapprovedAdd,
   showsMyMeetings,
+  spotNumbersDropped,
 } from './constants'
 import {
   addToAllowlist,
   autoApprovesKnownGuests,
-  bookedRowsFrom,
   findGuestForIdentity,
   focusFromPrompt,
   getGuestByEmail,
@@ -31,8 +32,9 @@ import {
   normalizeEmail,
   profileMissingForMatching,
   requireEventAdmin,
-  reservationOf,
+  reservationsStillOnPlaces,
   safeLinkedinUrl,
+  scheduleBookingCleanup,
   shouldAutoApprove,
   updateGuestAndSync,
 } from './lib'
@@ -338,6 +340,8 @@ export const register = mutation({
           linkedinUrl: existing.linkedinUrl ?? cleanLinkedin,
           updatedAt: now,
         })
+        const replaced = accountReplacedOnRelink(event, existing.userId, userId)
+        if (replaced) await scheduleBookingCleanup(ctx, eventId, replaced)
       }
       return { guestId: existing._id, status: existing.status }
     }
@@ -390,6 +394,16 @@ export const linkMyGuest = mutation({
       userId: identity.subject,
       updatedAt: Date.now(),
     })
+    // The row was another account's: at an event with booking on, that
+    // account's proposals and booked 1:1s close. The event is only read in
+    // this case.
+    if (guest.userId) {
+      const event = await ctx.db.get('socialEvents', eventId)
+      const replaced = event
+        ? accountReplacedOnRelink(event, guest.userId, identity.subject)
+        : null
+      if (replaced) await scheduleBookingCleanup(ctx, eventId, replaced)
+    }
     return true
   },
 })
@@ -627,6 +641,16 @@ export const updateEvent = mutation({
       patch.myMeetingsEnabled = fields.myMeetingsEnabled
     }
     await ctx.db.patch('socialEvents', eventId, patch)
+
+    // Booking switched on: the proposals and bookings kept from an earlier
+    // time it was on are brought up to date (see bookingAfterPause).
+    if (event.bookingEnabled !== true && patch.bookingEnabled === true) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.social.bookings.reconcileAfterSwitchOn,
+        { eventId, status: 'proposed', cursor: null },
+      )
+    }
 
     // Publishing a draft, or switching auto-approval on for a published
     // event, approves the allowlisted guests who were waiting.
@@ -1132,27 +1156,34 @@ export const setSpots = mutation({
     if (active) {
       throw new ConvexError("Spots can't change while meetings are in progress")
     }
-    // With booking on, a place that a booked 1:1 still to come has reserved
-    // can be moved or renamed but not removed: two people were told to meet
-    // there.
-    if (event.bookingEnabled === true) {
-      const now = Date.now()
-      const removed = reservedSpotsRemoved(
-        spots.map((s) => s.number),
-        (await bookedRowsFrom(ctx, eventId, now, null)).map(reservationOf),
-        now,
-      )
-      if (removed.length > 0) {
-        throw new ConvexError(
-          `Booked 1:1s have these places reserved, so they can't be removed: ${removed.join(', ')}. Keep those numbers, or wait until those 1:1s are over.`,
-        )
-      }
-    }
-
     const existing = await ctx.db
       .query('socialEventSpots')
       .withIndex('by_eventId_and_number', (q) => q.eq('eventId', eventId))
       .take(500)
+    // With booking on, a place that a booked 1:1 still to come has reserved
+    // can be moved or renamed but not removed: two people were told to meet
+    // there. Only the numbers this save drops are looked up.
+    if (event.bookingEnabled === true) {
+      const newNumbers = spots.map((s) => s.number)
+      const dropped = spotNumbersDropped(
+        existing.map((s) => s.number),
+        newNumbers,
+      )
+      if (dropped.length > 0) {
+        const now = Date.now()
+        const removed = reservedSpotsRemoved(
+          newNumbers,
+          await reservationsStillOnPlaces(ctx, eventId, dropped, now),
+          now,
+        )
+        if (removed.length > 0) {
+          throw new ConvexError(
+            `Booked 1:1s have these places reserved, so they can't be removed: ${removed.join(', ')}. Keep those numbers, or wait until those 1:1s are over.`,
+          )
+        }
+      }
+    }
+
     for (const spot of existing)
       await ctx.db.delete('socialEventSpots', spot._id)
     for (const spot of spots) {

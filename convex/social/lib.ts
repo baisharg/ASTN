@@ -5,7 +5,7 @@ import {
   APPROVED_GUESTS_READ_LIMIT,
   DEFAULT_EVENT_HOURS,
   nextBookingStart,
-  statusWhenAttendeeLeaves,
+  statusChangeClosesBookings,
 } from './constants'
 import type { Reservation } from './constants'
 import type { Doc, Id } from '../_generated/dataModel'
@@ -573,10 +573,10 @@ export async function updateGuestAndSync(
     lumaSyncError: undefined,
     updatedAt: Date.now(),
   })
-  if (event.bookingEnabled === true && patch.status !== undefined) {
+  if (statusChangeClosesBookings(event, patch.status)) {
     const guest = await ctx.db.get('socialEventGuests', guestId)
-    if (guest) {
-      await closeBookingsOfFormerAttendee(ctx, event, guest, patch.status)
+    if (guest?.userId) {
+      await scheduleBookingCleanup(ctx, event._id, guest.userId)
     }
   }
   if (event.lumaEventId) {
@@ -752,18 +752,17 @@ export async function bookedRowsAround(
 }
 
 /**
- * The event's booked 1:1s that can still be going on at `from` or later, in
- * slot order. With `limit`, at most that many: for a page that only shows
- * them, where the earliest ones matter most. With `limit` null, all of
- * them: only for the rare admin action that must not miss one.
+ * The first `limit` of the event's booked 1:1s that can still be going on
+ * at `from` or later, in slot order. For a page that only shows them, where
+ * the earliest ones matter most; nothing is decided from it.
  */
 export async function bookedRowsFrom(
   ctx: QueryCtx | MutationCtx,
   eventId: Id<'socialEvents'>,
   from: number,
-  limit: number | null,
+  limit: number,
 ): Promise<Array<Doc<'socialBookings'>>> {
-  const upcoming = ctx.db
+  return await ctx.db
     .query('socialBookings')
     .withIndex('by_eventId_and_status_and_slotStart', (q) =>
       q
@@ -771,10 +770,40 @@ export async function bookedRowsFrom(
         .eq('status', 'booked')
         .gt('slotStart', from - MAX_SLOT_MS),
     )
-  if (limit !== null) return await upcoming.take(limit)
-  const rows: Array<Doc<'socialBookings'>> = []
-  for await (const row of upcoming) rows.push(row)
-  return rows
+    .take(limit)
+}
+
+/**
+ * For each of `spotNumbers`, the booked 1:1 that has it reserved and hasn't
+ * ended at `now`, when there is one (the first is enough to know the place
+ * is in use). Reads one place at a time and stops at that first booking, so
+ * the read is bounded by the places asked about, not by the event's
+ * bookings.
+ */
+export async function reservationsStillOnPlaces(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+  spotNumbers: ReadonlyArray<number>,
+  now: number,
+): Promise<Array<Reservation>> {
+  const found: Array<Reservation> = []
+  for (const spotNumber of spotNumbers) {
+    const onPlace = ctx.db
+      .query('socialBookings')
+      .withIndex('by_eventId_and_status_and_spotNumber_and_slotStart', (q) =>
+        q
+          .eq('eventId', eventId)
+          .eq('status', 'booked')
+          .eq('spotNumber', spotNumber)
+          .gt('slotStart', now - MAX_SLOT_MS),
+      )
+    for await (const row of onPlace) {
+      if (row.slotEnd <= now) continue
+      found.push(reservationOf(row))
+      break
+    }
+  }
+  return found
 }
 
 /**
@@ -829,52 +858,22 @@ export async function placesHeldAround(
 }
 
 /**
- * Close the proposals and booked 1:1s of a guest who stops being a
- * confirmed attendee, so the people they involved are told and get their
- * time and place back (see statusWhenAttendeeLeaves). Does nothing unless
- * the event has booking on, the guest has an account and `newStatus` is not
- * 'approved'. Every place that changes a guest's status calls it.
+ * Schedule closing the proposals and booked 1:1s of an account that stops
+ * being a confirmed attendee of the event (see
+ * bookings.closeBookingsOfFormerAttendee). It runs on its own right after
+ * the calling mutation commits, so whatever changed the guest never waits
+ * for it or fails with it. Reads nothing; callers decide with
+ * statusChangeClosesBookings or accountReplacedOnRelink, which are false at
+ * an event with booking off.
  */
-export async function closeBookingsOfFormerAttendee(
+export async function scheduleBookingCleanup(
   ctx: MutationCtx,
-  event: Pick<Doc<'socialEvents'>, '_id' | 'bookingEnabled'>,
-  guest: Pick<Doc<'socialEventGuests'>, 'userId'>,
-  newStatus: GuestStatus,
+  eventId: Id<'socialEvents'>,
+  userId: string,
 ): Promise<void> {
-  const userId = guest.userId
-  if (event.bookingEnabled !== true || newStatus === 'approved' || !userId) {
-    return
-  }
-  const now = Date.now()
-  for (const status of ['proposed', 'booked'] as const) {
-    const asFrom = ctx.db
-      .query('socialBookings')
-      .withIndex('by_eventId_and_fromUserId_and_status_and_slotStart', (q) =>
-        q
-          .eq('eventId', event._id)
-          .eq('fromUserId', userId)
-          .eq('status', status),
-      )
-    const asTo = ctx.db
-      .query('socialBookings')
-      .withIndex('by_eventId_and_toUserId_and_status_and_slotStart', (q) =>
-        q.eq('eventId', event._id).eq('toUserId', userId).eq('status', status),
-      )
-    const rows: Array<Doc<'socialBookings'>> = []
-    for await (const row of asFrom) rows.push(row)
-    for await (const row of asTo) rows.push(row)
-    for (const row of rows) {
-      // A booked 1:1 whose time has passed is history, not something to
-      // cancel.
-      if (row.status === 'booked' && row.slotEnd <= now) continue
-      const closed = statusWhenAttendeeLeaves(row, userId)
-      if (closed === null) continue
-      await ctx.db.patch('socialBookings', row._id, {
-        status: closed,
-        closedBy: userId,
-        closedAt: now,
-        ...(row.status === 'proposed' ? { respondedAt: now } : {}),
-      })
-    }
-  }
+  await ctx.scheduler.runAfter(
+    0,
+    internal.social.bookings.closeBookingsOfFormerAttendee,
+    { eventId, userId },
+  )
 }

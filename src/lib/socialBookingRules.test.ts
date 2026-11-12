@@ -1,6 +1,8 @@
 import {
   MIN_MEET_NOW_MS,
   NO_SHOW_GRACE_MS,
+  accountReplacedOnRelink,
+  bookingAfterPause,
   bookingNoticeFor,
   bookingOpen,
   bookingSlots,
@@ -15,7 +17,9 @@ import {
   reservedSpotsRemoved,
   slotBlock,
   slotStartingAt,
+  spotNumbersDropped,
   spotsHeldForBookings,
+  statusChangeClosesBookings,
   statusWhenAttendeeLeaves,
 } from '../../convex/social/constants'
 
@@ -520,26 +524,33 @@ describe('declinedProposalStatus', () => {
 })
 
 describe('statusWhenAttendeeLeaves: a guest stops being a confirmed attendee', () => {
-  const row = { fromUserId: 'ana' }
+  // A 1:1 from 20 to 40.
+  const row = { fromUserId: 'ana', slotEnd: at(40) }
 
-  test('their booked 1:1s are cancelled, whoever proposed them', () => {
-    expect(statusWhenAttendeeLeaves({ ...row, status: 'booked' }, 'ana')).toBe(
-      'cancelled',
-    )
+  test('their booked 1:1s still to come are cancelled, whoever proposed them', () => {
     expect(
-      statusWhenAttendeeLeaves({ ...row, status: 'booked' }, 'bruno'),
+      statusWhenAttendeeLeaves({ ...row, status: 'booked' }, 'ana', at(0)),
     ).toBe('cancelled')
+    expect(
+      statusWhenAttendeeLeaves({ ...row, status: 'booked' }, 'bruno', at(30)),
+    ).toBe('cancelled')
+  })
+
+  test('a booked 1:1 whose time has passed stays as it is', () => {
+    expect(
+      statusWhenAttendeeLeaves({ ...row, status: 'booked' }, 'ana', at(40)),
+    ).toBe(null)
   })
 
   test('the proposals they sent are taken back', () => {
     expect(
-      statusWhenAttendeeLeaves({ ...row, status: 'proposed' }, 'ana'),
+      statusWhenAttendeeLeaves({ ...row, status: 'proposed' }, 'ana', at(0)),
     ).toBe('withdrawn')
   })
 
   test('the proposals sent to them are declined, so the proposer is told', () => {
     expect(
-      statusWhenAttendeeLeaves({ ...row, status: 'proposed' }, 'bruno'),
+      statusWhenAttendeeLeaves({ ...row, status: 'proposed' }, 'bruno', at(0)),
     ).toBe('declined')
   })
 
@@ -553,7 +564,7 @@ describe('statusWhenAttendeeLeaves: a guest stops being a confirmed attendee', (
     ).toBe('cancelled')
   })
 
-  test('a meeting that started, and rows already closed, stay as they are', () => {
+  test('rows already closed, and a meeting that started, stay as they are', () => {
     for (const status of [
       'started',
       'declined',
@@ -562,8 +573,175 @@ describe('statusWhenAttendeeLeaves: a guest stops being a confirmed attendee', (
       'cancelled',
       'no_show',
     ] as const) {
-      expect(statusWhenAttendeeLeaves({ ...row, status }, 'ana')).toBe(null)
+      expect(statusWhenAttendeeLeaves({ ...row, status }, 'ana', at(0))).toBe(
+        null,
+      )
     }
+  })
+})
+
+describe('statusChangeClosesBookings: which status changes touch bookings', () => {
+  test('with booking off, no status change does', () => {
+    for (const status of ['declined', 'pending_approval', 'waitlist']) {
+      expect(statusChangeClosesBookings({}, status)).toBe(false)
+    }
+  })
+
+  test('with booking on, a guest who stops being approved does', () => {
+    const event = { bookingEnabled: true as const }
+    expect(statusChangeClosesBookings(event, 'declined')).toBe(true)
+    expect(statusChangeClosesBookings(event, 'pending_approval')).toBe(true)
+  })
+
+  test('approving a guest, or a change that is not of status, does not', () => {
+    const event = { bookingEnabled: true as const }
+    expect(statusChangeClosesBookings(event, 'approved')).toBe(false)
+    expect(statusChangeClosesBookings(event, undefined)).toBe(false)
+  })
+})
+
+describe('accountReplacedOnRelink: a guest row is linked to another account', () => {
+  const on = { bookingEnabled: true as const }
+
+  test('the account it was linked to before is the one whose rows close', () => {
+    expect(accountReplacedOnRelink(on, 'old', 'new')).toBe('old')
+  })
+
+  test('a row that had no account, or the same one, replaces nobody', () => {
+    expect(accountReplacedOnRelink(on, undefined, 'new')).toBe(null)
+    expect(accountReplacedOnRelink(on, '', 'new')).toBe(null)
+    expect(accountReplacedOnRelink(on, 'same', 'same')).toBe(null)
+  })
+
+  test('with booking off, nobody is replaced', () => {
+    expect(accountReplacedOnRelink({}, 'old', 'new')).toBe(null)
+  })
+
+  test('the old account’s rows close like those of any attendee who leaves, and are not moved', () => {
+    const replaced = accountReplacedOnRelink(on, 'old', 'new')
+    if (replaced === null) throw new Error('expected an account')
+    const booked = {
+      status: 'booked' as const,
+      fromUserId: 'ana',
+      slotEnd: at(40),
+    }
+    // Ana had a 1:1 booked with the old account: it is cancelled in the old
+    // account's name, and Ana is told.
+    const status = statusWhenAttendeeLeaves(booked, replaced, at(0))
+    expect(status).toBe('cancelled')
+    expect(
+      bookingNoticeFor(
+        { ...booked, status: 'cancelled', closedBy: replaced },
+        'ana',
+      ),
+    ).toBe('cancelled')
+    // A proposal Ana sent to the old account is declined, and Ana is told.
+    expect(
+      statusWhenAttendeeLeaves(
+        { ...booked, status: 'proposed' },
+        replaced,
+        at(0),
+      ),
+    ).toBe('declined')
+    expect(bookingNoticeFor({ ...booked, status: 'declined' }, 'ana')).toBe(
+      'declined',
+    )
+    // A proposal the old account sent is taken back, which tells nobody.
+    expect(
+      statusWhenAttendeeLeaves(
+        { ...booked, fromUserId: replaced, status: 'proposed' },
+        replaced,
+        at(0),
+      ),
+    ).toBe('withdrawn')
+  })
+})
+
+describe('bookingAfterPause: booking is switched on again', () => {
+  // Ana proposed 20–40 to Bruno.
+  const row = {
+    fromUserId: 'ana',
+    toUserId: 'bruno',
+    slotStart: at(20),
+    slotEnd: at(40),
+  }
+  const both = { fromApproved: true, toApproved: true, now: at(0) }
+
+  test('rows of two confirmed attendees, still to come, stay as they are', () => {
+    expect(bookingAfterPause({ ...row, status: 'booked' }, both)).toBe(null)
+    expect(bookingAfterPause({ ...row, status: 'proposed' }, both)).toBe(null)
+  })
+
+  test('a booked 1:1 with someone declined meanwhile is cancelled in their name', () => {
+    const outcome = bookingAfterPause(
+      { ...row, status: 'booked' },
+      { ...both, toApproved: false },
+    )
+    expect(outcome).toEqual({ status: 'cancelled', closedBy: 'bruno' })
+    // So Ana, who is still coming, is told and has the time and place back.
+    expect(
+      bookingNoticeFor(
+        { ...row, status: 'cancelled', closedBy: 'bruno' },
+        'ana',
+      ),
+    ).toBe('cancelled')
+  })
+
+  test('a proposal closes on the side of whoever left', () => {
+    expect(
+      bookingAfterPause(
+        { ...row, status: 'proposed' },
+        { ...both, fromApproved: false },
+      ),
+    ).toEqual({ status: 'withdrawn', closedBy: 'ana' })
+    expect(
+      bookingAfterPause(
+        { ...row, status: 'proposed' },
+        { ...both, toApproved: false },
+      ),
+    ).toEqual({ status: 'declined', closedBy: 'bruno' })
+  })
+
+  test('a proposal whose time came while booking was off expires', () => {
+    expect(
+      bookingAfterPause(
+        { ...row, status: 'proposed' },
+        { ...both, now: at(20) },
+      ),
+    ).toEqual({ status: 'expired', closedBy: null })
+  })
+
+  test('a booked 1:1 whose time passed stays, even if one of them left', () => {
+    expect(
+      bookingAfterPause(
+        { ...row, status: 'booked' },
+        { fromApproved: false, toApproved: true, now: at(40) },
+      ),
+    ).toBe(null)
+  })
+
+  test('rows already closed, and a meeting that started, stay as they are', () => {
+    for (const status of ['started', 'cancelled', 'expired'] as const) {
+      expect(
+        bookingAfterPause(
+          { ...row, status },
+          { fromApproved: false, toApproved: false, now: at(0) },
+        ),
+      ).toBe(null)
+    }
+  })
+})
+
+describe('spotNumbersDropped: which places a new set no longer has', () => {
+  test('keeping every number, moving or adding places, drops none', () => {
+    expect(spotNumbersDropped([1, 2, 3], [3, 2, 1])).toEqual([])
+    expect(spotNumbersDropped([1, 2], [1, 2, 3, 4])).toEqual([])
+    expect(spotNumbersDropped([], [1])).toEqual([])
+  })
+
+  test('the numbers left out are named, in order', () => {
+    expect(spotNumbersDropped([5, 1, 3], [1])).toEqual([3, 5])
+    expect(spotNumbersDropped([1, 2], [])).toEqual([1, 2])
   })
 })
 

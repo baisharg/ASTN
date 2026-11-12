@@ -5,6 +5,7 @@ import { getUserId, requireAuth } from '../lib/auth'
 import {
   MAX_NOTE_LENGTH,
   MAX_PENDING_PROPOSALS,
+  bookingAfterPause,
   bookingNoticeFor,
   bookingOpen,
   bookingSlots,
@@ -15,6 +16,7 @@ import {
   slotBlock,
   slotStartingAt,
   spansOverlap,
+  statusWhenAttendeeLeaves,
 } from './constants'
 import {
   attendeeCard,
@@ -117,6 +119,9 @@ const SLOT_PICKER_BOOKINGS = 2000
 const LIVE_ROWS = 600
 // For the ones that fell through, the latest are enough to tell the person.
 const NOTICE_ROWS = 50
+// How many rows of one status and side closeBookingsOfFormerAttendee reads
+// in one run, and how many rows reconcileAfterSwitchOn reads in one.
+const CLEANUP_BATCH = 50
 
 /**
  * `userId`'s rows in `status`, the ones they proposed and the ones proposed
@@ -856,6 +861,129 @@ export const expireProposalIfDue = internalMutation({
       status: 'expired',
       respondedAt: now,
     })
+    return null
+  },
+})
+
+/**
+ * Close the proposals and booked 1:1s of an account that is not a confirmed
+ * attendee of the event any more (see statusWhenAttendeeLeaves), so the
+ * people they involved are told and get their time and place back.
+ * Scheduled by whatever made them leave: an admin's or Luma's status
+ * change, or their guest row being linked to another account (see
+ * lib.scheduleBookingCleanup).
+ *
+ * Closes a batch and runs again while there may be more. Running it twice
+ * does nothing more, and it does nothing when booking is off or the account
+ * is a confirmed attendee by the time it runs (approved again meanwhile).
+ */
+export const closeBookingsOfFormerAttendee = internalMutation({
+  args: { eventId: v.id('socialEvents'), userId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { eventId, userId }) => {
+    const event = await ctx.db.get('socialEvents', eventId)
+    if (event?.bookingEnabled !== true) return null
+    if (await isApprovedAttendee(ctx, eventId, userId)) return null
+
+    const now = Date.now()
+    // Latest slot first, so the booked 1:1s still to come are read before
+    // the ones whose time passed (those stay 'booked' and are left alone).
+    const [proposed, booked] = await Promise.all([
+      rowsInStatus(ctx, eventId, userId, 'proposed', CLEANUP_BATCH),
+      rowsInStatus(ctx, eventId, userId, 'booked', CLEANUP_BATCH),
+    ])
+    let closed = 0
+    for (const row of [...proposed, ...booked]) {
+      const status = statusWhenAttendeeLeaves(row, userId, now)
+      if (status === null) continue
+      await ctx.db.patch('socialBookings', row._id, {
+        status,
+        closedBy: userId,
+        closedAt: now,
+        ...(row.status === 'proposed' ? { respondedAt: now } : {}),
+      })
+      closed++
+    }
+    // A full read may have left rows behind. A run that closed nothing has
+    // nothing left to close, which is what ends the chain.
+    const mayHaveMore =
+      proposed.length >= CLEANUP_BATCH || booked.length >= CLEANUP_BATCH
+    if (closed > 0 && mayHaveMore) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.social.bookings.closeBookingsOfFormerAttendee,
+        { eventId, userId },
+      )
+    }
+    return null
+  },
+})
+
+/**
+ * Bring the event's proposals and booked 1:1s up to date when booking is
+ * switched on again (see bookingAfterPause): while it was off nothing closed
+ * them, so some belong to people who are no longer confirmed attendees and
+ * some proposals are for a time that came. Scheduled by events.updateEvent.
+ *
+ * Goes through the 'proposed' rows and then the 'booked' ones, a page per
+ * run, and stops if booking is switched off again. Running it again changes
+ * nothing more.
+ */
+export const reconcileAfterSwitchOn = internalMutation({
+  args: {
+    eventId: v.id('socialEvents'),
+    status: v.union(v.literal('proposed'), v.literal('booked')),
+    cursor: v.union(v.string(), v.null()),
+  },
+  returns: v.null(),
+  handler: async (ctx, { eventId, status, cursor }) => {
+    const event = await ctx.db.get('socialEvents', eventId)
+    if (event?.bookingEnabled !== true) return null
+
+    const page = await ctx.db
+      .query('socialBookings')
+      .withIndex('by_eventId_and_status_and_slotStart', (q) =>
+        q.eq('eventId', eventId).eq('status', status),
+      )
+      .paginate({ numItems: CLEANUP_BATCH, cursor })
+
+    const now = Date.now()
+    const approved = new Map<string, boolean>()
+    const isApproved = async (userId: string): Promise<boolean> => {
+      const known = approved.get(userId)
+      if (known !== undefined) return known
+      const answer = await isApprovedAttendee(ctx, eventId, userId)
+      approved.set(userId, answer)
+      return answer
+    }
+    for (const row of page.page) {
+      const outcome = bookingAfterPause(row, {
+        fromApproved: await isApproved(row.fromUserId),
+        toApproved: await isApproved(row.toUserId),
+        now,
+      })
+      if (outcome === null) continue
+      await ctx.db.patch('socialBookings', row._id, {
+        status: outcome.status,
+        ...(outcome.closedBy !== null
+          ? { closedBy: outcome.closedBy, closedAt: now }
+          : {}),
+        ...(row.status === 'proposed' ? { respondedAt: now } : {}),
+      })
+    }
+
+    const next = !page.isDone
+      ? { status, cursor: page.continueCursor }
+      : status === 'proposed'
+        ? { status: 'booked' as const, cursor: null }
+        : null
+    if (next !== null) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.social.bookings.reconcileAfterSwitchOn,
+        { eventId, ...next },
+      )
+    }
     return null
   },
 })

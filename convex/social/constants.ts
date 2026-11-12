@@ -615,19 +615,108 @@ export function declinedProposalStatus(
 
 /**
  * What becomes of a proposal or booking when one of its two people stops
- * being a confirmed attendee (an admin declines them, or Luma reports them
- * as no longer approved): their proposals are taken back, the ones sent to
- * them are declined, and their booked 1:1s are cancelled, so the other
- * person is told and gets their time and the place back. Null for rows that
- * stay as they are: ones already closed, and a meeting that already started.
+ * being a confirmed attendee (an admin declines them, Luma reports them as
+ * no longer approved, or their guest row is linked to another account):
+ * their proposals are taken back, the ones sent to them are declined, and
+ * their booked 1:1s still to come are cancelled, so the other person is told
+ * and gets their time and the place back. Null for rows that stay as they
+ * are: ones already closed, a meeting that already started, and a booked
+ * 1:1 whose time has passed (history, not something to cancel).
  */
 export function statusWhenAttendeeLeaves(
-  row: { status: BookingStatus; fromUserId: string },
+  row: { status: BookingStatus; fromUserId: string; slotEnd: number },
   leavingUserId: string,
+  now: number,
 ): 'withdrawn' | 'declined' | 'cancelled' | null {
-  if (row.status === 'booked') return 'cancelled'
+  if (row.status === 'booked') return row.slotEnd > now ? 'cancelled' : null
   if (row.status !== 'proposed') return null
   return row.fromUserId === leavingUserId ? 'withdrawn' : 'declined'
+}
+
+/**
+ * Whether a guest's change of status has to close their proposals and
+ * booked 1:1s: only at an event with booking on, and only when they stop
+ * being approved. Everywhere else a status change does what it did before
+ * and reads nothing more.
+ */
+export function statusChangeClosesBookings(
+  event: { bookingEnabled?: true },
+  newStatus: string | undefined,
+): boolean {
+  return (
+    event.bookingEnabled === true &&
+    newStatus !== undefined &&
+    newStatus !== 'approved'
+  )
+}
+
+/**
+ * The account whose proposals and booked 1:1s close when a guest row is
+ * linked to `newUserId`: the account the row was linked to before, when
+ * that is another one. That account stops being the attendee, so its rows
+ * close as for any attendee who leaves (see statusWhenAttendeeLeaves); they
+ * are not moved to the new account, which books again for itself. Null when
+ * the row had no account or the same one, and at an event with booking off.
+ */
+export function accountReplacedOnRelink(
+  event: { bookingEnabled?: true },
+  previousUserId: string | undefined,
+  newUserId: string,
+): string | null {
+  if (event.bookingEnabled !== true) return null
+  if (!previousUserId || previousUserId === newUserId) return null
+  return previousUserId
+}
+
+/**
+ * What becomes of a proposal or booking when booking is switched on again
+ * after being off. While it is off rows are kept as they were and nothing
+ * closes them, so this brings them up to date: a row of someone who is no
+ * longer a confirmed attendee closes as if they had just left, in their
+ * name, and a proposal whose time came expires. Null for rows that stay as
+ * they are.
+ */
+export function bookingAfterPause(
+  row: {
+    status: BookingStatus
+    fromUserId: string
+    toUserId: string
+    slotStart: number
+    slotEnd: number
+  },
+  input: { fromApproved: boolean; toApproved: boolean; now: number },
+): {
+  status: 'withdrawn' | 'declined' | 'cancelled' | 'expired'
+  closedBy: string | null
+} | null {
+  const left = !input.fromApproved
+    ? row.fromUserId
+    : !input.toApproved
+      ? row.toUserId
+      : null
+  if (left !== null) {
+    const status = statusWhenAttendeeLeaves(row, left, input.now)
+    return status === null ? null : { status, closedBy: left }
+  }
+  if (row.status === 'proposed' && !proposalOpen(row, input.now)) {
+    return { status: 'expired', closedBy: null }
+  }
+  return null
+}
+
+/**
+ * The place numbers a new set of places no longer has, in order. Only
+ * these can take a reserved place away (see reservedSpotsRemoved): saving
+ * the places with every number kept needs no look at the bookings.
+ */
+export function spotNumbersDropped(
+  existingSpotNumbers: ReadonlyArray<number>,
+  newSpotNumbers: ReadonlyArray<number>,
+): Array<number> {
+  const kept = new Set(newSpotNumbers)
+  return [...new Set(existingSpotNumbers)]
+    .filter((n) => !kept.has(n))
+    .sort((a, b) => a - b)
 }
 
 /**
