@@ -1,7 +1,7 @@
 import { ConvexError } from 'convex/values'
 import { internal } from '../_generated/api'
 import { requireOrgAdmin } from '../lib/auth'
-import { DEFAULT_EVENT_HOURS } from './constants'
+import { APPROVED_GUESTS_READ_LIMIT, DEFAULT_EVENT_HOURS } from './constants'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 
@@ -603,7 +603,7 @@ export async function approvedGuests(
     .withIndex('by_eventId_and_status', (q) =>
       q.eq('eventId', eventId).eq('status', 'approved'),
     )
-    .take(500)
+    .take(APPROVED_GUESTS_READ_LIMIT)
 }
 
 /** A person's name, initials and headline for cards and lists. */

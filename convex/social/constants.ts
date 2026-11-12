@@ -157,3 +157,74 @@ export function suggestionOutcome(input: {
     chanceShare: pairs > 0 ? Math.min(1, input.suggestionCount / pairs) : null,
   }
 }
+
+// How many approved guests the attendee pages read per event (the list of
+// people, 1:1 requests and suggestions all start from them).
+export const APPROVED_GUESTS_READ_LIMIT = 500
+
+// How many pre-approved people one press of "add to this event" takes. On an
+// event linked to Luma each one costs three Luma requests (look up, add,
+// read back), and Luma allows 200 requests a minute per calendar.
+export const MAX_PREAPPROVED_GUESTS_PER_ADD = 50
+
+// Adding pre-approved people stops when the event would pass this many
+// approved guests, which leaves room under APPROVED_GUESTS_READ_LIMIT for
+// the people who register afterwards.
+export const PREAPPROVED_ADD_APPROVED_LIMIT = 400
+
+/** Whether `email` has the shape of an email address. */
+export function looksLikeEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+}
+
+/**
+ * What adding the selected pre-approved people to an event does. The
+ * selection is the only source of people: nobody on the org's list is added
+ * unless they are in `selected`.
+ *
+ * - `toAdd`: the people who become approved guests, each once.
+ * - `alreadyGuest`: selected people who are guests of the event already,
+ *   whatever their status (they keep it), or who appear twice in `selected`.
+ * - `invalid`: entries that no longer exist (null), belong to another org, or
+ *   hold something that is not an email address.
+ * - `overLimitBy`: how many more than the event has room for; above 0,
+ *   nobody is added.
+ *
+ * Emails are compared as given: list entries and guest rows both store them
+ * lowercased.
+ */
+export function planPreapprovedAdd(input: {
+  orgId: string
+  selected: Array<{ orgId: string; email: string; name?: string } | null>
+  // Emails of everyone who has a guest row for the event.
+  guestEmails: ReadonlySet<string>
+  // The event's approved guests right now.
+  approvedCount: number
+}): {
+  toAdd: Array<{ email: string; name?: string }>
+  alreadyGuest: number
+  invalid: number
+  overLimitBy: number
+} {
+  const toAdd: Array<{ email: string; name?: string }> = []
+  const adding = new Set<string>()
+  let alreadyGuest = 0
+  let invalid = 0
+  for (const entry of input.selected) {
+    if (!entry || entry.orgId !== input.orgId || !looksLikeEmail(entry.email)) {
+      invalid++
+    } else if (input.guestEmails.has(entry.email) || adding.has(entry.email)) {
+      alreadyGuest++
+    } else {
+      adding.add(entry.email)
+      toAdd.push({ email: entry.email, name: entry.name })
+    }
+  }
+  const room = Math.max(0, PREAPPROVED_ADD_APPROVED_LIMIT - input.approvedCount)
+  return {
+    toAdd,
+    alreadyGuest,
+    invalid,
+    overLimitBy: Math.max(0, toAdd.length - room),
+  }
+}
