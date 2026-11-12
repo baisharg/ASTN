@@ -163,9 +163,11 @@ export function suggestionOutcome(input: {
 export const APPROVED_GUESTS_READ_LIMIT = 500
 
 // How many pre-approved people one press of "add to this event" takes. On an
-// event linked to Luma each one costs three Luma requests (look up, add,
-// read back), and Luma allows 200 requests a minute per calendar.
-export const MAX_PREAPPROVED_GUESTS_PER_ADD = 50
+// event linked to Luma each one costs up to four Luma requests (the
+// calendar check when its hourly cache has run out, look up, add, read
+// back). Luma allows 200 requests a minute per calendar, so one press uses
+// at most 160 and leaves the rest for the guest pulls.
+export const MAX_PREAPPROVED_GUESTS_PER_ADD = 40
 
 // Adding pre-approved people stops when the event would pass this many
 // approved guests, which leaves room under APPROVED_GUESTS_READ_LIMIT for

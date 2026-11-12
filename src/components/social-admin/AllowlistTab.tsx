@@ -555,8 +555,6 @@ export function AllowlistTab({ event }: { event: AdminEvent }) {
                     <p className="text-xs text-muted-foreground">
                       Se pueden agregar hasta {maxPerAdd} por vez: elegí menos
                       personas o acotá la lista con la búsqueda.
-                      {lumaLinked &&
-                        ' Entre una tanda y la siguiente esperá un minuto, que es lo que Luma tarda en recibirlas.'}
                     </p>
                   )}
               </div>
@@ -665,15 +663,20 @@ export function AllowlistTab({ event }: { event: AdminEvent }) {
                 : `El evento no está vinculado con Luma, así que ahora no se manda ningún email. Si más adelante lo vinculás, Luma ${addTarget.length === 1 ? 'la agrega como invitada y le' : 'las agrega como invitadas y les'} escribe.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <ul className="text-sm text-muted-foreground space-y-0.5">
-            {addTarget.slice(0, 5).map((e) => (
+          <ul className="max-h-48 overflow-y-auto rounded-md border p-3 text-sm text-muted-foreground space-y-0.5">
+            {addTarget.map((e) => (
               <li key={e._id} className="truncate">
                 {e.email}
                 {e.name ? ` · ${e.name}` : ''}
               </li>
             ))}
-            {addTarget.length > 5 && <li>y {addTarget.length - 5} más</li>}
           </ul>
+          {lumaLinked && (
+            <p className="text-xs text-muted-foreground">
+              Si vas a agregar otra tanda, esperá un minuto después de esta:
+              Luma recibe una cantidad limitada de cambios por minuto.
+            </p>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel className="min-h-11" disabled={addingToEvent}>
               Cancelar

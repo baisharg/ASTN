@@ -117,9 +117,10 @@ describe('planPreapprovedAdd', () => {
     expect(APPROVED_GUESTS_READ_LIMIT).toBe(500)
   })
 
-  test('one press on a Luma-linked event stays under 200 Luma requests a minute', () => {
-    // A new guest costs three requests: look up, add, read back.
-    expect(MAX_PREAPPROVED_GUESTS_PER_ADD * 3 <= 200).toBe(true)
+  test("one press on a Luma-linked event leaves a fifth of Luma's 200 requests a minute free", () => {
+    // A new guest costs at most four requests: the calendar check, look up,
+    // add, read back.
+    expect(MAX_PREAPPROVED_GUESTS_PER_ADD * 4 <= 160).toBe(true)
   })
 })
 
