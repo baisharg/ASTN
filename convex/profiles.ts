@@ -3,8 +3,9 @@ import { internal } from './_generated/api'
 import { internalMutation, mutation, query } from './_generated/server'
 import { getUserId } from './lib/auth'
 import { debouncedSchedule } from './lib/debouncer'
-import { safeLinkedinUrl } from './social/lib'
+import { normalizeEmail, safeLinkedinUrl } from './social/lib'
 import { socialVisibilityValidator } from './social/validators'
+import type { MutationCtx } from './_generated/server'
 
 // Section completeness rules
 const COMPLETENESS_SECTIONS = [
@@ -150,6 +151,35 @@ export const getOrCreateProfile = query({
   },
 })
 
+/**
+ * The LinkedIn URL the person gave when registering for an in-person event,
+ * newest registration first. Registration stores it on the guest row, which
+ * may not be linked to the account yet, so rows are also found by email.
+ */
+async function linkedinFromEventRegistrations(
+  ctx: MutationCtx,
+  userId: string,
+  email: string | undefined,
+): Promise<string | undefined> {
+  const byUser = await ctx.db
+    .query('socialEventGuests')
+    .withIndex('by_userId', (q) => q.eq('userId', userId))
+    .order('desc')
+    .take(20)
+  const byEmail = email
+    ? await ctx.db
+        .query('socialEventGuests')
+        .withIndex('by_email', (q) => q.eq('email', normalizeEmail(email)))
+        .order('desc')
+        .take(20)
+    : []
+  for (const guest of [...byUser, ...byEmail]) {
+    const url = safeLinkedinUrl(guest.linkedinUrl)
+    if (url) return url
+  }
+  return undefined
+}
+
 // Create profile for current user (called on first edit)
 export const create = mutation({
   args: { timezone: v.optional(v.string()) },
@@ -181,6 +211,11 @@ export const create = mutation({
     const profileId = await ctx.db.insert('profiles', {
       userId,
       email: identity?.email ?? undefined,
+      linkedinUrl: await linkedinFromEventRegistrations(
+        ctx,
+        userId,
+        identity?.email,
+      ),
       createdAt: now,
       updatedAt: now,
       notificationPreferences: {
