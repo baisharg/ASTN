@@ -3,7 +3,6 @@ import { createRouter } from '@tanstack/react-router'
 import { QueryClient } from '@tanstack/react-query'
 import { setupRouterSsrQueryIntegration } from '@tanstack/react-router-ssr-query'
 import { ConvexQueryClient } from '@convex-dev/react-query'
-import { ClerkProvider } from '@clerk/clerk-react'
 import { useEffect, useRef } from 'react'
 import {
   Authenticated,
@@ -14,6 +13,7 @@ import { api } from '../convex/_generated/api'
 import { routeTree } from './routeTree.gen'
 import type { ErrorComponentProps } from '@tanstack/react-router'
 import { ErrorDisplay } from '~/components/ErrorDisplay'
+import { LocalizedClerkProvider } from '~/lib/clerk-language'
 import { useConvexAuthFromClerk } from '~/lib/convex-clerk-auth'
 
 function UserMigration() {
@@ -70,7 +70,7 @@ export function getRouter() {
     defaultErrorComponent: DefaultErrorComponent,
     defaultNotFoundComponent: () => <p>not found</p>,
     Wrap: ({ children }) => (
-      <ClerkProvider
+      <LocalizedClerkProvider
         publishableKey={import.meta.env.VITE_CLERK_PUBLISHABLE_KEY}
       >
         <ConvexProviderWithAuth
@@ -82,7 +82,7 @@ export function getRouter() {
           </Authenticated>
           {children}
         </ConvexProviderWithAuth>
-      </ClerkProvider>
+      </LocalizedClerkProvider>
     ),
   })
   setupRouterSsrQueryIntegration({ router, queryClient })
