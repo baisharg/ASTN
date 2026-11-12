@@ -6,7 +6,10 @@ import { api } from '../../../../../../convex/_generated/api'
 import type { LiveState } from '~/components/social/live'
 import { useNow } from '~/components/social/SocialEventContext'
 import {
+  ArrivalCard,
   AttendeeGate,
+  RequestOutcomes,
+  expiresIn,
   timeAgo,
   useMeetingsOpen,
   useSocialErrorMessage,
@@ -51,6 +54,7 @@ const copy = {
     waitingForYou: 'En espera. Podés aceptarla cuando termine tu reunión.',
     requesterInMeeting:
       'Está en una reunión. Vas a poder aceptar cuando termine.',
+    requesterUnavailable: 'Ya no está disponible, así que no se puede aceptar.',
     closedHint: 'Los 1:1 no están abiertos en este momento.',
     noIncoming: 'Nadie te pidió un 1:1 todavía.',
     noOutgoing: 'No tenés solicitudes enviadas esperando respuesta.',
@@ -59,6 +63,7 @@ const copy = {
     queue: (n: number) => `${n}.º en su fila`,
     theyInMeeting: 'en una reunión',
     theyBusy: 'no disponible por ahora',
+    theyNotHere: 'todavía no llegó',
     cancelLabel: (name: string) => `Cancelar solicitud a ${name}`,
     acceptLabel: (name: string) => `Aceptar a ${name}`,
     declineLabel: (name: string) => `Rechazar a ${name}`,
@@ -82,6 +87,8 @@ const copy = {
     openMeeting: 'Open meeting',
     waitingForYou: 'On hold. You can accept it once your meeting ends.',
     requesterInMeeting: "They're in a meeting. You can accept once it ends.",
+    requesterUnavailable:
+      "They're no longer available, so it can't be accepted.",
     closedHint: '1:1s are not open right now.',
     noIncoming: 'Nobody has asked you for a 1:1 yet.',
     noOutgoing: "You don't have any sent requests waiting for an answer.",
@@ -90,6 +97,7 @@ const copy = {
     queue: (n: number) => `#${n} in their queue`,
     theyInMeeting: 'in a meeting',
     theyBusy: 'not available for now',
+    theyNotHere: 'not here yet',
     cancelLabel: (name: string) => `Cancel request to ${name}`,
     acceptLabel: (name: string) => `Accept ${name}`,
     declineLabel: (name: string) => `Decline ${name}`,
@@ -111,6 +119,8 @@ function RequestsContent({ live }: { live: LiveState }) {
   return (
     <main className="flex flex-col gap-[22px] px-5 pb-8 pt-4">
       <PageTitle>{t.title}</PageTitle>
+
+      <ArrivalCard live={live} />
 
       {live.meeting && (
         <Panel className="gap-2.5 border-[var(--baish-warn-dot)] bg-[var(--baish-warn-bg)] p-4">
@@ -160,10 +170,13 @@ function RequestsContent({ live }: { live: LiveState }) {
         >
           {t.outgoing(live.outgoing.length)}
         </h2>
+        <RequestOutcomes live={live} />
         {live.outgoing.length === 0 ? (
           <p className="text-[15px] text-muted-foreground">{t.noOutgoing}</p>
         ) : (
-          live.outgoing.map((r) => <OutgoingRow key={r._id} request={r} />)
+          live.outgoing.map((r) => (
+            <OutgoingRow key={r._id} request={r} now={now} />
+          ))
         )}
       </section>
 
@@ -218,7 +231,9 @@ function IncomingCard({
       ? t.closedHint
       : r.fromState === 'in_meeting'
         ? t.requesterInMeeting
-        : null
+        : r.fromState === 'busy'
+          ? t.requesterUnavailable
+          : null
   const canAccept = hint === null
 
   return (
@@ -240,7 +255,13 @@ function IncomingCard({
             {r.from.name}
           </span>
           <span className="text-[13px] text-muted-foreground">
-            {t.wantsToMeet} · {timeAgo(r.createdAt, now, lang)}
+            {[
+              t.wantsToMeet,
+              timeAgo(r.createdAt, now, lang),
+              expiresIn(r.expiresAt, now, lang),
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           </span>
         </span>
       </Link>
@@ -286,9 +307,10 @@ function IncomingCard({
   )
 }
 
-function OutgoingRow({ request: r }: { request: Outgoing }) {
+function OutgoingRow({ request: r, now }: { request: Outgoing; now: number }) {
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
+  const { lang } = useSocialLang()
   const errorMessage = useSocialErrorMessage()
   const cancelRequest = useMutation(api.social.meetings.cancelRequest)
   const { busy, run } = useBusyAction<'cancel'>()
@@ -306,11 +328,14 @@ function OutgoingRow({ request: r }: { request: Outgoing }) {
   const status = [
     t.waiting,
     t.queue(r.queuePosition),
-    r.toState === 'in_meeting'
-      ? t.theyInMeeting
-      : r.toState === 'busy'
-        ? t.theyBusy
-        : null,
+    !r.toHere
+      ? t.theyNotHere
+      : r.toState === 'in_meeting'
+        ? t.theyInMeeting
+        : r.toState === 'busy'
+          ? t.theyBusy
+          : null,
+    expiresIn(r.expiresAt, now, lang),
   ]
     .filter(Boolean)
     .join(' · ')

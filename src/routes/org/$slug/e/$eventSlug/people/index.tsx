@@ -1,7 +1,7 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import { CheckCircle2, Sparkles } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../../convex/_generated/api'
 import type { FunctionReturnType } from 'convex/server'
@@ -9,11 +9,11 @@ import type { LiveState } from '~/components/social/live'
 import type { AttendeeState } from '~/components/social/ui'
 import { useNow, useSocialEvent } from '~/components/social/SocialEventContext'
 import {
+  ArrivalCard,
   AttendeeGate,
-  MeetingBanner,
   PageSpinner,
+  RequestOutcomes,
   formatDuration,
-  requestBlock,
   requestBlockCopy,
   useMeetingsOpen,
   useSocialErrorMessage,
@@ -31,6 +31,7 @@ import {
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
 import { cn } from '~/lib/utils'
+import { requestBlock } from '~/lib/social-live'
 import { useBusyAction } from '~/lib/use-busy-action'
 import { formatTime, useCopy, useSocialLang } from '~/lib/social-i18n'
 
@@ -47,6 +48,9 @@ type Attendee = FunctionReturnType<
 type RefreshResult = FunctionReturnType<
   typeof api.social.suggestions.refreshMySuggestions
 >
+type SuggestionState = FunctionReturnType<
+  typeof api.social.suggestions.getMySuggestionState
+>
 
 const copy = {
   es: {
@@ -57,6 +61,14 @@ const copy = {
     available: 'Disponible',
     busy: 'No disponible',
     statusFailed: 'No pudimos cambiar tu estado. Probá de nuevo.',
+    busyHint: (n: number) =>
+      n === 1
+        ? 'Si pasás a "No disponible", cancelamos la solicitud que enviaste.'
+        : `Si pasás a "No disponible", cancelamos las ${n} solicitudes que enviaste.`,
+    busyCancelled: (n: number) =>
+      n === 1
+        ? 'Cancelamos la solicitud que habías enviado.'
+        : `Cancelamos las ${n} solicitudes que habías enviado.`,
     focus: 'El foco de esta noche',
     tabsLabel: 'Asistentes',
     suggested: (n: number) => `Sugeridos (${n})`,
@@ -74,7 +86,23 @@ const copy = {
     incompleteButton: 'Completar perfil',
     generatingTitle: 'Estamos armando tus sugerencias',
     generatingBody:
-      'Aparecen acá en un minuto. Mientras tanto, podés ver a todos los asistentes.',
+      'Puede tardar varios minutos. Aparecen acá solas cuando estén listas; mientras tanto, podés ver a todos los asistentes.',
+    newSuggestions: (n: number) =>
+      n === 1 ? 'Hay 1 sugerencia nueva.' : `Hay ${n} sugerencias nuevas.`,
+    gotIt: 'Entendido',
+    newTag: 'Nueva',
+    updating: 'Estamos actualizando tus sugerencias.',
+    failedTitle: 'No pudimos armar tus sugerencias',
+    failedBody:
+      'Algo falló de nuestro lado. Probá de nuevo; mientras tanto, podés ver a todos los asistentes.',
+    updateFailed: 'No pudimos actualizar tus sugerencias.',
+    retry: 'Reintentar',
+    overTitle: 'Los 1:1 de este evento ya terminaron',
+    overBody:
+      'Ya no armamos sugerencias nuevas para este evento. Podés ver a todos los asistentes.',
+    nobodyTitle: 'Todavía no hay a quién sugerirte',
+    nobodyBody:
+      'Cuando se sumen más asistentes con el perfil completo, te sugerimos con quién conversar.',
     seeEveryone: 'Ver a todos',
     nobody: 'Todavía no hay otros asistentes confirmados.',
   },
@@ -86,6 +114,14 @@ const copy = {
     available: 'Available',
     busy: 'Not available',
     statusFailed: "We couldn't change your status. Please try again.",
+    busyHint: (n: number) =>
+      n === 1
+        ? 'If you switch to "Not available", we cancel the request you sent.'
+        : `If you switch to "Not available", we cancel the ${n} requests you sent.`,
+    busyCancelled: (n: number) =>
+      n === 1
+        ? 'We cancelled the request you had sent.'
+        : `We cancelled the ${n} requests you had sent.`,
     focus: "Tonight's focus",
     tabsLabel: 'Attendees',
     suggested: (n: number) => `Suggested (${n})`,
@@ -103,7 +139,23 @@ const copy = {
     incompleteButton: 'Complete profile',
     generatingTitle: "We're putting your suggestions together",
     generatingBody:
-      'They show up here in a minute. Meanwhile, you can browse everyone.',
+      'This can take several minutes. They show up here on their own when ready; meanwhile, you can browse everyone.',
+    newSuggestions: (n: number) =>
+      n === 1 ? '1 new suggestion.' : `${n} new suggestions.`,
+    gotIt: 'Got it',
+    newTag: 'New',
+    updating: "We're updating your suggestions.",
+    failedTitle: "We couldn't put your suggestions together",
+    failedBody:
+      'Something went wrong on our side. Try again; meanwhile, you can browse everyone.',
+    updateFailed: "We couldn't update your suggestions.",
+    retry: 'Try again',
+    overTitle: "This event's 1:1s are over",
+    overBody:
+      "We no longer put together new suggestions for this event. You can still see everyone who's attending.",
+    nobodyTitle: 'Nobody to suggest yet',
+    nobodyBody:
+      "When more attendees with a complete profile join, we'll suggest who to talk to.",
     seeEveryone: 'See everyone',
     nobody: 'No other confirmed attendees yet.',
   },
@@ -125,7 +177,16 @@ function PeopleContent({ live }: { live: LiveState }) {
   const attendees = useQuery(api.social.meetings.listAttendees, {
     eventId: event._id,
   })
-  const refreshResult = useRefreshSuggestions()
+  const suggestionState = useQuery(
+    api.social.suggestions.getMySuggestionState,
+    {
+      eventId: event._id,
+    },
+  )
+  // After a failure, asking again is the person's call ("Reintentar"), not
+  // something the page does on a timer.
+  const refresh = useRefreshSuggestions(suggestionState?.status !== 'failed')
+  const newSuggestions = useNewSuggestions(suggestions)
   const meetingsOpen = useMeetingsOpen()
 
   const tabs: Array<{ id: Tab; label: string }> = [
@@ -144,6 +205,9 @@ function PeopleContent({ live }: { live: LiveState }) {
   const stateById = new Map<string, AttendeeState>(
     (attendees ?? []).map((a) => [a.userId, a.state]),
   )
+  const hereById = new Map<string, boolean>(
+    (attendees ?? []).map((a) => [a.userId, a.here]),
+  )
 
   return (
     <main className="flex flex-col gap-[18px] px-5 pb-8 pt-[18px]">
@@ -151,6 +215,10 @@ function PeopleContent({ live }: { live: LiveState }) {
         <PageTitle>{event.title}</PageTitle>
         <MeetingsWindowLine open={meetingsOpen} />
       </div>
+
+      <ArrivalCard live={live} />
+
+      <RequestOutcomes live={live} />
 
       <AvailabilityToggle live={live} />
 
@@ -205,36 +273,79 @@ function PeopleContent({ live }: { live: LiveState }) {
             live={live}
             meetingsOpen={meetingsOpen}
             suggestions={suggestions}
+            suggestionState={suggestionState}
             stateById={stateById}
-            refreshResult={refreshResult}
+            hereById={hereById}
+            refreshResult={refresh.result}
+            onRetry={refresh.request}
+            newIds={newSuggestions.newIds}
+            onSeenNew={newSuggestions.markSeen}
             onSeeEveryone={() => setTab('everyone')}
           />
         ) : (
           <EveryonePanel attendees={attendees} />
         )}
       </div>
-
-      <MeetingBanner meeting={live.meeting} />
     </main>
   )
 }
 
+// How often an open page asks again, so a long visit still picks up new
+// attendees and drops people already met.
+const RECHECK_MS = 5 * 60 * 1000
+
 /**
- * Asks for fresh suggestions when the page opens, in the page's language. The
- * backend throttles this per person.
+ * Asks for suggestions when the page opens and when its language changes,
+ * and, while `recheck` is on, every few minutes as long as the page stays
+ * open and visible. The backend decides what, if anything, that starts.
+ * `request` asks again (the retry after a failure); it rejects when the
+ * request itself doesn't go through.
  */
-function useRefreshSuggestions(): RefreshResult | null {
+function useRefreshSuggestions(recheck: boolean): {
+  result: RefreshResult | null
+  request: () => Promise<void>
+} {
   const event = useSocialEvent()
   const { lang } = useSocialLang()
   const refresh = useMutation(api.social.suggestions.refreshMySuggestions)
   const [result, setResult] = useState<RefreshResult | null>(null)
-  // Also re-runs on a language switch, which regenerates in that language.
-  useEffect(() => {
-    refresh({ eventId: event._id, language: lang })
-      .then(setResult)
-      .catch((error: unknown) => console.error(error))
+  const request = useCallback(async () => {
+    setResult(await refresh({ eventId: event._id, language: lang }))
   }, [event._id, lang, refresh])
-  return result
+  useEffect(() => {
+    request().catch((error: unknown) => console.error(error))
+  }, [request])
+  useEffect(() => {
+    if (!recheck) return
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return
+      request().catch((error: unknown) => console.error(error))
+    }, RECHECK_MS)
+    return () => window.clearInterval(timer)
+  }, [request, recheck])
+  return { result, request }
+}
+
+/**
+ * Which suggestions arrived while the page was open. The first list the page
+ * shows is what the person has seen; anyone added by a later run is new
+ * until `markSeen`.
+ */
+function useNewSuggestions(suggestions: Array<Suggestion> | undefined): {
+  newIds: ReadonlySet<string>
+  markSeen: () => void
+} {
+  const [seenIds, setSeenIds] = useState<ReadonlySet<string> | null>(null)
+  const currentIds = (suggestions ?? []).map((s) => s.userId)
+  // The first suggestions to load are the starting point.
+  if (seenIds === null && currentIds.length > 0) {
+    setSeenIds(new Set(currentIds))
+  }
+  const newIds = new Set(
+    seenIds === null ? [] : currentIds.filter((id) => !seenIds.has(id)),
+  )
+  const markSeen = () => setSeenIds(new Set(currentIds))
+  return { newIds, markSeen }
 }
 
 function MeetingsWindowLine({ open }: { open: boolean }) {
@@ -256,12 +367,19 @@ function AvailabilityToggle({ live }: { live: LiveState }) {
   const setAvailability = useMutation(api.social.meetings.setAvailability)
   const { busy, run } = useBusyAction<'status'>()
   const saving = busy !== null
+  // Becoming unavailable cancels the requests the viewer sent.
+  const sentWaiting = live.outgoing.length
 
   const choose = async (availability: LiveState['availability']) => {
     if (availability === live.availability || saving) return
     await run(
       'status',
-      () => setAvailability({ eventId: event._id, availability }),
+      async () => {
+        await setAvailability({ eventId: event._id, availability })
+        if (availability === 'busy' && sentWaiting > 0) {
+          toast.success(t.busyCancelled(sentWaiting))
+        }
+      },
       () => toast.error(t.statusFailed),
     )
   }
@@ -272,42 +390,49 @@ function AvailabilityToggle({ live }: { live: LiveState }) {
   ] as const
 
   return (
-    <div className="flex items-center justify-between gap-3">
-      <span
-        id="status-label"
-        className="text-sm font-semibold text-[var(--baish-strong)]"
-      >
-        {t.yourStatus}
-      </span>
-      <div
-        role="group"
-        aria-labelledby="status-label"
-        aria-busy={saving}
-        className="flex gap-0.5 rounded-xl border border-border bg-muted p-[3px]"
-      >
-        {options.map(({ value, label }) => {
-          const active = live.availability === value
-          return (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={active}
-              disabled={saving}
-              onClick={() => void choose(value)}
-              className={cn(
-                'h-11 rounded-[10px] px-3.5 text-sm font-semibold',
-                active
-                  ? 'bg-card shadow-[0_1px_2px_rgba(17,12,46,0.12)]'
-                  : 'text-muted-foreground hover:text-foreground',
-                active && value === 'available' && 'text-[var(--baish-ok)]',
-                active && value === 'busy' && 'text-[var(--baish-strong)]',
-              )}
-            >
-              {label}
-            </button>
-          )
-        })}
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between gap-3">
+        <span
+          id="status-label"
+          className="text-sm font-semibold text-[var(--baish-strong)]"
+        >
+          {t.yourStatus}
+        </span>
+        <div
+          role="group"
+          aria-labelledby="status-label"
+          aria-busy={saving}
+          className="flex gap-0.5 rounded-xl border border-border bg-muted p-[3px]"
+        >
+          {options.map(({ value, label }) => {
+            const active = live.availability === value
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={active}
+                disabled={saving}
+                onClick={() => void choose(value)}
+                className={cn(
+                  'h-11 rounded-[10px] px-3.5 text-sm font-semibold',
+                  active
+                    ? 'bg-card shadow-[0_1px_2px_rgba(17,12,46,0.12)]'
+                    : 'text-muted-foreground hover:text-foreground',
+                  active && value === 'available' && 'text-[var(--baish-ok)]',
+                  active && value === 'busy' && 'text-[var(--baish-strong)]',
+                )}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
       </div>
+      {live.availability === 'available' && sentWaiting > 0 && (
+        <p className="text-[13px] leading-normal text-muted-foreground">
+          {t.busyHint(sentWaiting)}
+        </p>
+      )}
     </div>
   )
 }
@@ -316,23 +441,75 @@ function SuggestedPanel({
   live,
   meetingsOpen,
   suggestions,
+  suggestionState,
   stateById,
+  hereById,
   refreshResult,
+  onRetry,
+  newIds,
+  onSeenNew,
   onSeeEveryone,
 }: {
   live: LiveState
   meetingsOpen: boolean
   suggestions: Array<Suggestion> | undefined
+  suggestionState: SuggestionState | undefined
   stateById: Map<string, AttendeeState>
+  hereById: Map<string, boolean>
   refreshResult: RefreshResult | null
+  onRetry: () => Promise<void>
+  newIds: ReadonlySet<string>
+  onSeenNew: () => void
   onSeeEveryone: () => void
 }) {
   const { slug, eventSlug } = Route.useParams()
+  const event = useSocialEvent()
+  const now = useNow()
   const t = useCopy(copy)
+  const errorMessage = useSocialErrorMessage()
+  const { busy, run } = useBusyAction<'retry'>()
 
-  if (suggestions === undefined) return <PageSpinner />
+  if (suggestions === undefined || suggestionState === undefined) {
+    return <PageSpinner />
+  }
+
+  const status = suggestionState.status
+  // Once the 1:1s have closed, asking for suggestions starts nothing.
+  const meetingsOver = now >= event.meetingsCloseAt
+  const retry = () =>
+    run('retry', onRetry, (error) => toast.error(errorMessage(error)))
+  const retryButton = (className: string) => (
+    <button
+      type="button"
+      onClick={() => void retry()}
+      disabled={busy !== null}
+      className={className}
+    >
+      {busy ? <Spinner size="sm" /> : t.retry}
+    </button>
+  )
+  const seeEveryoneButton = (
+    <button
+      type="button"
+      onClick={onSeeEveryone}
+      className={secondaryButtonClass}
+    >
+      {t.seeEveryone}
+    </button>
+  )
 
   if (suggestions.length === 0) {
+    if (meetingsOver && status !== 'generating') {
+      return (
+        <Panel>
+          <h2 className="text-[17px] font-semibold text-[var(--baish-strong)]">
+            {t.overTitle}
+          </h2>
+          <p className="text-[15px] leading-normal">{t.overBody}</p>
+          {seeEveryoneButton}
+        </Panel>
+      )
+    }
     if (!live.profileReady || refreshResult === 'profile_incomplete') {
       return (
         <Panel>
@@ -350,10 +527,36 @@ function SuggestedPanel({
         </Panel>
       )
     }
+    if (status === 'failed') {
+      return (
+        <Panel>
+          <h2 className="text-[17px] font-semibold text-[var(--baish-strong)]">
+            {t.failedTitle}
+          </h2>
+          <p className="text-[15px] leading-normal">{t.failedBody}</p>
+          {retryButton(primaryButtonClass)}
+          {seeEveryoneButton}
+        </Panel>
+      )
+    }
+    // A finished run that left nothing to show: nobody was suggested, or
+    // everyone suggested has since dropped out.
+    if (status === 'nobody' || status === 'ready') {
+      return (
+        <Panel>
+          <h2 className="text-[17px] font-semibold text-[var(--baish-strong)]">
+            {t.nobodyTitle}
+          </h2>
+          <p className="text-[15px] leading-normal">{t.nobodyBody}</p>
+          {seeEveryoneButton}
+        </Panel>
+      )
+    }
+    // Generating, or (idle) a request that is on its way.
     return (
       <Panel>
         <div className="flex items-center gap-2.5">
-          {refreshResult === 'scheduled' ? (
+          {status === 'generating' || refreshResult === 'scheduled' ? (
             <Spinner size="sm" />
           ) : (
             <Sparkles
@@ -366,19 +569,50 @@ function SuggestedPanel({
           </h2>
         </div>
         <p className="text-[15px] leading-normal">{t.generatingBody}</p>
-        <button
-          type="button"
-          onClick={onSeeEveryone}
-          className={secondaryButtonClass}
-        >
-          {t.seeEveryone}
-        </button>
+        {seeEveryoneButton}
       </Panel>
     )
   }
 
   return (
     <div className="flex flex-col gap-3.5">
+      {status === 'generating' && (
+        <p
+          role="status"
+          className="flex items-center gap-2 text-sm text-muted-foreground"
+        >
+          <Spinner size="sm" />
+          {t.updating}
+        </p>
+      )}
+      {status === 'failed' && !meetingsOver && (
+        <div
+          role="status"
+          className="flex items-center justify-between gap-3 rounded-[14px] bg-muted px-4 py-2.5"
+        >
+          <p className="text-sm">{t.updateFailed}</p>
+          {retryButton(
+            'flex h-11 shrink-0 items-center justify-center px-2 text-sm font-semibold text-[var(--baish-brand-text)] underline-offset-2 hover:underline disabled:opacity-60',
+          )}
+        </div>
+      )}
+      {newIds.size > 0 && (
+        <div
+          role="status"
+          className="flex items-center justify-between gap-3 rounded-[14px] bg-[var(--baish-ok-bg)] px-4 py-2.5"
+        >
+          <p className="text-sm font-semibold text-[var(--baish-ok)]">
+            {t.newSuggestions(newIds.size)}
+          </p>
+          <button
+            type="button"
+            onClick={onSeenNew}
+            className="flex h-11 shrink-0 items-center justify-center px-2 text-sm font-semibold text-[var(--baish-ok)] underline-offset-2 hover:underline"
+          >
+            {t.gotIt}
+          </button>
+        </div>
+      )}
       {suggestions.map((s) => (
         <SuggestionCard
           key={s.userId}
@@ -386,6 +620,8 @@ function SuggestedPanel({
           meetingsOpen={meetingsOpen}
           suggestion={s}
           state={stateById.get(s.userId) ?? 'available'}
+          isNew={newIds.has(s.userId)}
+          here={hereById.get(s.userId) ?? true}
         />
       ))}
     </div>
@@ -397,11 +633,15 @@ function SuggestionCard({
   meetingsOpen,
   suggestion: s,
   state,
+  isNew,
+  here,
 }: {
   live: LiveState
   meetingsOpen: boolean
   suggestion: Suggestion
   state: AttendeeState
+  isNew: boolean
+  here: boolean
 }) {
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
@@ -409,12 +649,13 @@ function SuggestionCard({
   const errorMessage = useSocialErrorMessage()
   const startMeeting = useStartMeeting()
   const { busy, run } = useBusyAction<'send'>()
+  const now = useNow()
 
   const requested = live.outgoing.some((r) => r.to.userId === s.userId)
   const theyAsked = live.incoming.some((r) => r.from.userId === s.userId)
   const block = requested
     ? null
-    : requestBlock(live, meetingsOpen, s.userId, state)
+    : requestBlock(live, meetingsOpen, { userId: s.userId, state, here }, now)
   const firstName = s.name.split(' ')[0] ?? s.name
 
   const onMeet = async () => {
@@ -431,8 +672,13 @@ function SuggestionCard({
       <div className="flex items-center gap-3">
         <Avatar initials={s.initials} />
         <div className="flex min-w-0 grow flex-col gap-0.5">
-          <h3 className="text-base font-semibold text-[var(--baish-strong)]">
+          <h3 className="flex flex-wrap items-center gap-x-2 text-base font-semibold text-[var(--baish-strong)]">
             {s.name}
+            {isNew && (
+              <span className="rounded-full bg-[var(--baish-ok-bg)] px-2 py-0.5 text-xs font-semibold text-[var(--baish-ok)]">
+                {t.newTag}
+              </span>
+            )}
           </h3>
           {s.headline && (
             <span className="text-[13px] text-muted-foreground">
@@ -441,7 +687,7 @@ function SuggestionCard({
           )}
         </div>
       </div>
-      <StateLabel state={state} />
+      <StateLabel state={state} here={here} />
       <p className="text-sm leading-normal">
         <span className="font-semibold text-[var(--baish-strong)]">
           {t.why}
@@ -528,7 +774,7 @@ function EveryonePanel({
               )}
             </span>
             <span className="shrink-0">
-              <StateLabel state={a.state} compact />
+              <StateLabel state={a.state} here={a.here} compact />
             </span>
           </Link>
         </li>

@@ -1,5 +1,6 @@
 import { v } from 'convex/values'
 import { internalQuery, query } from '../_generated/server'
+import type { Infer } from 'convex/values'
 import type { Doc } from '../_generated/dataModel'
 
 /**
@@ -31,6 +32,47 @@ export async function takePublicEvents(
 }
 
 /**
+ * What members and visitors may read of an event. The mirror row also holds
+ * guest counts, capacity, approval settings and sync state, which stay on
+ * the server.
+ */
+const publicEventValidator = v.object({
+  _id: v.id('events'),
+  title: v.string(),
+  startAt: v.number(),
+  endAt: v.optional(v.number()),
+  timezone: v.string(),
+  coverUrl: v.optional(v.string()),
+  url: v.string(),
+  location: v.optional(v.string()),
+  isVirtual: v.boolean(),
+})
+
+export function toPublicEvent(
+  event: Doc<'events'>,
+): Infer<typeof publicEventValidator> {
+  return {
+    _id: event._id,
+    title: event.title,
+    startAt: event.startAt,
+    endAt: event.endAt,
+    timezone: event.timezone,
+    coverUrl: event.coverUrl,
+    url: event.url,
+    location: event.location,
+    isVirtual: event.isVirtual,
+  }
+}
+
+const dashboardEventValidator = publicEventValidator.extend({
+  org: v.object({
+    name: v.string(),
+    slug: v.optional(v.string()),
+    logoUrl: v.optional(v.string()),
+  }),
+})
+
+/**
  * Get all organizations that have Lu.ma calendar sync configured.
  * Used by sync action to know which orgs to sync events from.
  */
@@ -53,6 +95,10 @@ export const getOrgsWithLumaConfig = internalQuery({
  */
 export const getOrgEvents = query({
   args: { orgId: v.id('organizations') },
+  returns: v.object({
+    upcoming: v.array(publicEventValidator),
+    past: v.array(publicEventValidator),
+  }),
   handler: async (ctx, { orgId }) => {
     const now = Date.now()
 
@@ -76,7 +122,10 @@ export const getOrgEvents = query({
       20,
     )
 
-    return { upcoming, past }
+    return {
+      upcoming: upcoming.map(toPublicEvent),
+      past: past.map(toPublicEvent),
+    }
   },
 })
 
@@ -86,6 +135,10 @@ export const getOrgEvents = query({
  */
 export const getDashboardEvents = query({
   args: {},
+  returns: v.object({
+    userOrgEvents: v.array(dashboardEventValidator),
+    otherOrgEvents: v.array(dashboardEventValidator),
+  }),
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity()
     if (!identity) {
@@ -150,26 +203,17 @@ export const getDashboardEvents = query({
       }
     }
 
-    // Enrich events with org info (only include events where we found the org)
-    const enrichedEvents = allEvents
-      .map((event) => {
-        const org = orgMap[event.orgId.toString()]
-        return org
-          ? {
-              ...event,
-              org,
-            }
-          : null
-      })
-      .filter((e): e is NonNullable<typeof e> => e !== null)
-
-    // Split by membership
-    const userOrgEvents = enrichedEvents.filter((e) =>
-      userOrgIds.has(e.orgId.toString()),
-    )
-    const otherOrgEvents = enrichedEvents.filter(
-      (e) => !userOrgIds.has(e.orgId.toString()),
-    )
+    // Split by membership, with each event's public fields and its org
+    // (events whose org is gone are left out).
+    const userOrgEvents: Array<Infer<typeof dashboardEventValidator>> = []
+    const otherOrgEvents: Array<Infer<typeof dashboardEventValidator>> = []
+    for (const event of allEvents) {
+      const org = orgMap[event.orgId.toString()]
+      if (!org) continue
+      const enriched = { ...toPublicEvent(event), org }
+      if (userOrgIds.has(event.orgId.toString())) userOrgEvents.push(enriched)
+      else otherOrgEvents.push(enriched)
+    }
 
     return {
       userOrgEvents,

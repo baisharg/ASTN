@@ -4,15 +4,20 @@ import { internalAction } from '../_generated/server'
 import {
   LumaApiError,
   hasLumaApiKey,
-  isLumaRateLimited,
   listAllLumaGuests,
   listLumaCalendarEvents,
   lumaCheckedInAt,
 } from '../social/luma'
 import { assertOrgOwnsApiCalendar, resolveApiCalendar } from './binding'
-import { EMPTY_TOTALS, attendanceFromLuma, mirrorFromLuma } from './shared'
+import {
+  EMPTY_TOTALS,
+  attendanceFromLuma,
+  guestReadFailure,
+  mirrorFromLuma,
+} from './shared'
 import type { ActionCtx } from '../_generated/server'
 import type { Id } from '../_generated/dataModel'
+import type { LumaGuest } from '../social/luma'
 import type { AttendanceGuest, SyncTotals } from './shared'
 
 /**
@@ -26,8 +31,10 @@ import type { AttendanceGuest, SyncTotals } from './shared'
  *    guest as a CRM contact plus one `crmActivities` row per event.
  *
  * The flags live on the rows, so a chain that dies halfway is resumed by the
- * next cron run. Luma allows 200 requests a minute per calendar; the chain
- * paces itself well under that and backs off on 429.
+ * next cron run. An event whose guest list Luma failed to serve stays
+ * flagged too, and the next chain reads it again. Luma allows 200 requests
+ * a minute per calendar; the chain paces itself well under that and backs
+ * off on 429.
  */
 
 const RECENT_WINDOW_MS = 7 * 24 * 3600 * 1000
@@ -59,7 +66,7 @@ async function syncEventsImpl(
       full ? undefined : { after: now - RECENT_WINDOW_MS },
     )
     const mirrored = events
-      .map(mirrorFromLuma)
+      .map((e) => mirrorFromLuma(e, { listed: true }))
       .filter((e) => e.title && !Number.isNaN(e.startAt))
     let inserted = 0
     let updated = 0
@@ -187,12 +194,12 @@ type EventSyncResult = {
   totals: SyncTotals
 }
 
-async function syncEventGuests(
+/** Write an event's complete guest list into the CRM. */
+async function writeEventGuests(
   ctx: ActionCtx,
   event: { _id: Id<'events'>; lumaEventId: string },
+  guests: Array<LumaGuest>,
 ): Promise<EventSyncResult> {
-  // Throws rather than return a cut-off list, so the event stays flagged.
-  const guests = await listAllLumaGuests(event.lumaEventId)
   const totals: SyncTotals = { ...EMPTY_TOTALS, eventsGuestSynced: 1 }
   const counts = {
     guestCount: 0,
@@ -243,11 +250,19 @@ async function syncEventGuests(
  * One link of the chain: sync the guests of up to EVENTS_PER_ACTION flagged
  * events, then schedule the next link while any remain. Started by
  * `kickGuestSync`, which holds the org's lock.
+ *
+ * `skip` holds the events whose guest list Luma failed to serve earlier in
+ * this chain. They stay flagged, but this chain doesn't read them again: it
+ * goes on with the other events and ends when only those are left, so a
+ * failing event can neither keep the chain running nor hold up the rest.
  */
 export const guestChain = internalAction({
-  args: { orgId: v.id('organizations') },
+  args: {
+    orgId: v.id('organizations'),
+    skip: v.optional(v.array(v.id('events'))),
+  },
   returns: v.null(),
-  handler: async (ctx, { orgId }) => {
+  handler: async (ctx, { orgId, skip }) => {
     if (!hasLumaApiKey()) {
       await ctx.runMutation(internal.luma.mirror.renewOrReleaseChain, {
         orgId,
@@ -266,9 +281,11 @@ export const guestChain = internalAction({
       })
       return null
     }
+    const failedReads = [...(skip ?? [])]
     const batch = await ctx.runQuery(internal.luma.mirror.nextGuestSyncBatch, {
       orgId,
       limit: EVENTS_PER_ACTION,
+      skip: failedReads,
     })
 
     let lastError: string | undefined
@@ -280,36 +297,64 @@ export const guestChain = internalAction({
         })
         continue
       }
+
+      // Throws rather than return a cut-off list.
+      let guests: Array<LumaGuest>
       try {
-        const result = await syncEventGuests(ctx, event)
-        await ctx.runMutation(internal.luma.mirror.finishEventGuestSync, {
-          eventRowId: event._id,
-          counts: result.counts,
-          totals: result.totals,
-        })
+        guests = await listAllLumaGuests(event.lumaEventId)
       } catch (error) {
-        if (isLumaRateLimited(error)) {
+        const failure = guestReadFailure(error)
+        if (failure === 'rate_limited') {
           // Leave the event flagged and come back after the window.
-          await ctx.runMutation(internal.luma.mirror.renewOrReleaseChain, {
-            orgId,
-            error: 'Rate limited by Luma; retrying in a minute',
-            holdMs: RATE_LIMIT_BACKOFF_MS * 2,
-          })
-          await ctx.scheduler.runAfter(
-            RATE_LIMIT_BACKOFF_MS,
-            internal.luma.sync.guestChain,
-            { orgId },
+          const keepGoing = await ctx.runMutation(
+            internal.luma.mirror.renewOrReleaseChain,
+            {
+              orgId,
+              error: 'Rate limited by Luma; retrying in a minute',
+              holdMs: RATE_LIMIT_BACKOFF_MS * 2,
+              skip: failedReads,
+            },
           )
+          if (keepGoing) {
+            await ctx.scheduler.runAfter(
+              RATE_LIMIT_BACKOFF_MS,
+              internal.luma.sync.guestChain,
+              { orgId, skip: failedReads },
+            )
+          }
           return null
         }
         lastError = errorMessage(error)
-        console.error('Luma guest sync failed', event.lumaEventId, error)
+        console.error('Luma guest list not read', event.lumaEventId, error)
         await ctx.runMutation(internal.luma.mirror.finishEventGuestSync, {
           eventRowId: event._id,
           error:
             error instanceof LumaApiError && error.status === 404
               ? 'Luma no encontró el evento'
               : lastError,
+          retry: failure === 'transient',
+          totals: EMPTY_TOTALS,
+        })
+        if (failure === 'transient') failedReads.push(event._id)
+        await sleep(PAUSE_BETWEEN_EVENTS_MS)
+        continue
+      }
+
+      try {
+        const result = await writeEventGuests(ctx, event, guests)
+        await ctx.runMutation(internal.luma.mirror.finishEventGuestSync, {
+          eventRowId: event._id,
+          counts: result.counts,
+          totals: result.totals,
+        })
+      } catch (error) {
+        // Luma answered; writing the guests failed. Reading the list again
+        // would fail the same way, so the event is not kept flagged.
+        lastError = errorMessage(error)
+        console.error('Luma guest sync failed', event.lumaEventId, error)
+        await ctx.runMutation(internal.luma.mirror.finishEventGuestSync, {
+          eventRowId: event._id,
+          error: lastError,
           totals: EMPTY_TOTALS,
         })
       }
@@ -318,10 +363,13 @@ export const guestChain = internalAction({
 
     const keepGoing = await ctx.runMutation(
       internal.luma.mirror.renewOrReleaseChain,
-      { orgId, error: lastError },
+      { orgId, error: lastError, skip: failedReads },
     )
     if (keepGoing) {
-      await ctx.scheduler.runAfter(0, internal.luma.sync.guestChain, { orgId })
+      await ctx.scheduler.runAfter(0, internal.luma.sync.guestChain, {
+        orgId,
+        skip: failedReads,
+      })
     }
     return null
   },
