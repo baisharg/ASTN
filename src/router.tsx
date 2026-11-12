@@ -15,6 +15,7 @@ import type { ErrorComponentProps } from '@tanstack/react-router'
 import { ErrorDisplay } from '~/components/ErrorDisplay'
 import { LocalizedClerkProvider } from '~/lib/clerk-language'
 import { useConvexAuthFromClerk } from '~/lib/convex-clerk-auth'
+import { captureSignInTicket } from '~/lib/signInTicket'
 
 function UserMigration() {
   const migrateUser = useMutation(api.userMigration.migrateUserIfNeeded)
@@ -40,6 +41,10 @@ function DefaultErrorComponent({ error, reset }: ErrorComponentProps) {
 }
 
 export function getRouter() {
+  // A personal event link carries a sign-in token in its address. It comes
+  // out of the address here, before the router, Sentry or analytics read it.
+  captureSignInTicket()
+
   const CONVEX_URL = (import.meta as any).env.VITE_CONVEX_URL as string
   if (!CONVEX_URL) {
     throw new Error(
