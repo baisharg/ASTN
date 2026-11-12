@@ -8,6 +8,7 @@ import { useNow } from '~/components/social/SocialEventContext'
 import {
   ArrivalCard,
   AttendeeGate,
+  RequestOutcomes,
   expiresIn,
   timeAgo,
   useMeetingsOpen,
@@ -166,6 +167,7 @@ function RequestsContent({ live }: { live: LiveState }) {
         >
           {t.outgoing(live.outgoing.length)}
         </h2>
+        <RequestOutcomes live={live} />
         {live.outgoing.length === 0 ? (
           <p className="text-[15px] text-muted-foreground">{t.noOutgoing}</p>
         ) : (

@@ -10,6 +10,8 @@ export const DEFAULT_MEETING_MINUTES = 20
 export const MAX_MEETING_EXTENSION_MINUTES = 15
 // A request nobody answered expires this long after it was sent.
 export const REQUEST_EXPIRY_MS = 10 * 60 * 1000
+// After a decline, the same person can't be asked again for this long.
+export const DECLINE_COOLDOWN_MS = 10 * 60 * 1000
 // Without explicit 1:1 times, they run from the event start for this long
 // (or until the event's end, when it has one).
 export const DEFAULT_EVENT_HOURS = 6
@@ -65,6 +67,7 @@ export type MeetingErrorCode =
   | 'not_attendee'
   | 'self'
   | 'not_here'
+  | 'declined_recently'
   | 'busy'
   | 'limit'
   | 'request_expired'

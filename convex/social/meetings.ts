@@ -3,6 +3,7 @@ import { internal } from '../_generated/api'
 import { internalMutation, mutation, query } from '../_generated/server'
 import { getUserId, requireAuth } from '../lib/auth'
 import {
+  DECLINE_COOLDOWN_MS,
   MAX_MEETING_EXTENSION_MINUTES,
   MAX_NOTE_LENGTH,
   MAX_OUTGOING_PENDING,
@@ -191,6 +192,56 @@ async function pendingRequestsFrom(
     .take(MAX_OUTGOING_PENDING * 2)
 }
 
+type RequestOutcome = 'declined' | 'expired'
+
+// How far back the requester's declined and expired requests are read.
+const RESOLVED_LOOKBACK = 20
+
+/** `userId`'s latest requests that ended as `outcome`, newest first. */
+async function resolvedRequestsFrom(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+  userId: string,
+  outcome: RequestOutcome,
+): Promise<Array<Doc<'socialMeetingRequests'>>> {
+  return await ctx.db
+    .query('socialMeetingRequests')
+    .withIndex('by_eventId_and_fromUserId_and_status', (q) =>
+      q.eq('eventId', eventId).eq('fromUserId', userId).eq('status', outcome),
+    )
+    .order('desc')
+    .take(RESOLVED_LOOKBACK)
+}
+
+function resolvedAtOf(request: Doc<'socialMeetingRequests'>): number {
+  return request.respondedAt ?? request.createdAt
+}
+
+/**
+ * Mark the declined and expired requests `fromUserId` sent `toUserId` as
+ * seen, so their notices stop showing: the requester dismissed one, asked
+ * the person again, or the two are meeting.
+ */
+async function acknowledgeOutcomes(
+  ctx: MutationCtx,
+  eventId: Id<'socialEvents'>,
+  fromUserId: string,
+  toUserId: string,
+): Promise<void> {
+  const now = Date.now()
+  for (const outcome of ['declined', 'expired'] as const) {
+    const rows = await resolvedRequestsFrom(ctx, eventId, fromUserId, outcome)
+    for (const row of rows) {
+      if (row.toUserId !== toUserId || row.acknowledgedAt !== undefined) {
+        continue
+      }
+      await ctx.db.patch('socialMeetingRequests', row._id, {
+        acknowledgedAt: now,
+      })
+    }
+  }
+}
+
 function requireMeetingsOpen(event: Doc<'socialEvents'>): void {
   if (!meetingsOpenNow(event.status, meetingsWindow(event), Date.now())) {
     refuse('closed', '1:1s are not open right now')
@@ -300,6 +351,21 @@ export const getLiveState = query({
           toHere: v.boolean(),
         }),
       ),
+      // The viewer's requests that were declined or expired and that they
+      // haven't dismissed: the latest per person, newest first, however old.
+      // The page hides old ones by its own clock.
+      resolved: v.array(
+        v.object({
+          _id: v.id('socialMeetingRequests'),
+          to: cardValidator,
+          outcome: v.union(v.literal('declined'), v.literal('expired')),
+          resolvedAt: v.number(),
+        }),
+      ),
+      // People who declined the viewer, and when each can be asked again.
+      cooldowns: v.array(
+        v.object({ userId: v.string(), askAgainAt: v.number() }),
+      ),
     }),
   ),
   handler: async (ctx, { eventId }) => {
@@ -328,10 +394,19 @@ export const getLiveState = query({
         lastEnded: null,
         incoming: [],
         outgoing: [],
+        resolved: [],
+        cooldowns: [],
       }
     }
 
-    const [active, ended, incomingRows, outgoingRows] = await Promise.all([
+    const [
+      active,
+      ended,
+      incomingRows,
+      outgoingRows,
+      declinedRows,
+      expiredRows,
+    ] = await Promise.all([
       activeMeetingFor(ctx, eventId, userId),
       lastEndedMeetingFor(ctx, eventId, userId),
       ctx.db
@@ -344,6 +419,8 @@ export const getLiveState = query({
         )
         .take(50),
       pendingRequestsFrom(ctx, eventId, userId),
+      resolvedRequestsFrom(ctx, eventId, userId, 'declined'),
+      resolvedRequestsFrom(ctx, eventId, userId, 'expired'),
     ])
 
     let meeting = null
@@ -428,7 +505,46 @@ export const getLiveState = query({
       }),
     )
 
-    return { ...base, meeting, lastEnded, incoming, outgoing }
+    // The latest unseen outcome per person.
+    const unseen = [...declinedRows, ...expiredRows]
+      .filter((r) => r.acknowledgedAt === undefined)
+      .sort((a, b) => resolvedAtOf(b) - resolvedAtOf(a))
+    const latestUnseen = unseen.filter(
+      (r, i) => unseen.findIndex((o) => o.toUserId === r.toUserId) === i,
+    )
+    const resolved = await Promise.all(
+      latestUnseen.map(async (r) => ({
+        _id: r._id,
+        to: await attendeeCard(ctx, eventId, r.toUserId),
+        outcome:
+          r.status === 'declined'
+            ? ('declined' as const)
+            : ('expired' as const),
+        resolvedAt: resolvedAtOf(r),
+      })),
+    )
+
+    // declinedRows is newest first, so the first row per person is the one
+    // that counts.
+    const cooldowns = declinedRows
+      .filter(
+        (r, i) =>
+          declinedRows.findIndex((o) => o.toUserId === r.toUserId) === i,
+      )
+      .map((r) => ({
+        userId: r.toUserId,
+        askAgainAt: resolvedAtOf(r) + DECLINE_COOLDOWN_MS,
+      }))
+
+    return {
+      ...base,
+      meeting,
+      lastEnded,
+      incoming,
+      outgoing,
+      resolved,
+      cooldowns,
+    }
   },
 })
 
@@ -647,6 +763,20 @@ async function acceptRequest(
     meetingId,
     respondedAt: Date.now(),
   })
+  // They are meeting now: earlier declined or expired requests between the
+  // two no longer need a notice.
+  await acknowledgeOutcomes(
+    ctx,
+    event._id,
+    request.fromUserId,
+    request.toUserId,
+  )
+  await acknowledgeOutcomes(
+    ctx,
+    event._id,
+    request.toUserId,
+    request.fromUserId,
+  )
   return meetingId
 }
 
@@ -684,6 +814,18 @@ export const requestMeeting = mutation({
       return { requestId: reverse._id, meetingId }
     }
 
+    // The cooldown comes from the declined request itself, read in this
+    // transaction, so it can't be raced past.
+    const declines = await resolvedRequestsFrom(
+      ctx,
+      eventId,
+      userId,
+      'declined',
+    )
+    const lastDecline = declines.find((r) => r.toUserId === toUserId)
+    if (lastDecline && resolvedAtOf(lastDecline) + DECLINE_COOLDOWN_MS > now) {
+      refuse('declined_recently', 'They said no a moment ago; ask again later')
+    }
     const them = await attendeePresence(ctx, eventId, toUserId)
     if (!them.here) refuse('not_here', "They haven't arrived yet")
     if ((await availabilityFor(ctx, eventId, toUserId)) === 'busy') {
@@ -701,6 +843,8 @@ export const requestMeeting = mutation({
 
     // Asking means being there.
     await recordArrival(ctx, eventId, userId)
+    // A new request replaces the notice about the last one to this person.
+    await acknowledgeOutcomes(ctx, eventId, userId, toUserId)
     const expiresAt = now + REQUEST_EXPIRY_MS
     const requestId = await ctx.db.insert('socialMeetingRequests', {
       eventId,
@@ -765,6 +909,24 @@ export const cancelRequest = mutation({
         respondedAt: Date.now(),
       })
     }
+    return null
+  },
+})
+
+/**
+ * The requester has seen that a request was declined or expired: stop
+ * showing the notice for that person.
+ */
+export const dismissRequestOutcome = mutation({
+  args: { requestId: v.id('socialMeetingRequests') },
+  returns: v.null(),
+  handler: async (ctx, { requestId }) => {
+    const userId = await requireAuth(ctx)
+    const request = await ctx.db.get('socialMeetingRequests', requestId)
+    if (!request || request.fromUserId !== userId) {
+      refuse('not_found', 'Request not found')
+    }
+    await acknowledgeOutcomes(ctx, request.eventId, userId, request.toUserId)
     return null
   },
 })

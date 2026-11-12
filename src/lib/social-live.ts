@@ -32,10 +32,22 @@ export function expiryMinutesLeft(expiresAt: number, now: number): number {
   return Math.max(0, Math.ceil((expiresAt - now) / 60_000))
 }
 
+/** How long a declined or expired request stays on the requester's screens. */
+export const OUTCOME_VISIBLE_MS = 30 * 60 * 1000
+
+/** The outcomes recent enough, by this device's clock, to still show. */
+export function visibleOutcomes<T extends { resolvedAt: number }>(
+  resolved: ReadonlyArray<T>,
+  now: number,
+): Array<T> {
+  return resolved.filter((r) => now - r.resolvedAt < OUTCOME_VISIBLE_MS)
+}
+
 /** Reasons the "meet now" button is disabled, each with its own message. */
 export type RequestBlock = Extract<
   MeetingErrorCode,
   | 'closed'
+  | 'declined_recently'
   | 'not_here'
   | 'busy'
   | 'limit'
@@ -48,6 +60,7 @@ export type RequestBlockLive = {
   meeting: object | null
   incoming: ReadonlyArray<{ from: { userId: string } }>
   outgoing: ReadonlyArray<object>
+  cooldowns: ReadonlyArray<{ userId: string; askAgainAt: number }>
 }
 
 /**
@@ -59,6 +72,7 @@ export function requestBlock(
   live: RequestBlockLive,
   meetingsOpen: boolean,
   other: { userId: string; state: AttendeeState; here: boolean },
+  now: number,
 ): RequestBlock | null {
   if (!meetingsOpen) return 'closed'
   if (live.incoming.some((r) => r.from.userId === other.userId)) {
@@ -66,6 +80,8 @@ export function requestBlock(
     if (other.state === 'in_meeting') return 'they_in_meeting'
     return null
   }
+  const declinedMe = live.cooldowns.find((c) => c.userId === other.userId)
+  if (declinedMe && declinedMe.askAgainAt > now) return 'declined_recently'
   if (!other.here) return 'not_here'
   if (other.state === 'busy') return 'busy'
   if (live.outgoing.length >= MAX_OUTGOING_PENDING) return 'limit'

@@ -2348,6 +2348,9 @@ export default defineSchema({
     expiresAt: v.optional(v.number()),
     // When the request left 'pending', whatever the outcome.
     respondedAt: v.optional(v.number()),
+    // When the requester dismissed the notice that it was declined or
+    // expired, or asked or met the same person again.
+    acknowledgedAt: v.optional(v.number()),
   })
     .index('by_eventId_and_status', ['eventId', 'status'])
     .index('by_eventId_and_toUserId_and_status', [

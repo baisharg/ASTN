@@ -13,6 +13,7 @@ import {
   AttendeeGate,
   MeetingBanner,
   PageSpinner,
+  RequestOutcomes,
   formatDuration,
   requestBlockCopy,
   useMeetingsOpen,
@@ -157,6 +158,8 @@ function PeopleContent({ live }: { live: LiveState }) {
       </div>
 
       <ArrivalCard live={live} />
+
+      <RequestOutcomes live={live} />
 
       <AvailabilityToggle live={live} />
 
@@ -421,12 +424,13 @@ function SuggestionCard({
   const errorMessage = useSocialErrorMessage()
   const startMeeting = useStartMeeting()
   const { busy, run } = useBusyAction<'send'>()
+  const now = useNow()
 
   const requested = live.outgoing.some((r) => r.to.userId === s.userId)
   const theyAsked = live.incoming.some((r) => r.from.userId === s.userId)
   const block = requested
     ? null
-    : requestBlock(live, meetingsOpen, { userId: s.userId, state, here })
+    : requestBlock(live, meetingsOpen, { userId: s.userId, state, here }, now)
   const firstName = s.name.split(' ')[0] ?? s.name
 
   const onMeet = async () => {

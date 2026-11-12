@@ -17,6 +17,7 @@ import { useNow, useSocialEvent } from '~/components/social/SocialEventContext'
 import {
   MeetingBanner,
   PageSpinner,
+  RequestOutcomes,
   expiresIn,
   requestBlockCopy,
   SignedInGate,
@@ -439,7 +440,7 @@ function RequestCard({
   const run = <T,>(key: NonNullable<typeof busy>, action: () => Promise<T>) =>
     runBusy(key, action, (error) => toast.error(errorMessage(error)))
 
-  const block = requestBlock(live, meetingsOpen, { userId, state, here })
+  const block = requestBlock(live, meetingsOpen, { userId, state, here }, now)
 
   if (theyRequestedMe) {
     const requestId = theyRequestedMe
@@ -549,6 +550,7 @@ function RequestCard({
 
   return (
     <Panel raised aria-label={t.requestLabel} className="gap-2.5 p-4">
+      <RequestOutcomes live={live} onlyUserId={userId} />
       <label
         htmlFor="request-note"
         className="text-sm font-semibold text-[var(--baish-strong)]"
