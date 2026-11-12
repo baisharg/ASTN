@@ -416,6 +416,9 @@ function RegistrationCard() {
       return (
         <Panel>
           <p className="text-[15px]">{t.closed}</p>
+          {event.lumaUrl && registration.email && (
+            <OtherEmailHint email={registration.email} />
+          )}
         </Panel>
       )
     }
