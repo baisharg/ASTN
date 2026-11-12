@@ -32,7 +32,8 @@ export const Route = createFileRoute('/org/$slug/e/$eventSlug/profile')({
 type Visibility = NonNullable<Doc<'profiles'>['socialVisibility']>
 
 /** The free-text fields edited on this page. */
-type DraftField = 'headline' | 'seeking' | 'canHelpWith'
+const DRAFT_FIELDS = ['headline', 'seeking', 'canHelpWith'] as const
+type DraftField = (typeof DRAFT_FIELDS)[number]
 
 const copy = {
   es: {
@@ -283,14 +284,18 @@ function ProfileForm({ profile }: { profile: Doc<'profiles'> }) {
     run(
       'save',
       async () => {
-        await updateField({
-          profileId: profile._id,
-          updates: {
-            headline: value('headline').trim() || undefined,
-            seeking: value('seeking').trim() || undefined,
-            canHelpWith: value('canHelpWith').trim() || undefined,
-          },
-        })
+        // Only what the person edited: text to store, and emptied fields
+        // to remove.
+        const updates: Partial<Record<DraftField, string>> = {}
+        const clear: Array<DraftField> = []
+        for (const field of DRAFT_FIELDS) {
+          const edited = draft[field]
+          if (edited === undefined) continue
+          const text = edited.trim()
+          if (text) updates[field] = text
+          else clear.push(field)
+        }
+        await updateField({ profileId: profile._id, updates, clear })
         setDraft({})
         toast.success(t.saved)
       },

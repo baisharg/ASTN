@@ -318,8 +318,19 @@ export const updateField = mutation({
         }),
       ),
     }),
+    // Text fields to empty. A field can't be sent as `undefined` (Convex
+    // drops it from the arguments), so removing one is named here.
+    clear: v.optional(
+      v.array(
+        v.union(
+          v.literal('headline'),
+          v.literal('seeking'),
+          v.literal('canHelpWith'),
+        ),
+      ),
+    ),
   },
-  handler: async (ctx, { profileId, updates: rawUpdates }) => {
+  handler: async (ctx, { profileId, updates: rawUpdates, clear }) => {
     // Only store LinkedIn links that are safe to render as links.
     const updates = { ...rawUpdates }
     if (updates.linkedinUrl !== undefined) {
@@ -362,12 +373,21 @@ export const updateField = mutation({
       'matchPreferences',
     ])
 
-    const affectsMatches = Object.keys(updates).some((f) =>
-      MATCH_AFFECTING_FIELDS.has(f),
+    // A field in both `updates` and `clear` ends up cleared.
+    const cleared: {
+      headline?: undefined
+      seeking?: undefined
+      canHelpWith?: undefined
+    } = {}
+    for (const field of clear ?? []) cleared[field] = undefined
+
+    const affectsMatches = [...Object.keys(updates), ...(clear ?? [])].some(
+      (f) => MATCH_AFFECTING_FIELDS.has(f),
     )
 
     await ctx.db.patch('profiles', profileId, {
       ...updates,
+      ...cleared,
       ...emailBackfill,
       updatedAt: Date.now(),
     })
