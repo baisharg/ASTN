@@ -15,7 +15,11 @@ import type { ErrorComponentProps } from '@tanstack/react-router'
 import { ErrorDisplay } from '~/components/ErrorDisplay'
 import { LocalizedClerkProvider } from '~/lib/clerk-language'
 import { useConvexAuthFromClerk } from '~/lib/convex-clerk-auth'
-import { captureSignInTicket, redactSignInTicketDeep } from '~/lib/signInTicket'
+import {
+  captureSignInTicket,
+  redactSignInTicketDeep,
+  redactSignInTicketInBreadcrumb,
+} from '~/lib/signInTicket'
 
 function UserMigration() {
   const migrateUser = useMutation(api.userMigration.migrateUserIfNeeded)
@@ -116,7 +120,8 @@ export function getRouter() {
       // A personal event link's sign-in token is taken out of the address
       // before Sentry starts (captureSignInTicket). These redact it from
       // anything Sentry sends should it ever be in an address anyway.
-      beforeBreadcrumb: (breadcrumb) => redactSignInTicketDeep(breadcrumb),
+      beforeBreadcrumb: (breadcrumb) =>
+        redactSignInTicketInBreadcrumb(breadcrumb),
       beforeSend: (event) => redactSignInTicketDeep(event),
       beforeSendTransaction: (event) => redactSignInTicketDeep(event),
       beforeSendSpan: (span) => redactSignInTicketDeep(span),

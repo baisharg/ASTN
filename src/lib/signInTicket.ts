@@ -143,27 +143,70 @@ export function redactSignInTicket(text: string): string {
   return text.replace(TICKET_IN_TEXT, '$1$2$3[redacted]')
 }
 
-const REDACT_MAX_DEPTH = 12
+// How many objects and arrays one redaction walks. Error reports and
+// analytics events are far smaller; a larger value is left as it is past
+// this point rather than hold up the page.
+const REDACT_CONTAINER_BUDGET = 20_000
+
+function isPlainContainer(value: object): boolean {
+  if (Array.isArray(value)) return true
+  const prototype: unknown = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
 
 /**
- * Redact sign-in tokens in every string inside `value` (objects and arrays
- * are changed in place) and return it. The second line of defence for what
- * leaves the browser in error reports and analytics: the token should never
- * be in an address by then, and if it is, it does not travel.
+ * Redact sign-in tokens in every string inside `value` and return it. Plain
+ * objects and arrays are walked and changed in place; anything else (a DOM
+ * node, a class instance) is left alone, each container is visited once and
+ * the walk stops at REDACT_CONTAINER_BUDGET.
+ *
+ * The second line of defence for what leaves the browser in error reports
+ * and analytics: the token should never be in an address by then, and if it
+ * is, it does not travel.
  */
-export function redactSignInTicketDeep<T>(value: T, depth = 0): T {
+export function redactSignInTicketDeep<T>(value: T): T {
   if (typeof value === 'string') return redactSignInTicket(value) as T
   if (value === null || typeof value !== 'object') return value
-  if (depth >= REDACT_MAX_DEPTH) return value
-  const container = value as Record<string, unknown>
-  for (const key of Object.keys(container)) {
-    const item = container[key]
-    if (typeof item === 'string') {
-      const redacted = redactSignInTicket(item)
-      if (redacted !== item) container[key] = redacted
-    } else if (item !== null && typeof item === 'object') {
-      redactSignInTicketDeep(item, depth + 1)
+  const seen = new WeakSet<object>()
+  const pending: Array<object> = [value]
+  let visited = 0
+  while (pending.length > 0 && visited < REDACT_CONTAINER_BUDGET) {
+    const container = pending.pop()!
+    if (seen.has(container) || !isPlainContainer(container)) continue
+    seen.add(container)
+    visited++
+    const fields = container as Record<string, unknown>
+    for (const key of Object.keys(fields)) {
+      const item = fields[key]
+      if (typeof item === 'string') {
+        const redacted = redactSignInTicket(item)
+        if (redacted !== item) fields[key] = redacted
+      } else if (item !== null && typeof item === 'object') {
+        pending.push(item)
+      }
     }
   }
   return value
+}
+
+/**
+ * Redact sign-in tokens in a Sentry breadcrumb: its message and the
+ * addresses in its data (`url`, `from`, `to`). The rest of the data is not
+ * walked: a console breadcrumb holds the logged values themselves, which
+ * can be anything.
+ */
+export function redactSignInTicketInBreadcrumb<
+  T extends { message?: string; data?: Record<string, unknown> },
+>(breadcrumb: T): T {
+  if (breadcrumb.message !== undefined) {
+    breadcrumb.message = redactSignInTicket(breadcrumb.message)
+  }
+  const data = breadcrumb.data
+  if (data) {
+    for (const key of ['url', 'from', 'to']) {
+      const item = data[key]
+      if (typeof item === 'string') data[key] = redactSignInTicket(item)
+    }
+  }
+  return breadcrumb
 }

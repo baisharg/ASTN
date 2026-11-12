@@ -4,6 +4,7 @@ import {
   hasSignInTicket,
   redactSignInTicket,
   redactSignInTicketDeep,
+  redactSignInTicketInBreadcrumb,
   signInTicketPlan,
   splitSignInTicket,
   takeSignInTicket,
@@ -289,5 +290,44 @@ describe('redactSignInTicketDeep', () => {
       request: { url: '/org/baish/e/s' },
       tags: ['a', 'b'],
     })
+  })
+})
+
+describe('redaction never holds up the page', () => {
+  test('a value that refers to itself is walked once', () => {
+    const event: { url: string; self?: unknown; list: Array<unknown> } = {
+      url: '/e/s#ticket=abc',
+      list: [],
+    }
+    event.self = event
+    event.list.push(event)
+    redactSignInTicketDeep(event)
+    expect(event.url).toBe('/e/s#ticket=[redacted]')
+    expect(event.self).toBe(event)
+  })
+
+  test('objects that are not plain data are neither walked nor changed', () => {
+    class Node {
+      address = '/e/s#ticket=abc'
+    }
+    const node = new Node()
+    const event = { target: node, url: '/e/s#ticket=abc' }
+    redactSignInTicketDeep(event)
+    expect(event.url).toBe('/e/s#ticket=[redacted]')
+    expect(node.address).toBe('/e/s#ticket=abc')
+  })
+
+  test('a breadcrumb has its message and addresses redacted, its logged values untouched', () => {
+    const logged = { anything: '/e/s#ticket=abc' }
+    const breadcrumb = {
+      category: 'navigation',
+      message: 'to /e/s#ticket=abc',
+      data: { from: '/e/s#ticket=abc', to: '/e/s', arguments: [logged] },
+    }
+    redactSignInTicketInBreadcrumb(breadcrumb)
+    expect(breadcrumb.message).toBe('to /e/s#ticket=[redacted]')
+    expect(breadcrumb.data.from).toBe('/e/s#ticket=[redacted]')
+    expect(breadcrumb.data.to).toBe('/e/s')
+    expect(logged.anything).toBe('/e/s#ticket=abc')
   })
 })
