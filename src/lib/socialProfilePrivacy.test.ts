@@ -1,10 +1,12 @@
 import {
   attendeeVisibleProfile,
+  optedOutOfSuggestions,
   privateProfileSections,
   sharedProfileParts,
   socialProfileView,
+  takesPartInSuggestions,
 } from '../../convex/social/lib'
-import { summarizeProfile } from '../../convex/social/suggestions'
+import { rosterEntry, summarizeProfile } from '../../convex/social/suggestions'
 import type { Doc } from '../../convex/_generated/dataModel'
 import type { ProfileSection } from '../../convex/social/lib'
 
@@ -302,6 +304,88 @@ describe('summarizeProfile (what the suggestions model reads)', () => {
     expect(summarizeProfile(attendeeVisibleProfile(null), undefined)).toBe(
       'Nombre: Sin nombre',
     )
+  })
+})
+
+describe('turning suggestions off', () => {
+  const optedOut = {
+    ...fullProfile(),
+    socialSuggestionsOptOut: true,
+  } as Doc<'profiles'>
+
+  test('a profile without the setting has them on', () => {
+    expect(optedOutOfSuggestions(fullProfile())).toBe(false)
+    expect(optedOutOfSuggestions(null)).toBe(false)
+    expect(optedOutOfSuggestions(optedOut)).toBe(true)
+  })
+
+  test('a ready profile is ranked, unless the person turned suggestions off', () => {
+    expect(takesPartInSuggestions(fullProfile())).toBe(true)
+    expect(takesPartInSuggestions(optedOut)).toBe(false)
+  })
+
+  test('a profile that is not ready is not ranked either way', () => {
+    const incomplete = {
+      ...fullProfile(),
+      seeking: undefined,
+    } as Doc<'profiles'>
+    expect(takesPartInSuggestions(incomplete)).toBe(false)
+    expect(takesPartInSuggestions(null)).toBe(false)
+  })
+})
+
+describe('rosterEntry (who the suggestions model reads about)', () => {
+  const entry = (
+    profile: Doc<'profiles'> | null,
+    selfId = 'user_other',
+  ): ReturnType<typeof rosterEntry> =>
+    rosterEntry({
+      selfId,
+      userId: 'user_ana',
+      registrationName: 'Ana P.',
+      profile,
+    })
+
+  test('an attendee with a profile is in, with the summary the model reads', () => {
+    const profile = fullProfile()
+    expect(entry(profile)).toEqual({
+      userId: 'user_ana',
+      summary: summarizeProfile(attendeeVisibleProfile(profile), 'Ana P.'),
+    })
+  })
+
+  test('someone who turned suggestions off is left out', () => {
+    const optedOut = {
+      ...fullProfile(),
+      socialSuggestionsOptOut: true,
+    } as Doc<'profiles'>
+    expect(entry(optedOut)).toBe(null)
+  })
+
+  test('someone who turned suggestions off is left out of their own ranking too', () => {
+    const optedOut = {
+      ...fullProfile(),
+      socialSuggestionsOptOut: true,
+    } as Doc<'profiles'>
+    expect(entry(optedOut, 'user_ana')).toBe(null)
+  })
+
+  test('someone else with no headline, goal or jobs is left out', () => {
+    const vague = {
+      userId: 'user_ana',
+      name: 'Ana Pérez',
+      skills: ['Python'],
+    } as unknown as Doc<'profiles'>
+    expect(entry(vague)).toBe(null)
+    expect(entry(null)).toBe(null)
+  })
+
+  test('the attendee being ranked is in even with a thin profile', () => {
+    const thin = {
+      userId: 'user_ana',
+      name: 'Ana Pérez',
+    } as unknown as Doc<'profiles'>
+    expect(entry(thin, 'user_ana')?.userId).toBe('user_ana')
   })
 })
 

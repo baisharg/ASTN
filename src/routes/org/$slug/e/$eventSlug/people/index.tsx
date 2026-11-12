@@ -100,6 +100,10 @@ const copy = {
     overTitle: 'Los 1:1 de este evento ya terminaron',
     overBody:
       'Ya no armamos sugerencias nuevas para este evento. Podés ver a todos los asistentes.',
+    offTitle: 'Desactivaste las sugerencias',
+    offBody:
+      'No te sugerimos personas ni te sugerimos a otros asistentes. Igual podés ver a todos y pedir un 1:1.',
+    offButton: 'Cambiarlo en tu perfil',
     nobodyTitle: 'Todavía no hay a quién sugerirte',
     nobodyBody:
       'Cuando se sumen más asistentes con el perfil completo, te sugerimos con quién conversar.',
@@ -153,6 +157,10 @@ const copy = {
     overTitle: "This event's 1:1s are over",
     overBody:
       "We no longer put together new suggestions for this event. You can still see everyone who's attending.",
+    offTitle: 'You turned suggestions off',
+    offBody:
+      "We don't suggest people to you or suggest you to other attendees. You can still see everyone and ask for a 1:1.",
+    offButton: 'Change it in your profile',
     nobodyTitle: 'Nobody to suggest yet',
     nobodyBody:
       "When more attendees with a complete profile join, we'll suggest who to talk to.",
@@ -184,8 +192,11 @@ function PeopleContent({ live }: { live: LiveState }) {
     },
   )
   // After a failure, asking again is the person's call ("Reintentar"), not
-  // something the page does on a timer.
-  const refresh = useRefreshSuggestions(suggestionState?.status !== 'failed')
+  // something the page does on a timer. With suggestions turned off there
+  // is nothing to ask for.
+  const refresh = useRefreshSuggestions(
+    suggestionState?.status !== 'failed' && !suggestionState?.optedOut,
+  )
   const newSuggestions = useNewSuggestions(suggestions)
   const meetingsOpen = useMeetingsOpen()
 
@@ -471,6 +482,32 @@ function SuggestedPanel({
 
   if (suggestions === undefined || suggestionState === undefined) {
     return <PageSpinner />
+  }
+
+  // Turned off by the person: nothing else about their suggestions applies.
+  if (suggestionState.optedOut) {
+    return (
+      <Panel>
+        <h2 className="text-[17px] font-semibold text-[var(--baish-strong)]">
+          {t.offTitle}
+        </h2>
+        <p className="text-[15px] leading-normal">{t.offBody}</p>
+        <Link
+          to="/org/$slug/e/$eventSlug/profile"
+          params={{ slug, eventSlug }}
+          className={secondaryButtonClass}
+        >
+          {t.offButton}
+        </Link>
+        <button
+          type="button"
+          onClick={onSeeEveryone}
+          className={secondaryButtonClass}
+        >
+          {t.seeEveryone}
+        </button>
+      </Panel>
+    )
   }
 
   const status = suggestionState.status

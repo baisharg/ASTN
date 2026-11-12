@@ -111,6 +111,15 @@ describe('assignSuggestions: who is eligible', () => {
     ).toEqual({ a: ['b'], b: ['a'] })
   })
 
+  test('someone who turned suggestions off is left out of the eligible list: nobody is suggested them, the next candidate takes their place, and they get nothing', () => {
+    expect(
+      assign(
+        { a: ['off', 'b'], b: ['off', 'a'], off: ['a', 'b'] },
+        { eligible: ['a', 'b'] },
+      ),
+    ).toEqual({ a: ['b'], b: ['a'] })
+  })
+
   test('an attendee without a ranking can still be suggested', () => {
     expect(assign({ a: ['b'] }, { eligible: ['a', 'b'] })).toEqual({
       a: ['b'],

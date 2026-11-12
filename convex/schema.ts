@@ -134,6 +134,11 @@ export default defineSchema({
     // Who can see this profile at in-person events. Unset means attendees of
     // the same event only.
     socialVisibility: v.optional(socialVisibilityValidator),
+    // Set when the person turned off the suggestions of who to meet at
+    // in-person events: their profile is not sent to the suggestions model,
+    // they are suggested to nobody and they get no suggestions. Absent for
+    // everyone else. Changed only by social/suggestions:setMySuggestionsOptOut.
+    socialSuggestionsOptOut: v.optional(v.literal(true)),
 
     // LLM-generated content
     enrichmentSummary: v.optional(v.string()),
@@ -269,7 +274,12 @@ export default defineSchema({
     // Metadata
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index('by_user', ['userId']),
+  })
+    .index('by_user', ['userId'])
+    .index('by_socialSuggestionsOptOut_and_userId', [
+      'socialSuggestionsOptOut',
+      'userId',
+    ]),
 
   // Enrichment conversation messages
   enrichmentMessages: defineTable({

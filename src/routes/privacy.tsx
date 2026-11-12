@@ -82,7 +82,8 @@ function PrivacyPage() {
                 <strong>In-person event suggestions:</strong> when you attend an
                 event, an AI model suggests which other attendees to meet, from
                 the profile fields you share at events. Profile sections you set
-                to private are left out.
+                to private are left out. You can turn these suggestions off from
+                your event profile; your profile is then not sent to the model.
               </li>
             </ul>
             <p className="mt-2">

@@ -1,4 +1,4 @@
-import { v } from 'convex/values'
+import { ConvexError, v } from 'convex/values'
 import { internal } from '../_generated/api'
 import {
   internalMutation,
@@ -16,8 +16,11 @@ import {
   getProfileByUser,
   isProfileReadyForMatching,
   meetingsWindow,
+  optedOutOfSuggestions,
   requireEventAdmin,
   sharedProfileParts,
+  suggestionOptOutsAmong,
+  takesPartInSuggestions,
 } from './lib'
 import {
   suggestionLanguageValidator,
@@ -42,6 +45,11 @@ import type { Infer } from 'convex/values'
  *
  * An event run ranks every approved attendee with a ready profile and then
  * assigns once (socialSuggestionRuns). At most one runs per event at a time.
+ *
+ * A person can turn suggestions off (setMySuggestionsOptOut, stored on their
+ * profile). Then they are left out of all of it: the roster the model reads
+ * (rosterEntry), the runs (readyAttendeeIds), the assignment
+ * (assignEventSuggestions) and the lists the pages show (getMySuggestions).
  */
 
 // How many people the model ranks for an attendee, and how many of those
@@ -81,6 +89,9 @@ const RANK_STAGGER_MS = 1500
 const MAX_ROSTER = 150
 // Approved guests read per event (approvedGuests).
 const MAX_EVENT_ATTENDEES = 500
+// How many of a person's events (the most recent) a change of their opt-out
+// is applied to.
+const MAX_EVENTS_PER_PERSON = 50
 
 type SuggestionLanguage = Infer<typeof suggestionLanguageValidator>
 type RunTrigger = Infer<typeof suggestionRunTriggerValidator>
@@ -127,6 +138,35 @@ export function summarizeProfile(
     lines.push(`Habilidades: ${visible.skills.slice(0, 8).join(', ')}`)
   }
   return lines.join('\n')
+}
+
+/**
+ * One attendee's line in the roster the suggestions model reads for
+ * `selfId`, or null when they are left out of it:
+ * - people who turned suggestions off, whose profile never reaches the model
+ * - other people who share no profile to speak of, who make for vague
+ *   suggestions (the attendee being ranked is always in)
+ */
+export function rosterEntry(input: {
+  /** The attendee the ranking is for. */
+  selfId: string
+  userId: string
+  /** The name on the person's registration, used when the profile has none. */
+  registrationName: string | undefined
+  profile: Doc<'profiles'> | null
+}): { userId: string; summary: string } | null {
+  const { selfId, userId, registrationName, profile } = input
+  if (optedOutOfSuggestions(profile)) return null
+  const visible = attendeeVisibleProfile(profile)
+  if (
+    userId !== selfId &&
+    !visible.headline &&
+    !visible.seeking &&
+    !visible.workHistory.length
+  ) {
+    return null
+  }
+  return { userId, summary: summarizeProfile(visible, registrationName) }
 }
 
 /**
@@ -184,7 +224,10 @@ export function pairKey(a: string, b: string): string {
 export function assignSuggestions(input: {
   /** Each attendee's candidates, best first. */
   rankings: Array<{ userId: string; candidates: Array<string> }>
-  /** Who can be suggested and receive suggestions: the event's attendees. */
+  /**
+   * Who can be suggested and receive suggestions: the event's attendees,
+   * minus those who turned suggestions off.
+   */
   eligibleUserIds: Array<string>
   /** Pairs who have had, or are having, a meeting at this event. */
   metPairs: Array<[string, string]>
@@ -408,7 +451,10 @@ function suggestionLanguage(
   )
 }
 
-/** Approved guests with an account and a profile ready for matching. */
+/**
+ * The attendees an event run ranks: approved guests with an account whose
+ * profile is ready for matching and who haven't turned suggestions off.
+ */
 async function readyAttendeeIds(
   ctx: QueryCtx | MutationCtx,
   eventId: Id<'socialEvents'>,
@@ -418,7 +464,7 @@ async function readyAttendeeIds(
   for (const guest of guests) {
     if (!guest.userId || ready.has(guest.userId)) continue
     const profile = await getProfileByUser(ctx, guest.userId)
-    if (isProfileReadyForMatching(profile)) ready.add(guest.userId)
+    if (takesPartInSuggestions(profile)) ready.add(guest.userId)
   }
   return [...ready]
 }
@@ -558,6 +604,29 @@ async function clearRankingRequest(
   })
 }
 
+/**
+ * Delete what an attendee has at an event: their suggestions, their ranking
+ * and the state of their last ranking.
+ */
+async function deleteOwnSuggestions(
+  ctx: MutationCtx,
+  eventId: Id<'socialEvents'>,
+  userId: string,
+): Promise<void> {
+  const suggestions = await ctx.db
+    .query('socialSuggestions')
+    .withIndex('by_eventId_and_userId_and_rank', (q) =>
+      q.eq('eventId', eventId).eq('userId', userId),
+    )
+    .take(50)
+  for (const row of suggestions) {
+    await ctx.db.delete('socialSuggestions', row._id)
+  }
+  const ranking = await rankingOf(ctx, eventId, userId)
+  if (ranking) await ctx.db.delete('socialSuggestionCandidates', ranking._id)
+  await clearRankingRequest(ctx, eventId, userId)
+}
+
 /** Rank one attendee now, outside an event run. */
 async function startOwnRank(
   ctx: MutationCtx,
@@ -643,7 +712,8 @@ async function startEventRun(
 /**
  * Re-pick everyone's suggestions from the stored rankings and save what
  * changed. Reads the whole event (guests, rankings, meetings, current
- * suggestions) and calls no model.
+ * suggestions) and calls no model. People who turned suggestions off are
+ * neither picked for anyone nor given picks.
  *
  * An attendee whose picks are the same keeps their rows untouched. The row
  * for the person an attendee is meeting right now always stays, because the
@@ -675,12 +745,15 @@ async function assignEventSuggestions(
     meetingsWith('ended'),
   ])
 
+  const attendeeIds = guests.flatMap((g) => (g.userId ? [g.userId] : []))
+  const optedOut = await suggestionOptOutsAmong(ctx, attendeeIds)
+
   const picks = assignSuggestions({
     rankings: rankings.map((r) => ({
       userId: r.userId,
       candidates: r.candidates.map((c) => c.userId),
     })),
-    eligibleUserIds: guests.flatMap((g) => (g.userId ? [g.userId] : [])),
+    eligibleUserIds: attendeeIds.filter((id) => !optedOut.has(id)),
     metPairs: [...activeMeetings, ...endedMeetings].map((m) => [
       m.userA,
       m.userB,
@@ -694,7 +767,8 @@ async function assignEventSuggestions(
   )
   for (const ranking of rankings) {
     const picked = picks.get(ranking.userId)
-    // Not in the assignment: no longer an approved attendee.
+    // Not in the assignment: no longer an approved attendee, or they turned
+    // suggestions off (which removed their rows: setMySuggestionsOptOut).
     if (!picked) continue
     const candidateById = new Map(ranking.candidates.map((c) => [c.userId, c]))
     const wanted = picked.flatMap((id) => candidateById.get(id) ?? [])
@@ -816,7 +890,7 @@ export const getSuggestionContext = internalQuery({
     const myGuest = await getGuestByUser(ctx, eventId, userId)
     if (myGuest?.status !== 'approved') return null
     const myProfile = await getProfileByUser(ctx, userId)
-    if (!isProfileReadyForMatching(myProfile)) return null
+    if (!takesPartInSuggestions(myProfile)) return null
     // The page's language, recorded when the attendee asked for suggestions.
     const status = await attendeeStatusRow(ctx, eventId, userId)
 
@@ -826,22 +900,14 @@ export const getSuggestionContext = internalQuery({
     // request so the model provider can cache it.
     for (const g of guests) {
       if (!g.userId) continue
-      const visible = attendeeVisibleProfile(
-        await getProfileByUser(ctx, g.userId),
-      )
-      // People who share no profile to speak of make for vague suggestions.
-      if (
-        g.userId !== userId &&
-        !visible.headline &&
-        !visible.seeking &&
-        !visible.workHistory.length
-      ) {
-        continue
-      }
-      candidates.push({
+      const entry = rosterEntry({
+        selfId: userId,
         userId: g.userId,
-        summary: summarizeProfile(visible, g.name),
+        registrationName: g.name,
+        profile: await getProfileByUser(ctx, g.userId),
       })
+      if (!entry) continue
+      candidates.push(entry)
       if (candidates.length >= MAX_ROSTER) break
     }
     return {
@@ -859,7 +925,7 @@ export const getSuggestionContext = internalQuery({
  * - ranked: the model's ranking, to store (it may be empty: nobody to rank)
  * - failed: the model call could not be completed, after its retry
  * - skipped: nothing to rank (no longer an approved attendee with a ready
- *   profile)
+ *   profile, or they turned suggestions off)
  *
  * With `runId`, the outcome also counts towards that event run, and the last
  * one in closes it, which assigns for the whole event. A ranking on its own
@@ -1086,7 +1152,8 @@ export const recordSuggestionsOutcome = internalMutation({
  * writes nothing.
  *
  * Returns `scheduled` when a ranking is under way for the caller (their own
- * or an event run's), and `recent` when nothing new was started.
+ * or an event run's), and `recent` when nothing new was started. For a
+ * caller who turned suggestions off it returns `opted_out` and does nothing.
  */
 export const refreshMySuggestions = mutation({
   args: {
@@ -1098,12 +1165,14 @@ export const refreshMySuggestions = mutation({
     v.literal('recent'),
     v.literal('profile_incomplete'),
     v.literal('not_attendee'),
+    v.literal('opted_out'),
   ),
   handler: async (ctx, { eventId, language: pageLanguage }) => {
     const userId = await requireAuth(ctx)
     const guest = await getGuestByUser(ctx, eventId, userId)
     if (guest?.status !== 'approved') return 'not_attendee'
     const profile = await getProfileByUser(ctx, userId)
+    if (optedOutOfSuggestions(profile)) return 'opted_out'
     if (!isProfileReadyForMatching(profile)) return 'profile_incomplete'
 
     const now = Date.now()
@@ -1205,6 +1274,51 @@ export const refreshMySuggestions = mutation({
 })
 
 /**
+ * Turn the caller's suggestions off (`optOut: true`) or back on, for every
+ * in-person event. While they are off, the caller's profile is not sent to
+ * the suggestions model, they are suggested to nobody and they get no
+ * suggestions; they stay in the list of attendees and can still ask for and
+ * accept 1:1s.
+ *
+ * Turning them off deletes the caller's suggestions and ranking at their
+ * events. Either way, the events whose 1:1s are still to close are assigned
+ * again, so other attendees' lists follow. After turning them back on, the
+ * caller is ranked again the next time they open an event's people page.
+ */
+export const setMySuggestionsOptOut = mutation({
+  args: { optOut: v.boolean() },
+  returns: v.null(),
+  handler: async (ctx, { optOut }) => {
+    const userId = await requireAuth(ctx)
+    const profile = await getProfileByUser(ctx, userId)
+    if (!profile) throw new ConvexError('Profile not found')
+    if (optedOutOfSuggestions(profile) === optOut) return null
+    await ctx.db.patch('profiles', profile._id, {
+      socialSuggestionsOptOut: optOut ? true : undefined,
+    })
+
+    const now = Date.now()
+    const guestRows = await ctx.db
+      .query('socialEventGuests')
+      .withIndex('by_userId', (q) => q.eq('userId', userId))
+      .order('desc')
+      .take(MAX_EVENTS_PER_PERSON)
+    for (const guest of guestRows) {
+      if (optOut) await deleteOwnSuggestions(ctx, guest.eventId, userId)
+      if (guest.status !== 'approved') continue
+      const event = await ctx.db.get('socialEvents', guest.eventId)
+      if (!event || now >= meetingsWindow(event).closeAt) continue
+      await ctx.scheduler.runAfter(
+        0,
+        internal.social.suggestions.reassignEventSuggestions,
+        { eventId: guest.eventId },
+      )
+    }
+    return null
+  },
+})
+
+/**
  * Admin: start an event run now, whenever the last one was. While a run is
  * under way this starts nothing. Returns how many attendees the run ranks.
  */
@@ -1258,6 +1372,10 @@ export const getSuggestionRun = query({
   },
 })
 
+/**
+ * The people the caller is suggested to meet, best first. Empty for a caller
+ * who turned suggestions off.
+ */
 export const getMySuggestions = query({
   args: { eventId: v.id('socialEvents') },
   returns: v.array(
@@ -1279,8 +1397,15 @@ export const getMySuggestions = query({
         q.eq('eventId', eventId).eq('userId', userId),
       )
       .take(10)
+    const optedOut = await suggestionOptOutsAmong(ctx, [
+      userId,
+      ...rows.map((row) => row.suggestedUserId),
+    ])
+    if (optedOut.has(userId)) return []
     const cards = await Promise.all(
       rows.map(async (row) => {
+        // Skip people who turned suggestions off since the last assignment.
+        if (optedOut.has(row.suggestedUserId)) return null
         const guest = await getGuestByUser(ctx, eventId, row.suggestedUserId)
         // Skip people who have since cancelled or been declined.
         if (guest?.status !== 'approved') return null
@@ -1298,20 +1423,26 @@ export const getMySuggestions = query({
 /**
  * Where the caller's suggestions stand: `idle` until a ranking was ever
  * started for them, then the state of their current or last one and when it
- * got there.
+ * got there. `optedOut` is whether they turned suggestions off, which the
+ * page shows instead of the state.
  */
 export const getMySuggestionState = query({
   args: { eventId: v.id('socialEvents') },
   returns: v.object({
     status: v.union(v.literal('idle'), suggestionsStatusValidator),
     at: v.union(v.number(), v.null()),
+    optedOut: v.boolean(),
   }),
   handler: async (ctx, { eventId }) => {
     const userId = await getUserId(ctx)
     const row = userId ? await attendeeStatusRow(ctx, eventId, userId) : null
+    const optedOut = userId
+      ? (await suggestionOptOutsAmong(ctx, [userId])).has(userId)
+      : false
     return {
       status: row?.suggestionsStatus ?? ('idle' as const),
       at: row?.suggestionsStatusAt ?? null,
+      optedOut,
     }
   },
 })
