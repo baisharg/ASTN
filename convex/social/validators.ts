@@ -72,3 +72,15 @@ export const suggestionsStatusValidator = v.union(
   v.literal('nobody'),
   v.literal('failed'),
 )
+
+/**
+ * What started an event-wide suggestion run:
+ * - admin: the admin's button
+ * - attendee: the first attendee to open the people page
+ * - attendance: attendees with a ready profile joined since the last run
+ */
+export const suggestionRunTriggerValidator = v.union(
+  v.literal('admin'),
+  v.literal('attendee'),
+  v.literal('attendance'),
+)

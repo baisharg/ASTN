@@ -1,11 +1,15 @@
 import {
-  REFRESH_INTERVAL_MS,
+  EVENT_RUN_INTERVAL_MS,
+  RERANK_INTERVAL_MS,
   cleanSuggestionPicks,
-  decideSuggestionRequest,
+  decideRefresh,
+  decideRerankTiming,
 } from '../../convex/social/suggestions'
 
-// The pure rules behind event suggestions (convex/social/suggestions.ts).
-// Kept under src/ so the Convex bundler never sees a test file.
+// The pure rules behind when event suggestions are generated
+// (convex/social/suggestions.ts). The assignment has its own file,
+// socialSuggestionAssignment.test.ts. Kept under src/ so the Convex bundler
+// never sees a test file.
 
 type BunTestFn = (name: string, fn: () => void | Promise<void>) => void
 
@@ -19,72 +23,159 @@ declare const expect: <T>(actual: T) => {
 const NOW = 1_700_000_000_000
 const MINUTE = 60 * 1000
 
-describe('decideSuggestionRequest', () => {
-  test('a first request generates right away', () => {
+/** An attendee with suggestions in their language, shortly after a run. */
+const SETTLED: Parameters<typeof decideRefresh>[0] = {
+  now: NOW,
+  eventRunInProgress: false,
+  lastEventRunStartedAt: NOW - 5 * MINUTE,
+  coveredByLastEventRun: true,
+  rankInProgress: false,
+  hasRanking: true,
+  rankingLanguage: 'es',
+  language: 'es',
+}
+
+describe('decideRefresh: what opening the people page sets in motion', () => {
+  test('nothing, for an attendee with suggestions shortly after a run', () => {
+    expect(decideRefresh(SETTLED)).toEqual({ kind: 'none' })
+  })
+
+  test("the first request at an event starts the event's first run", () => {
     expect(
-      decideSuggestionRequest({
+      decideRefresh({
+        ...SETTLED,
+        lastEventRunStartedAt: undefined,
+        coveredByLastEventRun: false,
+        hasRanking: false,
+        rankingLanguage: undefined,
+      }),
+    ).toEqual({ kind: 'eventRun', trigger: 'attendee' })
+  })
+
+  test('while an event run that includes them is under way, the attendee waits', () => {
+    expect(
+      decideRefresh({
+        ...SETTLED,
+        eventRunInProgress: true,
+        hasRanking: false,
+        rankingLanguage: undefined,
+        rankInProgress: true,
+      }),
+    ).toEqual({ kind: 'wait' })
+    // Also with an older ranking, or one in another language.
+    expect(
+      decideRefresh({ ...SETTLED, eventRunInProgress: true, language: 'en' }),
+    ).toEqual({ kind: 'wait' })
+  })
+
+  test('someone who arrives during a run that does not include them is ranked on their own', () => {
+    const arrival = {
+      ...SETTLED,
+      eventRunInProgress: true,
+      coveredByLastEventRun: false,
+      hasRanking: false,
+      rankingLanguage: undefined,
+    }
+    expect(decideRefresh(arrival)).toEqual({
+      kind: 'ownRank',
+      reason: 'missing',
+    })
+    // Once their own ranking is under way, they wait for it.
+    expect(decideRefresh({ ...arrival, rankInProgress: true })).toEqual({
+      kind: 'wait',
+    })
+  })
+
+  test('someone new, soon after the last run, is ranked on their own', () => {
+    const arrival = {
+      ...SETTLED,
+      lastEventRunStartedAt: NOW - EVENT_RUN_INTERVAL_MS + MINUTE,
+      coveredByLastEventRun: false,
+      hasRanking: false,
+      rankingLanguage: undefined,
+    }
+    expect(decideRefresh(arrival)).toEqual({
+      kind: 'ownRank',
+      reason: 'missing',
+    })
+    expect(decideRefresh({ ...arrival, rankInProgress: true })).toEqual({
+      kind: 'wait',
+    })
+  })
+
+  test('someone new, once the interval since the last run has passed, starts a run for everyone', () => {
+    expect(
+      decideRefresh({
+        ...SETTLED,
+        lastEventRunStartedAt: NOW - EVENT_RUN_INTERVAL_MS,
+        coveredByLastEventRun: false,
+        hasRanking: false,
+        rankingLanguage: undefined,
+      }),
+    ).toEqual({ kind: 'eventRun', trigger: 'attendance' })
+  })
+
+  test('an attendee whose ranking failed in the last run is ranked on their own, never through a new run', () => {
+    expect(
+      decideRefresh({
+        ...SETTLED,
+        lastEventRunStartedAt: NOW - 2 * EVENT_RUN_INTERVAL_MS,
+        coveredByLastEventRun: true,
+        hasRanking: false,
+        rankingLanguage: undefined,
+      }),
+    ).toEqual({ kind: 'ownRank', reason: 'missing' })
+  })
+
+  test('a ranking in another language is redone for that attendee', () => {
+    expect(decideRefresh({ ...SETTLED, language: 'en' })).toEqual({
+      kind: 'ownRank',
+      reason: 'language',
+    })
+  })
+
+  test('once the interval has passed, an attendee with suggestions checks for new attendees', () => {
+    expect(
+      decideRefresh({
+        ...SETTLED,
+        lastEventRunStartedAt: NOW - EVENT_RUN_INTERVAL_MS,
+      }),
+    ).toEqual({ kind: 'checkAttendance' })
+    expect(
+      decideRefresh({
+        ...SETTLED,
+        lastEventRunStartedAt: NOW - EVENT_RUN_INTERVAL_MS + 1,
+      }),
+    ).toEqual({ kind: 'none' })
+  })
+})
+
+describe('decideRerankTiming: redoing a ranking for a language switch', () => {
+  test('with no earlier request it ranks right away', () => {
+    expect(
+      decideRerankTiming({ now: NOW, lastRequestedAt: undefined }),
+    ).toEqual({ kind: 'now' })
+  })
+
+  test('once the interval has passed it ranks right away', () => {
+    expect(
+      decideRerankTiming({
         now: NOW,
-        lastRequestedAt: undefined,
-        storedLanguage: undefined,
-        language: 'es',
+        lastRequestedAt: NOW - RERANK_INTERVAL_MS,
       }),
     ).toEqual({ kind: 'now' })
   })
 
-  test('a request once the interval has passed generates right away', () => {
+  test('inside the interval it books one ranking for when the interval ends', () => {
     expect(
-      decideSuggestionRequest({
-        now: NOW,
-        lastRequestedAt: NOW - REFRESH_INTERVAL_MS,
-        storedLanguage: 'es',
-        language: 'es',
-      }),
-    ).toEqual({ kind: 'now' })
+      decideRerankTiming({ now: NOW, lastRequestedAt: NOW - MINUTE }),
+    ).toEqual({ kind: 'later', runAt: NOW - MINUTE + RERANK_INTERVAL_MS })
   })
 
-  test('a repeat request inside the interval does nothing', () => {
+  test('while a ranking is booked, another switch books nothing more', () => {
     expect(
-      decideSuggestionRequest({
-        now: NOW,
-        lastRequestedAt: NOW - MINUTE,
-        storedLanguage: 'es',
-        language: 'es',
-      }),
-    ).toEqual({ kind: 'recent', saveLanguage: false })
-  })
-
-  test('a language switch inside the interval books one run for when it ends', () => {
-    expect(
-      decideSuggestionRequest({
-        now: NOW,
-        lastRequestedAt: NOW - MINUTE,
-        storedLanguage: 'es',
-        language: 'en',
-      }),
-    ).toEqual({ kind: 'later', runAt: NOW - MINUTE + REFRESH_INTERVAL_MS })
-  })
-
-  test('a second switch while a run is booked only stores the language', () => {
-    expect(
-      decideSuggestionRequest({
-        now: NOW,
-        lastRequestedAt: NOW + 5 * MINUTE,
-        storedLanguage: 'en',
-        language: 'es',
-      }),
-    ).toEqual({ kind: 'recent', saveLanguage: true })
-  })
-
-  test('after a failed run released the throttle, the retry generates right away', () => {
-    // A failed run clears the request time (recordSuggestionsOutcome).
-    expect(
-      decideSuggestionRequest({
-        now: NOW,
-        lastRequestedAt: undefined,
-        storedLanguage: 'es',
-        language: 'es',
-      }),
-    ).toEqual({ kind: 'now' })
+      decideRerankTiming({ now: NOW, lastRequestedAt: NOW + 5 * MINUTE }),
+    ).toEqual({ kind: 'booked' })
   })
 })
 
@@ -95,7 +186,7 @@ describe('cleanSuggestionPicks', () => {
     ['p3', 'user_bruno'],
     ['p4', 'user_carla'],
   ])
-  const clean = (picks: Parameters<typeof cleanSuggestionPicks>[0], max = 5) =>
+  const clean = (picks: Parameters<typeof cleanSuggestionPicks>[0], max = 10) =>
     cleanSuggestionPicks(picks, { userIdByKey, selfId: 'user_me', max })
 
   test('keeps known candidates in the order the model gave them', () => {
@@ -106,15 +197,11 @@ describe('cleanSuggestionPicks', () => {
       ]),
     ).toEqual([
       {
-        suggestedUserId: 'user_bruno',
+        userId: 'user_bruno',
         reason: 'Bruno needs evals help.',
         topics: ['Evals'],
       },
-      {
-        suggestedUserId: 'user_ana',
-        reason: 'Ana hires.',
-        topics: ['Hiring'],
-      },
+      { userId: 'user_ana', reason: 'Ana hires.', topics: ['Hiring'] },
     ])
   })
 
@@ -127,7 +214,7 @@ describe('cleanSuggestionPicks', () => {
         { person: 'p3', reason: 'First.', topics: [] },
         { person: 'p3', reason: 'Again.', topics: [] },
       ]),
-    ).toEqual([{ suggestedUserId: 'user_bruno', reason: 'First.', topics: [] }])
+    ).toEqual([{ userId: 'user_bruno', reason: 'First.', topics: [] }])
   })
 
   test('stops at the maximum and trims long text and extra topics', () => {
@@ -147,6 +234,6 @@ describe('cleanSuggestionPicks', () => {
     expect(result[0].reason.length).toBe(600)
     expect(result[0].topics.length).toBe(3)
     expect(result[0].topics[0].length).toBe(160)
-    expect(result[1].suggestedUserId).toBe('user_bruno')
+    expect(result[1].userId).toBe('user_bruno')
   })
 })
