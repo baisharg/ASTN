@@ -113,3 +113,47 @@ export function extensionMinutesGranted(
   const left = Math.max(0, MAX_MEETING_EXTENSION_MINUTES - usedMinutes)
   return Math.min(left, Math.max(1, Math.round(requested)))
 }
+
+/**
+ * How 1:1 requests relate to suggestions. Counts only the requests that
+ * recorded `requesterWasSuggested`; older ones are left out, so an event from
+ * before it was recorded shows zeros instead of "none came from a
+ * suggestion".
+ */
+export type SuggestionOutcome = {
+  requests: number
+  // Requests sent to someone the requester had been suggested.
+  requestsToSuggested: number
+  // Requests that were accepted, each of which started a meeting.
+  meetings: number
+  meetingsFromSuggested: number
+  // What requestsToSuggested / requests would be if people asked at random:
+  // the share of attendee pairs that are a suggestion. Null with fewer than
+  // two attendees.
+  chanceShare: number | null
+}
+
+export function suggestionOutcome(input: {
+  requests: Array<{
+    status: 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired'
+    requesterWasSuggested?: boolean
+  }>
+  // Suggestions currently assigned at the event, over all attendees.
+  suggestionCount: number
+  // Approved attendees with an account.
+  attendeeCount: number
+}): SuggestionOutcome {
+  const tracked = input.requests.filter(
+    (r) => r.requesterWasSuggested !== undefined,
+  )
+  const accepted = tracked.filter((r) => r.status === 'accepted')
+  const pairs = input.attendeeCount * (input.attendeeCount - 1)
+  return {
+    requests: tracked.length,
+    requestsToSuggested: tracked.filter((r) => r.requesterWasSuggested).length,
+    meetings: accepted.length,
+    meetingsFromSuggested: accepted.filter((r) => r.requesterWasSuggested)
+      .length,
+    chanceShare: pairs > 0 ? Math.min(1, input.suggestionCount / pairs) : null,
+  }
+}

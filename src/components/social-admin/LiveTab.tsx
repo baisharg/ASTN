@@ -15,6 +15,10 @@ import {
 } from '~/components/ui/card'
 import { useBusyAction } from '~/lib/use-busy-action'
 
+type SuggestionOutcome = FunctionReturnType<
+  typeof api.social.meetings.getLiveOverview
+>['suggestionOutcome']
+
 type SuggestionRun = NonNullable<
   FunctionReturnType<typeof api.social.suggestions.getSuggestionRun>
 >
@@ -31,6 +35,43 @@ function Stat({ label, value }: { label: string; value: number | undefined }) {
       <p className="text-sm text-muted-foreground">{label}</p>
       <p className="text-3xl font-semibold tabular-nums mt-1">{value ?? '–'}</p>
     </Card>
+  )
+}
+
+function percent(share: number): string {
+  return `${Math.round(share * 100)}%`
+}
+
+/**
+ * Whether people ask to meet the ones they were suggested: how many requests
+ * went to a suggested person, next to what asking at random would give.
+ */
+function SuggestionOutcomeText({ outcome }: { outcome: SuggestionOutcome }) {
+  if (outcome.requests === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Todavía no hay pedidos de 1:1 para comparar con las sugerencias.
+      </p>
+    )
+  }
+  return (
+    <div className="space-y-1 text-sm">
+      <p>
+        {outcome.requestsToSuggested} de {outcome.requests}{' '}
+        {outcome.requests === 1 ? 'pedido fue' : 'pedidos fueron'} a alguien que
+        la app le había sugerido a quien pidió (
+        {percent(outcome.requestsToSuggested / outcome.requests)}).
+        {outcome.chanceShare !== null &&
+          ` Si la gente pidiera al azar, sería cerca del ${percent(outcome.chanceShare)}.`}
+      </p>
+      {outcome.meetings > 0 && (
+        <p>
+          {outcome.meetingsFromSuggested} de {outcome.meetings}{' '}
+          {outcome.meetings === 1 ? 'reunión salió' : 'reuniones salieron'} de
+          un pedido a alguien sugerido.
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -151,6 +192,9 @@ export function LiveTab({ eventId }: { eventId: Id<'socialEvents'> }) {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {overview !== undefined && (
+            <SuggestionOutcomeText outcome={overview.suggestionOutcome} />
+          )}
           {suggestionRun !== undefined && <RunStatus run={suggestionRun} />}
           {/* Disabled until the run state loads, so a run under way is never
               asked for twice. */}

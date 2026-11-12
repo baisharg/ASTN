@@ -5,6 +5,7 @@ import {
   meetingsOpenNow,
   requestExpiryTime,
   requestPastExpiry,
+  suggestionOutcome,
 } from '../../convex/social/constants'
 
 // The 1:1 rules in convex/social/constants.ts that the backend enforces and
@@ -112,5 +113,58 @@ describe('requestExpiryTime', () => {
 
   test('a meeting that is already over time does not shorten the 10 minutes', () => {
     expect(requestExpiryTime(1_000_000, 900_000)).toBe(1_000_000 + TEN_MINUTES)
+  })
+})
+
+describe('suggestionOutcome: how 1:1 requests relate to suggestions', () => {
+  test('counts requests and meetings that followed a suggestion', () => {
+    const outcome = suggestionOutcome({
+      requests: [
+        { status: 'accepted', requesterWasSuggested: true },
+        { status: 'accepted', requesterWasSuggested: false },
+        { status: 'declined', requesterWasSuggested: true },
+        { status: 'pending', requesterWasSuggested: false },
+        { status: 'expired', requesterWasSuggested: false },
+      ],
+      suggestionCount: 20,
+      attendeeCount: 5,
+    })
+    expect(outcome.requests).toBe(5)
+    expect(outcome.requestsToSuggested).toBe(2)
+    expect(outcome.meetings).toBe(2)
+    expect(outcome.meetingsFromSuggested).toBe(1)
+  })
+
+  test('leaves out requests from before this was recorded', () => {
+    const outcome = suggestionOutcome({
+      requests: [
+        { status: 'accepted' },
+        { status: 'declined' },
+        { status: 'accepted', requesterWasSuggested: true },
+      ],
+      suggestionCount: 10,
+      attendeeCount: 10,
+    })
+    expect(outcome.requests).toBe(1)
+    expect(outcome.meetings).toBe(1)
+    expect(outcome.meetingsFromSuggested).toBe(1)
+  })
+
+  test('the chance share is the part of attendee pairs that are a suggestion', () => {
+    // 11 attendees with 5 suggestions each: 55 of 110 ordered pairs.
+    expect(
+      suggestionOutcome({
+        requests: [],
+        suggestionCount: 55,
+        attendeeCount: 11,
+      }).chanceShare,
+    ).toBe(0.5)
+  })
+
+  test('there is no chance share with fewer than two attendees', () => {
+    expect(
+      suggestionOutcome({ requests: [], suggestionCount: 0, attendeeCount: 1 })
+        .chanceShare,
+    ).toBe(null)
   })
 })
