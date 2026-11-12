@@ -189,9 +189,12 @@ export function AllowlistTab({ orgId }: { orgId: Id<'organizations'> }) {
         <CardHeader>
           <CardTitle>Lista de preaprobados</CardTitle>
           <CardDescription>
-            Quienes están en esta lista quedan aprobados apenas se registran,
-            acá o en Luma. Aprobar a alguien lo agrega a esta lista. La lista es
-            de la organización y vale para todos sus eventos.
+            Quienes están en esta lista quedan aprobados apenas se anotan, acá o
+            en Luma, en los eventos publicados que tengan prendido “Aprobar
+            automáticamente a las personas preaprobadas” (está en la
+            Configuración de cada evento). Aprobar a alguien lo agrega a esta
+            lista. La lista es de la organización: es la misma para todos sus
+            eventos.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -246,9 +249,9 @@ export function AllowlistTab({ orgId }: { orgId: Id<'organizations'> }) {
                   <p>
                     Importar preaprueba a estas personas. Si alguna tiene una
                     inscripción pendiente en un evento publicado que todavía no
-                    pasó, queda aprobada en el momento; en los eventos
-                    vinculados con Luma también se aprueba allá, y Luma puede
-                    mandarle un email.
+                    pasó y que aprueba automáticamente a los preaprobados, queda
+                    aprobada en el momento; en los eventos vinculados con Luma
+                    también se aprueba allá, y Luma puede mandarle un email.
                   </p>
                   {parsed.notApproved > 0 && (
                     <p>

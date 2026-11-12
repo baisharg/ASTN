@@ -8,6 +8,7 @@ import { requireOrgOwnsApiCalendar } from '../luma/binding'
 import { DEFAULT_MEETING_MINUTES } from './constants'
 import {
   addToAllowlist,
+  autoApprovesKnownGuests,
   findGuestForIdentity,
   focusFromPrompt,
   getProfileByUser,
@@ -18,6 +19,7 @@ import {
   profileMissingForMatching,
   requireEventAdmin,
   safeLinkedinUrl,
+  shouldAutoApprove,
   updateGuestAndSync,
 } from './lib'
 import {
@@ -111,6 +113,32 @@ async function countGuestsWithStatus(
     )
     .take(1000)
   return rows.length
+}
+
+// How many pending guests one automatic approval run looks at. Each approval
+// on a linked event also schedules a push to Luma.
+const AUTO_APPROVE_BATCH = 500
+
+/**
+ * The event's pending guests who are on the org's allowlist: the ones an
+ * event that auto-approves would not leave waiting. Looks at the first
+ * AUTO_APPROVE_BATCH pending guests.
+ */
+async function knownPendingGuests(
+  ctx: QueryCtx | MutationCtx,
+  event: Doc<'socialEvents'>,
+): Promise<Array<Doc<'socialEventGuests'>>> {
+  const pending = await ctx.db
+    .query('socialEventGuests')
+    .withIndex('by_eventId_and_status', (q) =>
+      q.eq('eventId', event._id).eq('status', 'pending_approval'),
+    )
+    .take(AUTO_APPROVE_BATCH)
+  const known: Array<Doc<'socialEventGuests'>> = []
+  for (const guest of pending) {
+    if (await isOnAllowlist(ctx, event.orgId, guest.email)) known.push(guest)
+  }
+  return known
 }
 
 // ── Public ──────────────────────────────────────────────────────────────
@@ -211,7 +239,13 @@ export const getMyRegistration = query({
     const profile = await getProfileByUser(ctx, identity.subject)
     return {
       email,
-      onAllowlist: email ? await isOnAllowlist(ctx, event.orgId, email) : false,
+      // True when registering now would approve them straight away.
+      onAllowlist: shouldAutoApprove(event, {
+        status: 'pending_approval',
+        onAllowlist: email
+          ? await isOnAllowlist(ctx, event.orgId, email)
+          : false,
+      }),
       guest: guest
         ? {
             _id: guest._id,
@@ -227,8 +261,9 @@ export const getMyRegistration = query({
 
 /**
  * Register the signed-in person. People on the org's allowlist are approved
- * straight away; everyone else waits for an admin. Either way the guest is
- * mirrored to Luma when the event is linked.
+ * straight away when the event auto-approves them (see shouldAutoApprove);
+ * everyone else waits for an admin. Either way the guest is mirrored to Luma
+ * when the event is linked.
  */
 export const register = mutation({
   args: {
@@ -276,7 +311,10 @@ export const register = mutation({
       return { guestId: existing._id, status: existing.status }
     }
 
-    const approved = await isOnAllowlist(ctx, event.orgId, email)
+    const approved = shouldAutoApprove(event, {
+      status: 'pending_approval',
+      onAllowlist: await isOnAllowlist(ctx, event.orgId, email),
+    })
     const status: GuestStatus = approved ? 'approved' : 'pending_approval'
     const guestId = await ctx.db.insert('socialEventGuests', {
       eventId,
@@ -421,6 +459,20 @@ export const getEventAdmin = query({
   },
 })
 
+/**
+ * How many pending guests are on the org's allowlist. Publishing the event,
+ * or switching its auto-approval on, approves them: the admin screen shows
+ * this number before doing either.
+ */
+export const getKnownPendingCount = query({
+  args: { eventId: v.id('socialEvents') },
+  returns: v.number(),
+  handler: async (ctx, { eventId }) => {
+    const { event } = await requireEventAdmin(ctx, eventId)
+    return (await knownPendingGuests(ctx, event)).length
+  },
+})
+
 export const createEvent = mutation({
   args: {
     orgId: v.id('organizations'),
@@ -482,6 +534,7 @@ export const updateEvent = mutation({
     // For an event linked to Luma: let Luma email the guests about a new
     // name, time or place. Left out, Luma is told not to.
     notifyGuests: v.optional(v.boolean()),
+    autoApproveKnown: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, { eventId, notifyGuests, ...fields }) => {
@@ -529,7 +582,21 @@ export const updateEvent = mutation({
     if (fields.matchingPrompt !== undefined) {
       patch.matchingPrompt = fields.matchingPrompt.trim() || undefined
     }
+    if (fields.autoApproveKnown !== undefined) {
+      patch.autoApproveKnown = fields.autoApproveKnown
+    }
     await ctx.db.patch('socialEvents', eventId, patch)
+
+    // Publishing a draft, or switching auto-approval on for a published
+    // event, approves the allowlisted guests who were waiting.
+    const updated = { ...event, ...patch }
+    if (!autoApprovesKnownGuests(event) && autoApprovesKnownGuests(updated)) {
+      for (const guest of await knownPendingGuests(ctx, updated)) {
+        await updateGuestAndSync(ctx, updated, guest._id, {
+          status: 'approved',
+        })
+      }
+    }
 
     // Linked to Luma: send the details that changed there too.
     if (event.lumaEventId) {
@@ -766,7 +833,8 @@ export const listAllowlist = query({
 
 /**
  * Add people to the allowlist (the admin UI parses the CSV). Anyone already
- * pending for one of the org's open events is approved on the spot.
+ * pending for one of the org's open events that auto-approve is approved on
+ * the spot.
  */
 export const importAllowlist = mutation({
   args: {
@@ -831,7 +899,11 @@ export const importAllowlist = mutation({
         )
         .take(1000)
       for (const guest of pending) {
-        if (!justAdded.has(guest.email)) continue
+        const autoApprove = shouldAutoApprove(event, {
+          status: guest.status,
+          onAllowlist: justAdded.has(guest.email),
+        })
+        if (!autoApprove) continue
         await updateGuestAndSync(ctx, event, guest._id, { status: 'approved' })
         approvedPending++
       }
