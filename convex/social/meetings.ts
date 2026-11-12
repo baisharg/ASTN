@@ -7,10 +7,10 @@ import {
   MAX_MEETING_EXTENSION_MINUTES,
   MAX_NOTE_LENGTH,
   MAX_OUTGOING_PENDING,
-  REQUEST_EXPIRY_MS,
   compareAttendees,
   extensionMinutesGranted,
   meetingsOpenNow,
+  requestExpiryTime,
   requestPastExpiry,
 } from './constants'
 import {
@@ -870,7 +870,8 @@ export const requestMeeting = mutation({
     await recordArrival(ctx, eventId, userId)
     // A new request replaces the notice about the last one to this person.
     await acknowledgeOutcomes(ctx, eventId, userId, toUserId)
-    const expiresAt = now + REQUEST_EXPIRY_MS
+    const theirMeeting = await activeMeetingFor(ctx, eventId, toUserId)
+    const expiresAt = requestExpiryTime(now, theirMeeting?.endsAt ?? null)
     const requestId = await ctx.db.insert('socialMeetingRequests', {
       eventId,
       fromUserId: userId,
@@ -969,6 +970,22 @@ export const expireRequestIfDue = internalMutation({
     const now = Date.now()
     // The scheduler can run a moment early.
     if (!requestPastExpiry(request, now + 1000)) return null
+    // The person asked is in a meeting: the request waits for it to end.
+    const theirMeeting = await activeMeetingFor(
+      ctx,
+      request.eventId,
+      request.toUserId,
+    )
+    if (theirMeeting) {
+      const expiresAt = requestExpiryTime(now, theirMeeting.endsAt)
+      await ctx.db.patch('socialMeetingRequests', requestId, { expiresAt })
+      await ctx.scheduler.runAt(
+        expiresAt,
+        internal.social.meetings.expireRequestIfDue,
+        { requestId },
+      )
+      return null
+    }
     await ctx.db.patch('socialMeetingRequests', requestId, {
       status: 'expired',
       respondedAt: now,

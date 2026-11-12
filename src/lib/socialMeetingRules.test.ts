@@ -3,6 +3,7 @@ import {
   compareAttendees,
   extensionMinutesGranted,
   meetingsOpenNow,
+  requestExpiryTime,
   requestPastExpiry,
 } from '../../convex/social/constants'
 
@@ -95,5 +96,21 @@ describe('requestPastExpiry', () => {
 
   test('a request with no expiry time never expires', () => {
     expect(requestPastExpiry({}, 5_000)).toBe(false)
+  })
+})
+
+describe('requestExpiryTime', () => {
+  const TEN_MINUTES = 10 * 60 * 1000
+
+  test('a request to someone who is free expires 10 minutes after it is sent', () => {
+    expect(requestExpiryTime(1_000, null)).toBe(1_000 + TEN_MINUTES)
+  })
+
+  test('a request to someone in a meeting expires 10 minutes after that meeting is due to end', () => {
+    expect(requestExpiryTime(1_000, 900_000)).toBe(900_000 + TEN_MINUTES)
+  })
+
+  test('a meeting that is already over time does not shorten the 10 minutes', () => {
+    expect(requestExpiryTime(1_000_000, 900_000)).toBe(1_000_000 + TEN_MINUTES)
   })
 })

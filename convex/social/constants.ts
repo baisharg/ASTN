@@ -61,6 +61,19 @@ export function requestPastExpiry(
   return request.expiresAt !== undefined && request.expiresAt <= now
 }
 
+/**
+ * When a pending request expires. Its time to be answered starts once the
+ * person asked is free: at `now`, or when the meeting they are in is due to
+ * end (`busyUntil`), so a request waiting behind a meeting isn't lost while
+ * that meeting runs.
+ */
+export function requestExpiryTime(
+  now: number,
+  busyUntil: number | null,
+): number {
+  return Math.max(now, busyUntil ?? now) + REQUEST_EXPIRY_MS
+}
+
 /** Why a 1:1 action was refused. Sent as ConvexError data `{ code }`. */
 export type MeetingErrorCode =
   | 'closed'
