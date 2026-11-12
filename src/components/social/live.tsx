@@ -19,6 +19,7 @@ import type { SocialLang } from '~/lib/social-i18n'
 import { Spinner } from '~/components/ui/spinner'
 import { errorCode, errorText } from '~/lib/convex-error'
 import { useCopy, useSocialLang } from '~/lib/social-i18n'
+import { atSpot } from '~/lib/social-spot'
 import { useBusyAction } from '~/lib/use-busy-action'
 
 /** Live state for the signed-in attendee (see meetings.getLiveState). */
@@ -37,7 +38,7 @@ const copy = {
     notAttendeeBody:
       'Cuando confirmemos tu lugar vas a poder ver a los demás asistentes y pedir 1:1.',
     toRegistration: 'Ir a la inscripción',
-    bannerSpot: (n: number) => `Tenés una reunión en el lugar ${n}`,
+    bannerSpot: (at: string) => `Tenés una reunión ${at}`,
     bannerNoSpot: 'Tenés una reunión en curso',
     bannerWith: (name: string) => `con ${name}`,
     bannerOpen: 'Abrir',
@@ -61,7 +62,7 @@ const copy = {
     notAttendeeBody:
       "Once your place is confirmed you'll be able to see the other attendees and ask for 1:1s.",
     toRegistration: 'Go to registration',
-    bannerSpot: (n: number) => `You have a meeting at spot ${n}`,
+    bannerSpot: (at: string) => `You have a meeting ${at}`,
     bannerNoSpot: 'You have a meeting in progress',
     bannerWith: (name: string) => `with ${name}`,
     bannerOpen: 'Open',
@@ -344,6 +345,7 @@ export function PageSpinner() {
 export function MeetingBanner({ meeting }: { meeting: LiveMeeting | null }) {
   const event = useSocialEvent()
   const t = useCopy(copy)
+  const { lang } = useSocialLang()
   return (
     <div role="status" aria-live="polite">
       {meeting && (
@@ -360,7 +362,7 @@ export function MeetingBanner({ meeting }: { meeting: LiveMeeting | null }) {
               <span className="flex min-w-0 grow flex-col">
                 <span className="text-[15px] font-semibold">
                   {meeting.spot
-                    ? t.bannerSpot(meeting.spot.number)
+                    ? t.bannerSpot(atSpot(meeting.spot, lang))
                     : t.bannerNoSpot}
                 </span>
                 <span className="truncate text-[13px] text-white/80">

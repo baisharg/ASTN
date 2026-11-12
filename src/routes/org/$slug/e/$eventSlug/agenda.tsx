@@ -9,12 +9,12 @@ import { useNow, useSocialEvent } from '~/components/social/SocialEventContext'
 import {
   BookingDueCard,
   BookingNotices,
-  PrepNote,
   ProposalAnswer,
   useAgenda,
   useBookingErrorMessage,
   useSlotTime,
 } from '~/components/social/booking'
+import { PrivateNote } from '~/components/social/PrivateNote'
 import { AttendeeGate, PageSpinner } from '~/components/social/live'
 import {
   Avatar,
@@ -27,6 +27,7 @@ import {
 import { Spinner } from '~/components/ui/spinner'
 import { formatEventDate, useCopy, useSocialLang } from '~/lib/social-i18n'
 import { bookingsDueNow, openProposals } from '~/lib/social-live'
+import { spotName } from '~/lib/social-spot'
 import { useBusyAction } from '~/lib/use-busy-action'
 
 export const Route = createFileRoute('/org/$slug/e/$eventSlug/agenda')({
@@ -48,7 +49,6 @@ const copy = {
     incoming: (n: number) => `Te propusieron (${n})`,
     outgoing: (n: number) => `Propusiste (${n})`,
     past: 'Anteriores',
-    spot: (n: number) => `Lugar ${n}`,
     noSpot: 'Sin lugar reservado',
     why: 'Por qué esta conversación',
     topics: 'Temas para arrancar',
@@ -81,7 +81,6 @@ const copy = {
     incoming: (n: number) => `Proposed to you (${n})`,
     outgoing: (n: number) => `Proposed by you (${n})`,
     past: 'Earlier',
-    spot: (n: number) => `Spot ${n}`,
     noSpot: 'No place reserved',
     why: 'Why this conversation',
     topics: 'Conversation starters',
@@ -142,6 +141,14 @@ function AgendaContent({ live }: { live: LiveState }) {
   const past = agenda.bookings.filter(
     (b) => b.status === 'started' || b.slotEnd <= now,
   )
+  // The note about a person shows once: on their booked 1:1 still to come,
+  // or else on the first earlier one.
+  const noted = new Set([...due, ...upcoming].map((b) => b.partner.userId))
+  const pastRows = past.map((b) => {
+    const showNote = !noted.has(b.partner.userId)
+    noted.add(b.partner.userId)
+    return { booking: b, showNote }
+  })
   const incoming = openProposals(agenda.incoming, now)
   const outgoing = openProposals(agenda.outgoing, now)
   const empty =
@@ -243,13 +250,14 @@ function AgendaContent({ live }: { live: LiveState }) {
           >
             {t.past}
           </h2>
-          {past.map((b) => (
+          {pastRows.map(({ booking: b, showNote }) => (
             <PastRow
               key={b._id}
               booking={b}
               inProgress={
                 b.meetingId !== null && live.meeting?._id === b.meetingId
               }
+              showNote={showNote}
             />
           ))}
         </section>
@@ -258,9 +266,10 @@ function AgendaContent({ live }: { live: LiveState }) {
   )
 }
 
-/** "17:20 – 17:40 · Lugar 3 · Cerca de la barra". */
+/** "17:20 – 17:40 · A1 · Jardín", or "· Lugar 3" for a place without a name. */
 function WhenAndWhere({ booking: b }: { booking: AgendaBooking }) {
   const t = useCopy(copy)
+  const { lang } = useSocialLang()
   const time = useSlotTime()
   return (
     <p className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
@@ -268,9 +277,7 @@ function WhenAndWhere({ booking: b }: { booking: AgendaBooking }) {
         {time(b.slotStart)} – {time(b.slotEnd)}
       </span>
       <span className="text-sm font-semibold text-[var(--baish-brand-text)]">
-        {b.spot
-          ? [t.spot(b.spot.number), b.spot.label].filter(Boolean).join(' · ')
-          : t.noSpot}
+        {b.spot ? spotName(b.spot, lang) : t.noSpot}
       </span>
     </p>
   )
@@ -294,7 +301,10 @@ function PersonLine({ partner }: { partner: AgendaBooking['partner'] }) {
   )
 }
 
-/** A booked 1:1 still to come: who, when, where, why, and the prep note. */
+/**
+ * A booked 1:1 still to come: who, when, where, why, and the viewer's
+ * private note about the person, to prepare.
+ */
 function BookingCard({ booking: b }: { booking: AgendaBooking }) {
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
@@ -337,7 +347,7 @@ function BookingCard({ booking: b }: { booking: AgendaBooking }) {
           </ul>
         </div>
       )}
-      <PrepNote aboutUserId={b.partner.userId} />
+      <PrivateNote aboutUserId={b.partner.userId} name={firstName} />
       {confirming ? (
         <div className="flex flex-col gap-2">
           <p className="text-sm leading-normal">
@@ -438,9 +448,12 @@ function OutgoingRow({ proposal: p }: { proposal: AgendaProposal }) {
 function PastRow({
   booking: b,
   inProgress,
+  showNote,
 }: {
   booking: AgendaBooking
   inProgress: boolean
+  // False when a card above already shows the note about this person.
+  showNote: boolean
 }) {
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
@@ -478,7 +491,12 @@ function PastRow({
           </Link>
         )}
       </div>
-      <PrepNote aboutUserId={b.partner.userId} />
+      {showNote && (
+        <PrivateNote
+          aboutUserId={b.partner.userId}
+          name={b.partner.name.split(' ')[0] ?? b.partner.name}
+        />
+      )}
     </article>
   )
 }

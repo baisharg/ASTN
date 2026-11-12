@@ -5,7 +5,6 @@ import { useCallback, useId, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
 import {
-  MAX_MEETING_NOTE_LENGTH,
   MAX_NOTE_LENGTH,
   MAX_PENDING_PROPOSALS,
   bookingStage,
@@ -14,7 +13,6 @@ import { useNow, useSocialEvent } from './SocialEventContext'
 import { PageSpinner } from './live'
 import { Avatar, Panel, primaryButtonClass, secondaryButtonClass } from './ui'
 import type { FunctionReturnType } from 'convex/server'
-import type { Id } from '../../../convex/_generated/dataModel'
 import type { BookingErrorCode } from '../../../convex/social/constants'
 import type { SocialLang } from '~/lib/social-i18n'
 import { Spinner } from '~/components/ui/spinner'
@@ -26,13 +24,14 @@ import {
   useSocialLang,
 } from '~/lib/social-i18n'
 import { bookingsDueNow, openProposals } from '~/lib/social-live'
+import { spotName } from '~/lib/social-spot'
 import { useBusyAction } from '~/lib/use-busy-action'
 
 /**
  * Booked 1:1s on the attendee pages of an event with booking on: the
  * viewer's agenda, proposing a time to someone, answering proposals, what to
- * do when a slot starts, and the private preparation note. Everything here
- * reads `useAgenda`, which asks the server nothing at an event with booking
+ * do when a slot starts, and the notices about ones that fell through.
+ * Everything here reads `useAgenda`, which asks the server nothing at an event with booking
  * off.
  */
 
@@ -169,7 +168,6 @@ const copy = {
     proposedAt: (time: string, end: string) => `Propone de ${time} a ${end}`,
     proposalsTitle: (n: number) => `Te propusieron un horario (${n})`,
     dueTitle: (name: string) => `Tu 1:1 con ${name} empieza ahora`,
-    dueSpot: (n: number) => `Lugar ${n}`,
     dueNoSpot: 'Sin lugar reservado: busquen un rincón libre.',
     confirmHere: 'Ya estoy',
     confirmBody: (name: string) =>
@@ -191,11 +189,6 @@ const copy = {
     noticeNoShow: (name: string, time: string) =>
       `No llegaste al 1:1 de las ${time} con ${name}, que liberó el horario.`,
     dismissNotice: (name: string) => `Descartar el aviso sobre ${name}`,
-    noteTitle: 'Tu nota para prepararte',
-    notePrivate: 'Solo vos ves esta nota.',
-    notePrepPlaceholder: 'Qué querés preguntarle, qué querés contarle…',
-    saveNote: 'Guardar nota',
-    noteSaved: 'Nota guardada.',
   },
   en: {
     propose: 'Propose a time',
@@ -233,7 +226,6 @@ const copy = {
     proposedAt: (time: string, end: string) => `Proposes ${time} to ${end}`,
     proposalsTitle: (n: number) => `Times proposed to you (${n})`,
     dueTitle: (name: string) => `Your 1:1 with ${name} starts now`,
-    dueSpot: (n: number) => `Spot ${n}`,
     dueNoSpot: 'No place reserved: find a free corner.',
     confirmHere: "I'm here",
     confirmBody: (name: string) =>
@@ -255,11 +247,6 @@ const copy = {
     noticeNoShow: (name: string, time: string) =>
       `You missed the 1:1 at ${time} with ${name}, who released the time.`,
     dismissNotice: (name: string) => `Dismiss the notice about ${name}`,
-    noteTitle: 'Your note to prepare',
-    notePrivate: 'Only you can see this note.',
-    notePrepPlaceholder: 'What you want to ask them, what you want to share…',
-    saveNote: 'Save note',
-    noteSaved: 'Note saved.',
   },
 }
 
@@ -604,6 +591,7 @@ export function BookingDueCard({
 }) {
   const event = useSocialEvent()
   const t = useCopy(copy)
+  const { lang } = useSocialLang()
   const now = useNow(5_000)
   const navigate = useNavigate()
   const errorMessage = useBookingErrorMessage()
@@ -652,11 +640,7 @@ export function BookingDueCard({
           {t.dueTitle(firstName)}
         </h2>
         <p className="text-[15px] font-semibold text-[var(--baish-warn)]">
-          {b.spot
-            ? [t.dueSpot(b.spot.number), b.spot.label]
-                .filter(Boolean)
-                .join(' · ')
-            : t.dueNoSpot}
+          {b.spot ? spotName(b.spot, lang) : t.dueNoSpot}
         </p>
       </div>
       {stage === 'confirm' ? (
@@ -704,6 +688,7 @@ export function BookingDueCard({
 export function BookingDueBanner({ hidden }: { hidden: boolean }) {
   const event = useSocialEvent()
   const t = useCopy(copy)
+  const { lang } = useSocialLang()
   const now = useNow(5_000)
   const agenda = useAgenda()
   const due = hidden || !agenda ? [] : bookingsDueNow(agenda.bookings, now)
@@ -726,7 +711,7 @@ export function BookingDueBanner({ hidden }: { hidden: boolean }) {
                   {t.dueTitle(firstNameOf(booking.partner.name))}
                 </span>
                 <span className="truncate text-[13px] text-white/80">
-                  {booking.spot ? t.dueSpot(booking.spot.number) : t.dueNoSpot}
+                  {booking.spot ? spotName(booking.spot, lang) : t.dueNoSpot}
                 </span>
               </span>
               <span className="flex shrink-0 items-center gap-1 text-sm font-semibold">
@@ -817,94 +802,5 @@ export function BookingNotices({ agenda }: { agenda: Agenda }) {
         </li>
       ))}
     </ul>
-  )
-}
-
-// ── Preparation note ────────────────────────────────────────────────────
-
-/**
- * The viewer's private note about a person (social/meetings:getMyNoteAbout),
- * to prepare for a booked 1:1 with them. Only for confirmed attendees: the
- * query refuses anyone else.
- */
-export function PrepNote({ aboutUserId }: { aboutUserId: string }) {
-  const event = useSocialEvent()
-  const note = useQuery(api.social.meetings.getMyNoteAbout, {
-    eventId: event._id,
-    aboutUserId,
-  })
-  if (note === undefined) return null
-  return (
-    <PrepNoteEditor
-      eventId={event._id}
-      aboutUserId={aboutUserId}
-      stored={note ?? ''}
-    />
-  )
-}
-
-function PrepNoteEditor({
-  eventId,
-  aboutUserId,
-  stored,
-}: {
-  eventId: Id<'socialEvents'>
-  aboutUserId: string
-  stored: string
-}) {
-  const t = useCopy(copy)
-  const { lang } = useSocialLang()
-  const setNote = useMutation(api.social.meetings.setMyNoteAbout)
-  const { busy, run } = useBusyAction<'save'>()
-  // null: not edited, so the field follows the stored note.
-  const [edit, setEdit] = useState<string | null>(null)
-  const text = edit ?? stored
-  const changed = text.trim() !== stored
-
-  const save = () =>
-    run(
-      'save',
-      async () => {
-        const saved = edit
-        await setNote({ eventId, aboutUserId, text })
-        setEdit((current) => (current === saved ? null : current))
-        toast.success(t.noteSaved)
-      },
-      (error) => toast.error(errorText(error, genericError[lang])),
-    )
-
-  const fieldId = useId()
-  return (
-    <div className="flex flex-col gap-2">
-      <label
-        htmlFor={fieldId}
-        className="text-sm font-semibold text-[var(--baish-strong)]"
-      >
-        {t.noteTitle}
-      </label>
-      <textarea
-        id={fieldId}
-        rows={3}
-        maxLength={MAX_MEETING_NOTE_LENGTH}
-        value={text}
-        onChange={(e) => setEdit(e.target.value)}
-        placeholder={t.notePrepPlaceholder}
-        aria-describedby={`${fieldId}-help`}
-        className="rounded-xl border border-input bg-background px-3.5 py-3 text-[15px] text-[var(--baish-strong)] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-      />
-      <div className="flex items-center justify-between gap-3">
-        <span id={`${fieldId}-help`} className="text-xs text-muted-foreground">
-          {t.notePrivate}
-        </span>
-        <button
-          type="button"
-          disabled={!changed || busy !== null}
-          onClick={() => void save()}
-          className="flex h-11 shrink-0 items-center justify-center rounded-xl border border-input bg-card px-3.5 text-sm font-semibold text-[var(--baish-brand-text)] hover:bg-muted disabled:opacity-60"
-        >
-          {busy ? <Spinner size="sm" /> : t.saveNote}
-        </button>
-      </div>
-    </div>
   )
 }

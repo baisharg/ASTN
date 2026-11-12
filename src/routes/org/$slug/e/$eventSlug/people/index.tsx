@@ -1,9 +1,10 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
-import { CheckCircle2, Sparkles } from 'lucide-react'
+import { ArrowRight, CheckCircle2, Sparkles } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../../convex/_generated/api'
+import { showsMyMeetings } from '../../../../../../../convex/social/constants'
 import type { FunctionReturnType } from 'convex/server'
 import type { LiveState } from '~/components/social/live'
 import type { AttendeeState } from '~/components/social/ui'
@@ -110,6 +111,7 @@ const copy = {
       'Cuando se sumen más asistentes con el perfil completo, te sugerimos con quién conversar.',
     seeEveryone: 'Ver a todos',
     nobody: 'Todavía no hay otros asistentes confirmados.',
+    myMeetings: 'Ver mis reuniones',
   },
   en: {
     openLeft: (left: string) => `1:1s open · ${left} left`,
@@ -167,6 +169,7 @@ const copy = {
       "When more attendees with a complete profile join, we'll suggest who to talk to.",
     seeEveryone: 'See everyone',
     nobody: 'No other confirmed attendees yet.',
+    myMeetings: 'See my meetings',
   },
 }
 
@@ -177,6 +180,7 @@ function PeoplePage() {
 type Tab = 'suggested' | 'everyone'
 
 function PeopleContent({ live }: { live: LiveState }) {
+  const { slug, eventSlug } = Route.useParams()
   const event = useSocialEvent()
   const t = useCopy(copy)
   const [tab, setTab] = useState<Tab>('suggested')
@@ -233,6 +237,17 @@ function PeopleContent({ live }: { live: LiveState }) {
       <RequestOutcomes live={live} />
 
       <AvailabilityToggle live={live} />
+
+      {showsMyMeetings(event) && (
+        <Link
+          to="/org/$slug/e/$eventSlug/meetings"
+          params={{ slug, eventSlug }}
+          className="flex min-h-11 items-center gap-1.5 self-start text-sm font-semibold text-[var(--baish-brand-text)] underline-offset-2 hover:underline"
+        >
+          {t.myMeetings}
+          <ArrowRight className="size-4" aria-hidden="true" />
+        </Link>
+      )}
 
       {event.focus && (
         <section

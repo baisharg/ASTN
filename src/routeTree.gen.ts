@@ -68,6 +68,7 @@ import { Route as OrgSlugAdminProgramsIndexRouteImport } from './routes/org/$slu
 import { Route as OrgSlugEEventSlugIndexRouteImport } from './routes/org/$slug/e/$eventSlug/index'
 import { Route as OrgSlugEEventSlugAgendaRouteImport } from './routes/org/$slug/e/$eventSlug/agenda'
 import { Route as OrgSlugEEventSlugMeetingRouteImport } from './routes/org/$slug/e/$eventSlug/meeting'
+import { Route as OrgSlugEEventSlugMeetingsRouteImport } from './routes/org/$slug/e/$eventSlug/meetings'
 import { Route as OrgSlugEEventSlugProfileRouteImport } from './routes/org/$slug/e/$eventSlug/profile'
 import { Route as OrgSlugEEventSlugRequestsRouteImport } from './routes/org/$slug/e/$eventSlug/requests'
 import { Route as OrgSlugPollPollTokenIndexRouteImport } from './routes/org/$slug/poll/$pollToken/index'
@@ -389,6 +390,12 @@ const OrgSlugEEventSlugMeetingRoute =
     path: '/meeting',
     getParentRoute: () => OrgSlugEEventSlugRouteRoute,
   } as any)
+const OrgSlugEEventSlugMeetingsRoute =
+  OrgSlugEEventSlugMeetingsRouteImport.update({
+    id: '/meetings',
+    path: '/meetings',
+    getParentRoute: () => OrgSlugEEventSlugRouteRoute,
+  } as any)
 const OrgSlugEEventSlugProfileRoute =
   OrgSlugEEventSlugProfileRouteImport.update({
     id: '/profile',
@@ -533,6 +540,7 @@ export interface FileRoutesByFullPath {
   '/org/$slug/admin/members/$userId': typeof OrgSlugAdminMembersUserIdRoute
   '/org/$slug/e/$eventSlug/agenda': typeof OrgSlugEEventSlugAgendaRoute
   '/org/$slug/e/$eventSlug/meeting': typeof OrgSlugEEventSlugMeetingRoute
+  '/org/$slug/e/$eventSlug/meetings': typeof OrgSlugEEventSlugMeetingsRoute
   '/org/$slug/e/$eventSlug/profile': typeof OrgSlugEEventSlugProfileRoute
   '/org/$slug/e/$eventSlug/requests': typeof OrgSlugEEventSlugRequestsRoute
   '/org/$slug/poll/$pollToken/$respondentToken': typeof OrgSlugPollPollTokenRespondentTokenRoute
@@ -602,6 +610,7 @@ export interface FileRoutesByTo {
   '/org/$slug/admin/members/$userId': typeof OrgSlugAdminMembersUserIdRoute
   '/org/$slug/e/$eventSlug/agenda': typeof OrgSlugEEventSlugAgendaRoute
   '/org/$slug/e/$eventSlug/meeting': typeof OrgSlugEEventSlugMeetingRoute
+  '/org/$slug/e/$eventSlug/meetings': typeof OrgSlugEEventSlugMeetingsRoute
   '/org/$slug/e/$eventSlug/profile': typeof OrgSlugEEventSlugProfileRoute
   '/org/$slug/e/$eventSlug/requests': typeof OrgSlugEEventSlugRequestsRoute
   '/org/$slug/poll/$pollToken/$respondentToken': typeof OrgSlugPollPollTokenRespondentTokenRoute
@@ -679,6 +688,7 @@ export interface FileRoutesById {
   '/org/$slug/admin/members/$userId': typeof OrgSlugAdminMembersUserIdRoute
   '/org/$slug/e/$eventSlug/agenda': typeof OrgSlugEEventSlugAgendaRoute
   '/org/$slug/e/$eventSlug/meeting': typeof OrgSlugEEventSlugMeetingRoute
+  '/org/$slug/e/$eventSlug/meetings': typeof OrgSlugEEventSlugMeetingsRoute
   '/org/$slug/e/$eventSlug/profile': typeof OrgSlugEEventSlugProfileRoute
   '/org/$slug/e/$eventSlug/requests': typeof OrgSlugEEventSlugRequestsRoute
   '/org/$slug/poll/$pollToken/$respondentToken': typeof OrgSlugPollPollTokenRespondentTokenRoute
@@ -757,6 +767,7 @@ export interface FileRouteTypes {
     | '/org/$slug/admin/members/$userId'
     | '/org/$slug/e/$eventSlug/agenda'
     | '/org/$slug/e/$eventSlug/meeting'
+    | '/org/$slug/e/$eventSlug/meetings'
     | '/org/$slug/e/$eventSlug/profile'
     | '/org/$slug/e/$eventSlug/requests'
     | '/org/$slug/poll/$pollToken/$respondentToken'
@@ -826,6 +837,7 @@ export interface FileRouteTypes {
     | '/org/$slug/admin/members/$userId'
     | '/org/$slug/e/$eventSlug/agenda'
     | '/org/$slug/e/$eventSlug/meeting'
+    | '/org/$slug/e/$eventSlug/meetings'
     | '/org/$slug/e/$eventSlug/profile'
     | '/org/$slug/e/$eventSlug/requests'
     | '/org/$slug/poll/$pollToken/$respondentToken'
@@ -902,6 +914,7 @@ export interface FileRouteTypes {
     | '/org/$slug/admin/members/$userId'
     | '/org/$slug/e/$eventSlug/agenda'
     | '/org/$slug/e/$eventSlug/meeting'
+    | '/org/$slug/e/$eventSlug/meetings'
     | '/org/$slug/e/$eventSlug/profile'
     | '/org/$slug/e/$eventSlug/requests'
     | '/org/$slug/poll/$pollToken/$respondentToken'
@@ -1375,6 +1388,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrgSlugEEventSlugMeetingRouteImport
       parentRoute: typeof OrgSlugEEventSlugRouteRoute
     }
+    '/org/$slug/e/$eventSlug/meetings': {
+      id: '/org/$slug/e/$eventSlug/meetings'
+      path: '/meetings'
+      fullPath: '/org/$slug/e/$eventSlug/meetings'
+      preLoaderRoute: typeof OrgSlugEEventSlugMeetingsRouteImport
+      parentRoute: typeof OrgSlugEEventSlugRouteRoute
+    }
     '/org/$slug/e/$eventSlug/profile': {
       id: '/org/$slug/e/$eventSlug/profile'
       path: '/profile'
@@ -1624,6 +1644,7 @@ const OrgSlugAdminRouteRouteWithChildren =
 interface OrgSlugEEventSlugRouteRouteChildren {
   OrgSlugEEventSlugAgendaRoute: typeof OrgSlugEEventSlugAgendaRoute
   OrgSlugEEventSlugMeetingRoute: typeof OrgSlugEEventSlugMeetingRoute
+  OrgSlugEEventSlugMeetingsRoute: typeof OrgSlugEEventSlugMeetingsRoute
   OrgSlugEEventSlugProfileRoute: typeof OrgSlugEEventSlugProfileRoute
   OrgSlugEEventSlugRequestsRoute: typeof OrgSlugEEventSlugRequestsRoute
   OrgSlugEEventSlugIndexRoute: typeof OrgSlugEEventSlugIndexRoute
@@ -1635,6 +1656,7 @@ const OrgSlugEEventSlugRouteRouteChildren: OrgSlugEEventSlugRouteRouteChildren =
   {
     OrgSlugEEventSlugAgendaRoute: OrgSlugEEventSlugAgendaRoute,
     OrgSlugEEventSlugMeetingRoute: OrgSlugEEventSlugMeetingRoute,
+    OrgSlugEEventSlugMeetingsRoute: OrgSlugEEventSlugMeetingsRoute,
     OrgSlugEEventSlugProfileRoute: OrgSlugEEventSlugProfileRoute,
     OrgSlugEEventSlugRequestsRoute: OrgSlugEEventSlugRequestsRoute,
     OrgSlugEEventSlugIndexRoute: OrgSlugEEventSlugIndexRoute,

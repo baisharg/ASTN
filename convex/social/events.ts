@@ -5,7 +5,11 @@ import { getUserId, requireOrgAdmin } from '../lib/auth'
 import { slugifyTitle } from '../orgOpportunities'
 import schema from '../schema'
 import { requireOrgOwnsApiCalendar } from '../luma/binding'
-import { DEFAULT_MEETING_MINUTES, bookingOpen } from './constants'
+import {
+  DEFAULT_MEETING_MINUTES,
+  bookingOpen,
+  showsMyMeetings,
+} from './constants'
 import {
   addToAllowlist,
   autoApprovesKnownGuests,
@@ -60,6 +64,8 @@ const eventPublicValidator = v.object({
   // setting is on and the event is not a draft.
   bookingEnabled: v.boolean(),
   focus: v.union(v.string(), v.null()),
+  // Whether attendees see "Mis reuniones" (see showsMyMeetings).
+  myMeetingsEnabled: v.boolean(),
   viewerIsAdmin: v.boolean(),
 })
 
@@ -197,6 +203,7 @@ export const getEventPage = query({
       meetingMinutes: event.meetingMinutes,
       bookingEnabled: bookingOpen(event),
       focus: focusFromPrompt(event.matchingPrompt),
+      myMeetingsEnabled: showsMyMeetings(event),
       viewerIsAdmin,
     }
   },
@@ -553,6 +560,7 @@ export const updateEvent = mutation({
     autoApproveKnown: v.optional(v.boolean()),
     // Whether attendees can book 1:1s for a set time.
     bookingEnabled: v.optional(v.boolean()),
+    myMeetingsEnabled: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, { eventId, notifyGuests, ...fields }) => {
@@ -605,6 +613,9 @@ export const updateEvent = mutation({
     }
     if (fields.bookingEnabled !== undefined) {
       patch.bookingEnabled = fields.bookingEnabled
+    }
+    if (fields.myMeetingsEnabled !== undefined) {
+      patch.myMeetingsEnabled = fields.myMeetingsEnabled
     }
     await ctx.db.patch('socialEvents', eventId, patch)
 

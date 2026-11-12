@@ -22,6 +22,24 @@ export function endedRecently(endedAt: number, now: number): boolean {
   return now - endedAt < ENDED_CARD_MS
 }
 
+// ── "Mis reuniones" ─────────────────────────────────────────────────────
+
+/**
+ * Which meetings of a list ordered most recent first show the note box: the
+ * most recent meeting with each person. A note is about a person, so someone
+ * met twice has one note and one place to write it.
+ */
+export function withNoteSlots<T extends { partner: { userId: string } }>(
+  meetings: ReadonlyArray<T>,
+): Array<{ meeting: T; showsNote: boolean }> {
+  const seen = new Set<string>()
+  return meetings.map((meeting) => {
+    const showsNote = !seen.has(meeting.partner.userId)
+    seen.add(meeting.partner.userId)
+    return { meeting, showsNote }
+  })
+}
+
 // ── Requests ────────────────────────────────────────────────────────────
 
 /**

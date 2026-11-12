@@ -26,7 +26,13 @@ import {
 } from '~/components/social/booking'
 import { MeetingBanner, useLiveState } from '~/components/social/live'
 import { useHaptic } from '~/hooks/use-haptic'
-import { LangToggle, SocialLangProvider, useCopy } from '~/lib/social-i18n'
+import {
+  LangToggle,
+  SocialLangProvider,
+  useCopy,
+  useSocialLang,
+} from '~/lib/social-i18n'
+import { atSpot } from '~/lib/social-spot'
 import {
   agendaAlerts,
   liveAlerts,
@@ -78,22 +84,22 @@ const copy = {
     draft: 'Borrador: solo lo ven admins',
     newRequest: (name: string) => `${name} quiere reunirse con vos`,
     seeRequest: 'Ver',
-    meetingStarted: (name: string, spot: number | null) =>
-      spot === null
+    meetingStarted: (name: string, at: string | null) =>
+      at === null
         ? `${name} aceptó tu solicitud. Ya pueden reunirse.`
-        : `${name} aceptó tu solicitud. Se reúnen en el lugar ${spot}.`,
-    bookedStarted: (name: string, spot: number | null) =>
-      spot === null
+        : `${name} aceptó tu solicitud. Se reúnen ${at}.`,
+    bookedStarted: (name: string, at: string | null) =>
+      at === null
         ? `Empezó tu 1:1 con ${name}.`
-        : `Empezó tu 1:1 con ${name} en el lugar ${spot}.`,
+        : `Empezó tu 1:1 con ${name} ${at}.`,
     agenda: 'Agenda',
     agendaProposals: (n: number) => `Agenda, ${n} propuestas nuevas`,
     newProposal: (name: string, time: string) =>
       `${name} te propuso un 1:1 a las ${time}`,
-    bookingDue: (name: string, spot: number | null) =>
-      spot === null
+    bookingDue: (name: string, at: string | null) =>
+      at === null
         ? `Tu 1:1 con ${name} empieza ahora`
-        : `Tu 1:1 con ${name} empieza ahora en el lugar ${spot}`,
+        : `Tu 1:1 con ${name} empieza ahora ${at}`,
     seeAgenda: 'Ver',
   },
   en: {
@@ -104,22 +110,22 @@ const copy = {
     draft: 'Draft: only admins can see this',
     newRequest: (name: string) => `${name} wants to meet you`,
     seeRequest: 'View',
-    meetingStarted: (name: string, spot: number | null) =>
-      spot === null
+    meetingStarted: (name: string, at: string | null) =>
+      at === null
         ? `${name} accepted your request. You can meet now.`
-        : `${name} accepted your request. Meet at spot ${spot}.`,
-    bookedStarted: (name: string, spot: number | null) =>
-      spot === null
+        : `${name} accepted your request. Meet ${at}.`,
+    bookedStarted: (name: string, at: string | null) =>
+      at === null
         ? `Your 1:1 with ${name} has started.`
-        : `Your 1:1 with ${name} has started at spot ${spot}.`,
+        : `Your 1:1 with ${name} has started ${at}.`,
     agenda: 'Agenda',
     agendaProposals: (n: number) => `Agenda, ${n} new proposals`,
     newProposal: (name: string, time: string) =>
       `${name} proposed a 1:1 at ${time}`,
-    bookingDue: (name: string, spot: number | null) =>
-      spot === null
+    bookingDue: (name: string, at: string | null) =>
+      at === null
         ? `Your 1:1 with ${name} starts now`
-        : `Your 1:1 with ${name} starts now at spot ${spot}`,
+        : `Your 1:1 with ${name} starts now ${at}`,
     seeAgenda: 'View',
   },
 }
@@ -230,6 +236,7 @@ function LiveAlerts({
 }) {
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
+  const { lang } = useSocialLang()
   const navigate = useNavigate()
   const pathname = useLocation({ select: (location) => location.pathname })
   const { userId } = useAuth()
@@ -272,7 +279,10 @@ function LiveAlerts({
         const booked = agenda?.bookings.some((b) => b.meetingId === meeting._id)
         const started = booked ? t.bookedStarted : t.meetingStarted
         toast.success(
-          started(meeting.partner.name, meeting.spot?.number ?? null),
+          started(
+            meeting.partner.name,
+            meeting.spot ? atSpot(meeting.spot, lang) : null,
+          ),
           { duration: 10_000 },
         )
         vibrate([200, 100, 200])
@@ -322,6 +332,7 @@ function EventMeetingBanner() {
 function AgendaAlerts({ eventId }: { eventId: Id<'socialEvents'> }) {
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
+  const { lang } = useSocialLang()
   const time = useSlotTime()
   const navigate = useNavigate()
   const { userId } = useAuth()
@@ -359,10 +370,13 @@ function AgendaAlerts({ eventId }: { eventId: Id<'socialEvents'> }) {
       })
     }
     for (const booking of alerts.due) {
-      toast(t.bookingDue(booking.partner.name, booking.spot?.number ?? null), {
-        duration: 20_000,
-        action,
-      })
+      toast(
+        t.bookingDue(
+          booking.partner.name,
+          booking.spot ? atSpot(booking.spot, lang) : null,
+        ),
+        { duration: 20_000, action },
+      )
     }
     if (alerts.due.length > 0) vibrate([200, 100, 200])
     else if (alerts.newProposals.length > 0) vibrate(200)

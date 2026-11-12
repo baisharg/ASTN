@@ -6,6 +6,7 @@ import { api } from '../../../convex/_generated/api'
 import { BookingCard } from './BookingCard'
 import { EventDetailsFields, useEventDetailsForm } from './EventDetailsFields'
 import { AutoApproveCard, StatusCard } from './EventStatusCards'
+import { MyMeetingsCard } from './MyMeetingsCard'
 import { OneOnOneCard } from './OneOnOneCard'
 import { SpotsCard } from './SpotsCard'
 import { toastError } from './shared'
@@ -33,6 +34,7 @@ export function EventSettingsTab({ event }: { event: AdminEvent }) {
       <OneOnOneCard key={`meetings-${event._id}`} event={event} />
       <BookingCard event={event} />
       <SpotsCard key={`spots-${event._id}`} event={event} />
+      <MyMeetingsCard event={event} />
     </div>
   )
 }

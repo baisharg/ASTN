@@ -2265,6 +2265,9 @@ export default defineSchema({
     // Whether attendees can book 1:1s for a set time (socialBookings), on
     // top of asking to meet now. Off unless an admin switches it on.
     bookingEnabled: v.optional(v.boolean()),
+    // Whether attendees see "Mis reuniones" (the 1:1s they had, with a
+    // private note per person). Unset means no.
+    myMeetingsEnabled: v.optional(v.boolean()),
 
     createdBy: v.string(),
     createdAt: v.number(),

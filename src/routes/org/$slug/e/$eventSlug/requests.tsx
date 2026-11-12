@@ -25,6 +25,7 @@ import {
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
 import { useCopy, useSocialLang } from '~/lib/social-i18n'
+import { atSpot } from '~/lib/social-spot'
 import { useBusyAction } from '~/lib/use-busy-action'
 
 export const Route = createFileRoute('/org/$slug/e/$eventSlug/requests')({
@@ -45,10 +46,8 @@ const copy = {
     declined: 'Rechazaste la solicitud.',
     cancel: 'Cancelar',
     cancelled: 'Cancelaste la solicitud.',
-    inMeetingTitle: (spot: number | null) =>
-      spot === null
-        ? 'Estás en una reunión'
-        : `Estás en una reunión en el lugar ${spot}`,
+    inMeetingTitle: (at: string | null) =>
+      at === null ? 'Estás en una reunión' : `Estás en una reunión ${at}`,
     inMeetingBody:
       'Las solicitudes nuevas esperan acá. Vas a poder aceptarlas cuando termine tu reunión.',
     openMeeting: 'Abrir reunión',
@@ -79,10 +78,8 @@ const copy = {
     declined: 'You declined the request.',
     cancel: 'Cancel',
     cancelled: 'You cancelled the request.',
-    inMeetingTitle: (spot: number | null) =>
-      spot === null
-        ? "You're in a meeting"
-        : `You're in a meeting at spot ${spot}`,
+    inMeetingTitle: (at: string | null) =>
+      at === null ? "You're in a meeting" : `You're in a meeting ${at}`,
     inMeetingBody:
       'New requests wait here. You can accept them once your meeting ends.',
     openMeeting: 'Open meeting',
@@ -115,6 +112,7 @@ function RequestsContent({ live }: { live: LiveState }) {
   const { slug, eventSlug } = Route.useParams()
   const event = useSocialEvent()
   const t = useCopy(copy)
+  const { lang } = useSocialLang()
   const now = useNow(15_000)
   const meetingsOpen = useMeetingsOpen()
 
@@ -129,7 +127,9 @@ function RequestsContent({ live }: { live: LiveState }) {
           <div className="flex items-center gap-2 text-[var(--baish-warn)]">
             <MapPin className="size-5" aria-hidden="true" />
             <h2 className="text-base font-semibold">
-              {t.inMeetingTitle(live.meeting.spot?.number ?? null)}
+              {t.inMeetingTitle(
+                live.meeting.spot ? atSpot(live.meeting.spot, lang) : null,
+              )}
             </h2>
           </div>
           <p className="text-[15px] leading-normal">{t.inMeetingBody}</p>
