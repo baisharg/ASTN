@@ -4,5 +4,6 @@ Disallow: /profile/
 Disallow: /opportunities/
 Disallow: /matches/
 Disallow: /admin/
+Disallow: /org/*/admin
 
 Sitemap: https://safetytalent.org/sitemap.xml
