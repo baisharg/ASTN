@@ -198,7 +198,11 @@ function validateTimezone(timezone: string) {
 /** Create an event on the org's Luma calendar. It shows up here right away. */
 export const createEvent = action({
   args: { orgId: v.id('organizations'), ...editableValidator.fields },
-  returns: v.object({ lumaEventId: v.string(), url: v.string() }),
+  // `url` is null when the event was created but couldn't be read back.
+  returns: v.object({
+    lumaEventId: v.string(),
+    url: v.union(v.string(), v.null()),
+  }),
   handler: async (ctx, args) => {
     requireKey()
     await ctx.runQuery(internal.luma.admin.assertOrgAdmin, {
@@ -212,8 +216,9 @@ export const createEvent = action({
     if (args.maxCapacity !== null && args.maxCapacity < 1) {
       throw new ConvexError('Capacity must be at least 1')
     }
+    let lumaEventId: string
     try {
-      const lumaEventId = await createLumaEvent({
+      lumaEventId = await createLumaEvent({
         name,
         start_at: new Date(args.startAt).toISOString(),
         end_at: new Date(args.endAt).toISOString(),
@@ -226,6 +231,13 @@ export const createEvent = action({
         max_capacity: args.maxCapacity,
         requireApproval: args.requireApproval,
       })
+    } catch (error) {
+      asUserError(error)
+    }
+    // The event exists on Luma from here on. Failing to read it back must
+    // not look like a failed create, or the admin would create it twice; the
+    // next calendar sync mirrors it.
+    try {
       const event = await getLumaEvent(lumaEventId)
       await ctx.runMutation(internal.luma.mirror.applyWebhookEvent, {
         calendarId: event.calendar_id ?? null,
@@ -235,7 +247,8 @@ export const createEvent = action({
       })
       return { lumaEventId, url: event.url }
     } catch (error) {
-      asUserError(error)
+      console.error('Created the Luma event but could not mirror it', error)
+      return { lumaEventId, url: null }
     }
   },
 })
