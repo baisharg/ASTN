@@ -58,7 +58,8 @@ const NO_LINK_REASONS: Record<NoLinkReason, string> = {
   not_approved: 'Ya no está aprobado para este evento.',
   link_in_progress:
     'Ya se está haciendo un link para esta persona. Probá de nuevo en un par de minutos.',
-  clerk_error: 'No se pudo crear la cuenta o el link.',
+  clerk_error:
+    'No se pudo crear la cuenta o el link. Si tenía un link anterior, quedó anulado.',
 }
 
 function noLinkText(result: LinkResult): string {
@@ -83,7 +84,7 @@ const LINK_IS_A_KEY =
 const NO_SECOND_LINK =
   'Solo hay link personal para cuentas que nadie usó todavía. Una vez que la persona entró, no se le puede hacer otro y los que tenía sin usar dejan de funcionar: después entra con su email, como siempre. No abras el link de un invitado para probarlo, porque queda usado.'
 const NEW_LINK_CANCELS_OLD =
-  'Cada persona tiene un solo link que funciona: hacer uno nuevo anula el anterior, aunque ya lo hayas mandado. Hacé los links una sola vez, cuando vayas a mandarlos.'
+  'Cada persona tiene un solo link que funciona: pedir uno nuevo anula el anterior, aunque ya lo hayas mandado, aunque sea de otro evento y aunque el nuevo no llegue a hacerse. Hacé los links una sola vez, cuando vayas a mandarlos.'
 
 /**
  * The dialog behind "Copiar link personal": says what will happen, makes the

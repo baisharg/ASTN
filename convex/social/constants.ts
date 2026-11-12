@@ -290,7 +290,8 @@ export const SIGN_IN_TICKET_PARAM = 'ticket'
 export const PERSONAL_LINKS_PER_CALL = 10
 
 const HOUR_SECONDS = 3600
-// A link made after (or just before) the end of the 1:1s still works this long.
+// A link made shortly before the 1:1s close still works this long. (Once
+// they have closed, no link is made for the event.)
 export const PERSONAL_LINK_MIN_SECONDS = HOUR_SECONDS
 // A link never works longer than this, however far away the event is.
 export const PERSONAL_LINK_MAX_SECONDS = 7 * 24 * HOUR_SECONDS
@@ -299,7 +300,7 @@ export const PERSONAL_LINK_MAX_SECONDS = 7 * 24 * HOUR_SECONDS
  * How long a personal link made at `now` works, in seconds: until the event's
  * 1:1s close, but at least PERSONAL_LINK_MIN_SECONDS and at most
  * PERSONAL_LINK_MAX_SECONDS. A link sent two days before the event is still
- * good on the day, and none outlives the event by more than the minimum.
+ * good on the day, and none outlives the 1:1s by more than the minimum.
  */
 export function personalLinkLifetimeSeconds(
   now: number,

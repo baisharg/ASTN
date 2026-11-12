@@ -115,10 +115,9 @@ describe('personalLinkLifetimeSeconds', () => {
     )
   })
 
-  test('a link made at the end of the event, or after it, works for the minimum', () => {
+  test('a link made in the last minutes of the 1:1s works for the minimum', () => {
     expect(PERSONAL_LINK_MIN_SECONDS).toBe(HOUR)
     expect(personalLinkLifetimeSeconds(now, now + 60_000)).toBe(HOUR)
-    expect(personalLinkLifetimeSeconds(now, now - DAY * 1000)).toBe(HOUR)
   })
 })
 

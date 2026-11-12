@@ -391,6 +391,11 @@ export const linkMyGuest = mutation({
   returns: v.boolean(),
   handler: async (ctx, { eventId }) => {
     const identity = await ctx.auth.getUserIdentity()
+    // Whoever is signed in owns the account now: personal links made for it
+    // earlier stop working. Nothing happens for an account without any.
+    if (identity) {
+      await scheduleClosingUnusedPersonalLinks(ctx, identity.subject)
+    }
     if (!identity?.email) return false
     const guest = await findGuestForIdentity(
       ctx,
@@ -1183,6 +1188,15 @@ const noPersonalLinkReasonValidator = v.union(
   v.literal('clerk_error'),
 )
 
+// What the log records for an attempt that made no link: the reasons above,
+// or that a later attempt ended it, or that it failed in a way nobody
+// planned for.
+const personalLinkLogReasonValidator = v.union(
+  noPersonalLinkReasonValidator,
+  v.literal('superseded'),
+  v.literal('unexpected_error'),
+)
+
 const personalLinkGuestValidator = v.object({
   guestId: v.id('socialEventGuests'),
   email: v.string(),
@@ -1221,6 +1235,7 @@ const accountFactsValidator = v.object({
   hasAstnData: v.boolean(),
 })
 
+type PersonalLinkLogReason = typeof personalLinkLogReasonValidator.type
 type PersonalLinkContext = typeof personalLinkContextValidator.type
 type PersonalLinkResult = typeof personalLinkResultValidator.type
 type OpenToken = typeof openTokenValidator.type
@@ -1431,9 +1446,13 @@ export const getAccountFacts = internalQuery({
 /**
  * Start an attempt to make a personal link: write its log row and hand back
  * the earlier links for the same email that may still work, for the caller
- * to revoke first. Nothing is started while another attempt for the email
- * is in flight (in any event or org: the account is the same), so two
- * overlapping calls cannot both make a link.
+ * to revoke first.
+ *
+ * Nothing is started while another attempt for the email is in flight (in
+ * any event or org: the account is the same), so two overlapping calls
+ * cannot both make a link. An attempt still unfinished after
+ * PERSONAL_LINK_IN_FLIGHT_MS is ended here: from then on it can neither
+ * record a token nor hand out a link.
  */
 export const beginPersonalLink = internalMutation({
   args: {
@@ -1470,6 +1489,14 @@ export const beginPersonalLink = internalMutation({
     ) {
       return { started: false as const }
     }
+    for (const row of recent) {
+      if (row.finishedAt === undefined) {
+        await ctx.db.patch('socialPersonalLinkLog', row._id, {
+          finishedAt: now,
+          noLinkReason: 'superseded',
+        })
+      }
+    }
     const logId = await ctx.db.insert('socialPersonalLinkLog', {
       ...args,
       createdAt: now,
@@ -1483,7 +1510,11 @@ export const beginPersonalLink = internalMutation({
   },
 })
 
-/** Record an attempt's progress as it happens: the account, then the token. */
+/**
+ * Record an attempt's progress as it happens: the account, then the token.
+ * Returns false, recording nothing, when the attempt has been ended by a
+ * later one: the caller then stops and revokes what it made.
+ */
 export const recordPersonalLinkProgress = internalMutation({
   args: {
     logId: v.id('socialPersonalLinkLog'),
@@ -1491,26 +1522,36 @@ export const recordPersonalLinkProgress = internalMutation({
     accountCreated: v.optional(v.boolean()),
     signInTokenId: v.optional(v.string()),
   },
-  returns: v.null(),
+  returns: v.boolean(),
   handler: async (ctx, { logId, ...progress }) => {
+    const row = await ctx.db.get('socialPersonalLinkLog', logId)
+    if (!row || row.finishedAt !== undefined) return false
     await ctx.db.patch('socialPersonalLinkLog', logId, progress)
-    return null
+    return true
   },
 })
 
-/** Mark an attempt as ended: with a link, or with the reason it made none. */
+/**
+ * End an attempt: with a link (no `noLinkReason`), or with the reason it
+ * made none. Returns whether the attempt's link stands: true only when this
+ * call ended it with a link and its token has not been revoked. An attempt
+ * a later one has already ended is left as it is and its link does not
+ * stand.
+ */
 export const finishPersonalLink = internalMutation({
   args: {
     logId: v.id('socialPersonalLinkLog'),
-    noLinkReason: v.optional(noPersonalLinkReasonValidator),
+    noLinkReason: v.optional(personalLinkLogReasonValidator),
   },
-  returns: v.null(),
+  returns: v.boolean(),
   handler: async (ctx, { logId, noLinkReason }) => {
+    const row = await ctx.db.get('socialPersonalLinkLog', logId)
+    if (!row || row.finishedAt !== undefined) return false
     await ctx.db.patch('socialPersonalLinkLog', logId, {
       finishedAt: Date.now(),
       noLinkReason,
     })
-    return null
+    return noLinkReason === undefined && row.tokenClosedAt === undefined
   },
 })
 
@@ -1528,38 +1569,50 @@ export const markPersonalLinkTokensClosed = internalMutation({
 })
 
 /**
- * Revoke the unused personal links of the signed-in account. The site calls
- * this whenever someone is signed in: once the account's owner is in, by a
- * link or with their email, no link made earlier opens the account again.
- * For an account no link was made for, it reads one empty index range and
- * does nothing.
+ * Have the unused personal links of an account revoked. Called for whoever
+ * is signed in: once the account's owner is in, by a link or with their
+ * email, no link made earlier opens the account again. For an account no
+ * link was made for, it reads one empty index range and does nothing.
+ */
+async function scheduleClosingUnusedPersonalLinks(
+  ctx: MutationCtx,
+  userId: string,
+): Promise<void> {
+  const now = Date.now()
+  const recent = await ctx.db
+    .query('socialPersonalLinkLog')
+    .withIndex('by_accountUserId_and_createdAt', (q) =>
+      q
+        .eq('accountUserId', userId)
+        .gte('createdAt', now - PERSONAL_LINK_LOG_WINDOW_MS),
+    )
+    .take(PERSONAL_LINK_LOG_READ_BOUND)
+  const tokens = openPersonalLinkTokens(recent, now)
+  if (tokens.length === 0) return
+  await ctx.scheduler.runAfter(
+    0,
+    internal.social.events.revokePersonalLinkTokens,
+    { tokens, attempt: 1 },
+  )
+}
+
+/**
+ * Revoke the unused personal links of the signed-in account (see
+ * `scheduleClosingUnusedPersonalLinks`). The site calls this on every page
+ * whenever someone is signed in; `linkMyGuest` does the same on event pages.
  */
 export const closeMyUnusedPersonalLinks = mutation({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {
     const userId = await getUserId(ctx)
-    if (!userId) return null
-    const now = Date.now()
-    const recent = await ctx.db
-      .query('socialPersonalLinkLog')
-      .withIndex('by_accountUserId_and_createdAt', (q) =>
-        q
-          .eq('accountUserId', userId)
-          .gte('createdAt', now - PERSONAL_LINK_LOG_WINDOW_MS),
-      )
-      .take(PERSONAL_LINK_LOG_READ_BOUND)
-    const tokens = openPersonalLinkTokens(recent, now)
-    if (tokens.length > 0) {
-      await ctx.scheduler.runAfter(
-        0,
-        internal.social.events.revokePersonalLinkTokens,
-        { tokens, attempt: 1 },
-      )
-    }
+    if (userId) await scheduleClosingUnusedPersonalLinks(ctx, userId)
     return null
   },
 })
+
+/** Thrown inside an attempt that a later attempt for the same email ended. */
+class PersonalLinkSuperseded extends Error {}
 
 /**
  * A request Clerk's Backend API refused. Carries the HTTP status and Clerk's
@@ -1588,6 +1641,9 @@ type ClerkUser = {
   }>
 }
 
+// A request to Clerk that has no answer after this long is given up.
+const CLERK_REQUEST_TIMEOUT_MS = 15_000
+
 /**
  * One request to Clerk's Backend API. A rate-limited request is tried once
  * more. Failures throw a ClerkRequestError built from the status and Clerk's
@@ -1602,6 +1658,8 @@ async function clerkRequest(
 ): Promise<unknown> {
   for (let attempt = 0; ; attempt++) {
     let res: Response
+    const abort = new AbortController()
+    const timer = setTimeout(() => abort.abort(), CLERK_REQUEST_TIMEOUT_MS)
     try {
       res = await fetch(`https://api.clerk.com/v1${path}`, {
         method: body ? 'POST' : 'GET',
@@ -1610,9 +1668,16 @@ async function clerkRequest(
           ...(body ? { 'Content-Type': 'application/json' } : {}),
         },
         body: body ? JSON.stringify(body) : undefined,
+        signal: abort.signal,
       })
     } catch {
-      throw new ClerkRequestError(operation, 'network_error', null)
+      throw new ClerkRequestError(
+        operation,
+        abort.signal.aborted ? 'timeout' : 'network_error',
+        null,
+      )
+    } finally {
+      clearTimeout(timer)
     }
     if (res.status === 429 && attempt === 0) {
       const retryAfter = Number(res.headers.get('Retry-After'))
@@ -1861,9 +1926,12 @@ export const revokePersonalLinkTokens = internalAction({
  *
  * Each link works once and until `expiresAt` (see
  * `personalLinkLifetimeSeconds`). An account has at most one working link:
- * making a link first revokes the earlier ones for the same email, and a
- * link is revoked again right away if the account turns out to be in use
- * once it is made. Nothing is emailed: the admin passes the links on.
+ * asking for a link first revokes the earlier ones for the same email, in
+ * whatever event they were made (so a request that then makes no link still
+ * leaves the guest without one), and a link is revoked again right away if
+ * the account turns out to be in use once it is made. A call that fails
+ * revokes the links it made. Nothing is emailed: the admin passes the links
+ * on.
  */
 export const createPersonalLinks = action({
   args: {
@@ -1901,175 +1969,218 @@ export const createPersonalLinks = action({
       await ctx.runQuery(internal.social.events.getAccountFacts, { userId })
 
     const results: Array<PersonalLinkResult> = []
-    for (const guest of context.guests) {
-      const result = (
-        outcome: Pick<PersonalLinkResult, 'link' | 'accountCreated'> &
-          Partial<Pick<PersonalLinkResult, 'noLinkReason' | 'clerkErrorCode'>>,
-      ) =>
-        results.push({
-          guestId: guest.guestId,
-          email: guest.email,
-          noLinkReason: null,
-          clerkErrorCode: null,
-          ...outcome,
-        })
-      if (!guest.approved) {
-        result({
-          link: null,
-          accountCreated: false,
-          noLinkReason: 'not_approved',
-        })
-        continue
-      }
-      const begun:
-        | { started: false }
-        | {
-            started: true
-            logId: Id<'socialPersonalLinkLog'>
-            earlierTokens: Array<OpenToken>
-          } = await ctx.runMutation(internal.social.events.beginPersonalLink, {
-        eventId,
-        orgId: context.orgId,
-        guestId: guest.guestId,
-        email: guest.email,
-        createdBy: context.adminUserId,
-        expiresAt,
-      })
-      if (!begun.started) {
-        result({
-          link: null,
-          accountCreated: false,
-          noLinkReason: 'link_in_progress',
-        })
-        continue
-      }
-      const { logId } = begun
-      const progress = async (made: {
-        accountUserId?: string
-        accountCreated?: boolean
-        signInTokenId?: string
-      }) =>
-        await ctx.runMutation(
-          internal.social.events.recordPersonalLinkProgress,
-          { logId, ...made },
+    // The tokens of the links in `results`. If the call fails, none of them
+    // reaches the admin, so they are revoked.
+    const handedOut: Array<OpenToken> = []
+    const revokeLater = async (tokens: Array<OpenToken>) => {
+      if (tokens.length === 0) return
+      await ctx.scheduler.runAfter(
+        0,
+        internal.social.events.revokePersonalLinkTokens,
+        { tokens, attempt: 1 },
+      )
+    }
+
+    try {
+      for (const guest of context.guests) {
+        const result = (
+          outcome: Pick<PersonalLinkResult, 'link' | 'accountCreated'> &
+            Partial<
+              Pick<PersonalLinkResult, 'noLinkReason' | 'clerkErrorCode'>
+            >,
+        ) =>
+          results.push({
+            guestId: guest.guestId,
+            email: guest.email,
+            noLinkReason: null,
+            clerkErrorCode: null,
+            ...outcome,
+          })
+        if (!guest.approved) {
+          result({
+            link: null,
+            accountCreated: false,
+            noLinkReason: 'not_approved',
+          })
+          continue
+        }
+        const begun:
+          | { started: false }
+          | {
+              started: true
+              logId: Id<'socialPersonalLinkLog'>
+              earlierTokens: Array<OpenToken>
+            } = await ctx.runMutation(
+          internal.social.events.beginPersonalLink,
+          {
+            eventId,
+            orgId: context.orgId,
+            guestId: guest.guestId,
+            email: guest.email,
+            createdBy: context.adminUserId,
+            expiresAt,
+          },
         )
-
-      // Set once this call has created the guest's account.
-      let accountCreated = false
-      // This call's token, while it may still work and has not been handed
-      // to the admin.
-      let unreturnedTokenId: string | null = null
-      // Why the attempt made no link; null once it made one.
-      let noLinkReason: PersonalLinkResult['noLinkReason'] = 'clerk_error'
-      try {
-        // The earlier links for this email stop working before anything
-        // else. If one can't be revoked, no new link is made.
-        for (const earlier of begun.earlierTokens) {
-          await closeClerkSignInToken(secretKey, earlier.signInTokenId)
+        if (!begun.started) {
+          result({
+            link: null,
+            accountCreated: false,
+            noLinkReason: 'link_in_progress',
+          })
+          continue
         }
-        if (begun.earlierTokens.length > 0) {
-          await ctx.runMutation(
-            internal.social.events.markPersonalLinkTokensClosed,
-            { logIds: begun.earlierTokens.map((t) => t.logId) },
+        const { logId } = begun
+        // Records progress; stops the attempt if a later one has ended it.
+        const progress = async (made: {
+          accountUserId?: string
+          accountCreated?: boolean
+          signInTokenId?: string
+        }) => {
+          const recorded: boolean = await ctx.runMutation(
+            internal.social.events.recordPersonalLinkProgress,
+            { logId, ...made },
           )
+          if (!recorded) throw new PersonalLinkSuperseded()
         }
+        const finish = async (
+          noLinkReason?: PersonalLinkLogReason,
+        ): Promise<boolean> =>
+          await ctx.runMutation(internal.social.events.finishPersonalLink, {
+            logId,
+            noLinkReason,
+          })
 
-        const found = await findClerkAccount(secretKey, guest.email)
-        let account: PersonalLinkAccount = { kind: 'none' }
-        if (found) {
-          // Only an account Clerk has no use on record for can still get a
-          // link, so only then is what the site holds for it looked up.
-          const facts: AccountFacts =
-            found.userId !== null && !found.hasSignedIn
-              ? await accountFacts(found.userId)
-              : { hasAdminRole: false, hasAstnData: false }
-          account = {
-            kind: 'existing',
-            emailIsVerifiedPrimary: found.emailIsVerifiedPrimary,
-            hasSignedIn: found.hasSignedIn,
-            ...facts,
+        // Set once this call has created the guest's account.
+        let accountCreated = false
+        // This call's token, while it may still work and has not been
+        // handed to the admin.
+        let unreturnedTokenId: string | null = null
+        // Why the attempt made no link, for the log; null once it is ended.
+        let logReason: PersonalLinkLogReason | null = 'unexpected_error'
+        try {
+          // The earlier links for this email stop working before anything
+          // else. If one can't be revoked, no new link is made.
+          for (const earlier of begun.earlierTokens) {
+            await closeClerkSignInToken(secretKey, earlier.signInTokenId)
           }
-        }
-        const refusal = personalLinkRefusal({
-          account,
-          emailHasOtherData: guest.emailHasOtherData,
-        })
-        if (refusal) {
-          noLinkReason = refusal
-          result({ link: null, accountCreated: false, noLinkReason })
-          continue
-        }
+          if (begun.earlierTokens.length > 0) {
+            await ctx.runMutation(
+              internal.social.events.markPersonalLinkTokensClosed,
+              { logIds: begun.earlierTokens.map((t) => t.logId) },
+            )
+          }
 
-        let accountUserId = found?.userId ?? null
-        if (!accountUserId) {
-          accountUserId = await createClerkAccount(
+          const found = await findClerkAccount(secretKey, guest.email)
+          let account: PersonalLinkAccount = { kind: 'none' }
+          if (found) {
+            // Only an account Clerk has no use on record for can still get
+            // a link, so only then is what the site holds for it looked up.
+            const facts: AccountFacts =
+              found.userId !== null && !found.hasSignedIn
+                ? await accountFacts(found.userId)
+                : { hasAdminRole: false, hasAstnData: false }
+            account = {
+              kind: 'existing',
+              emailIsVerifiedPrimary: found.emailIsVerifiedPrimary,
+              hasSignedIn: found.hasSignedIn,
+              ...facts,
+            }
+          }
+          const refusal = personalLinkRefusal({
+            account,
+            emailHasOtherData: guest.emailHasOtherData,
+          })
+          if (refusal) {
+            logReason = refusal
+            result({ link: null, accountCreated: false, noLinkReason: refusal })
+            continue
+          }
+
+          let accountUserId = found?.userId ?? null
+          if (!accountUserId) {
+            accountUserId = await createClerkAccount(
+              secretKey,
+              guest.email,
+              guest.name,
+            )
+            accountCreated = true
+          }
+          await progress({ accountUserId, accountCreated })
+
+          const signInToken = await createClerkSignInToken(
             secretKey,
-            guest.email,
-            guest.name,
+            accountUserId,
+            lifetimeSeconds,
           )
-          accountCreated = true
-        }
-        await progress({ accountUserId, accountCreated })
+          unreturnedTokenId = signInToken.id
+          await progress({ signInTokenId: signInToken.id })
 
-        const signInToken = await createClerkSignInToken(
-          secretKey,
-          accountUserId,
-          lifetimeSeconds,
-        )
-        unreturnedTokenId = signInToken.id
-        await progress({ signInTokenId: signInToken.id })
+          // The account may have come into use while the token was being
+          // made. The token is on record by now, so a sign-in from here on
+          // revokes it (scheduleClosingUnusedPersonalLinks); one from
+          // before shows up in this second look.
+          const facts = await accountFacts(accountUserId)
+          const inUseNow =
+            facts.hasAstnData ||
+            facts.hasAdminRole ||
+            (await clerkAccountWasUsedNow(secretKey, accountUserId))
+          if (inUseNow) {
+            const reason = facts.hasAdminRole
+              ? 'account_has_role'
+              : 'account_in_use'
+            logReason = reason
+            result({ link: null, accountCreated, noLinkReason: reason })
+            continue
+          }
 
-        // The account may have come into use while the token was being
-        // made. The token is on record by now, so a sign-in from here on
-        // revokes it (closeMyUnusedPersonalLinks); one from before shows up
-        // in this second look.
-        const facts = await accountFacts(accountUserId)
-        const inUseNow =
-          facts.hasAstnData ||
-          facts.hasAdminRole ||
-          (await clerkAccountWasUsedNow(secretKey, accountUserId))
-        if (inUseNow) {
-          noLinkReason = facts.hasAdminRole
-            ? 'account_has_role'
-            : 'account_in_use'
-          result({ link: null, accountCreated, noLinkReason })
-          continue
+          // The attempt ends here. The link is handed out only if it still
+          // stands: not if a later attempt ended this one, or the token was
+          // revoked meanwhile.
+          const stands = await finish()
+          logReason = null
+          if (!stands) throw new PersonalLinkSuperseded()
+          handedOut.push({ logId, signInTokenId: signInToken.id })
+          unreturnedTokenId = null
+          result({
+            link: personalEventLink(eventUrl, signInToken.token),
+            accountCreated,
+          })
+        } catch (error) {
+          if (error instanceof PersonalLinkSuperseded) {
+            if (logReason !== null) logReason = 'superseded'
+            result({
+              link: null,
+              accountCreated,
+              noLinkReason: 'link_in_progress',
+            })
+          } else if (error instanceof ClerkRequestError) {
+            logReason = 'clerk_error'
+            result({
+              link: null,
+              accountCreated,
+              noLinkReason: 'clerk_error',
+              clerkErrorCode: error.code,
+            })
+          } else {
+            throw error
+          }
+        } finally {
+          // A token made but not handed out is revoked. If it is on record
+          // and this fails, the next link for the email or the owner's
+          // sign-in revokes it.
+          if (unreturnedTokenId !== null) {
+            await revokeLater([{ logId, signInTokenId: unreturnedTokenId }])
+          }
+          if (logReason !== null) await finish(logReason)
         }
-
-        noLinkReason = null
-        unreturnedTokenId = null
-        result({
-          link: personalEventLink(eventUrl, signInToken.token),
-          accountCreated,
-        })
-      } catch (error) {
-        if (!(error instanceof ClerkRequestError)) throw error
-        noLinkReason = 'clerk_error'
-        result({
-          link: null,
-          accountCreated,
-          noLinkReason,
-          clerkErrorCode: error.code,
-        })
-      } finally {
-        // A token made but not handed out is revoked. It is on record, so
-        // if this revocation fails too, the next link for this email or the
-        // owner's sign-in revokes it.
-        if (unreturnedTokenId !== null) {
-          await ctx.scheduler.runAfter(
-            0,
-            internal.social.events.revokePersonalLinkTokens,
-            {
-              tokens: [{ logId, signInTokenId: unreturnedTokenId }],
-              attempt: 1,
-            },
-          )
-        }
-        await ctx.runMutation(internal.social.events.finishPersonalLink, {
-          logId,
-          noLinkReason: noLinkReason ?? undefined,
-        })
       }
+    } catch (error) {
+      // The call fails, so the admin gets none of the links made so far.
+      await revokeLater(handedOut).catch(() => {
+        // They are on record: the next link for each email, or the owner's
+        // sign-in, revokes them.
+      })
+      throw error
     }
     return { eventUrl, expiresAt, results }
   },

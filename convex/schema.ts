@@ -2357,6 +2357,7 @@ export default defineSchema({
     // When the token was revoked, or found to be used or revoked already.
     tokenClosedAt: v.optional(v.number()),
     // Why a finished attempt made no link (see `createPersonalLinks`).
+    // Absent on an attempt that made one.
     noLinkReason: v.optional(
       v.union(
         v.literal('account_in_use'),
@@ -2366,6 +2367,9 @@ export default defineSchema({
         v.literal('not_approved'),
         v.literal('link_in_progress'),
         v.literal('clerk_error'),
+        // A later attempt for the same email ended this one.
+        v.literal('superseded'),
+        v.literal('unexpected_error'),
       ),
     ),
   })
