@@ -1,3 +1,4 @@
+import { paginationOptsValidator } from 'convex/server'
 import { v } from 'convex/values'
 import { internal } from '../_generated/api'
 import { internalMutation, internalQuery } from '../_generated/server'
@@ -15,16 +16,18 @@ import {
   attendanceExternalId,
   attendanceGuestValidator,
   eventEnd,
+  hasOtherEmail,
   mirrorChanges,
   mirroredEventValidator,
   newMirrorFields,
+  otherEmailContactValidator,
   recomputeLumaCounts,
   syncTotalsValidator,
 } from './shared'
 import type { FieldValue } from '../contacts/fields'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
-import type { MirroredEvent, SyncTotals } from './shared'
+import type { MirroredEvent, OtherEmailContact, SyncTotals } from './shared'
 
 /**
  * Database side of the Luma mirror. Actions in ./sync.ts read Luma and call
@@ -511,45 +514,63 @@ function sameData(a: Record<string, unknown>, b: Record<string, unknown>) {
   return keys.every((k) => a[k] === b[k])
 }
 
-// Matching guests on contacts' other emails reads the org's contacts once
-// per chunk; past this many, it needs an index instead.
-const MAX_CONTACTS_FOR_OTHER_EMAILS = 5000
-
-/** Contacts by each of their other emails (read only when needed). */
-async function otherEmailIndex(
-  ctx: MutationCtx,
-  orgId: Id<'organizations'>,
-): Promise<Map<string, Id<'crmContacts'>>> {
-  const contacts = await ctx.db
-    .query('crmContacts')
-    .withIndex('by_orgId', (q) => q.eq('orgId', orgId))
-    .take(MAX_CONTACTS_FOR_OTHER_EMAILS + 1)
-  if (contacts.length > MAX_CONTACTS_FOR_OTHER_EMAILS) {
-    throw new Error(
-      `More than ${MAX_CONTACTS_FOR_OTHER_EMAILS} contacts: matching Luma guests on other emails needs an index`,
-    )
-  }
-  const map = new Map<string, Id<'crmContacts'>>()
-  for (const c of contacts) {
-    for (const email of c.otherEmails ?? []) {
-      map.set(email.trim().toLowerCase(), c._id)
+/**
+ * One page of the org's contacts, as the other emails they have. The
+ * attendance sync (./sync.ts) reads every page to match guests who
+ * registered with an address that isn't a contact's primary email; reading
+ * in pages keeps that working however many contacts the org has.
+ */
+export const listContactOtherEmails = internalQuery({
+  args: {
+    orgId: v.id('organizations'),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: v.object({
+    entries: v.array(otherEmailContactValidator),
+    continueCursor: v.string(),
+    isDone: v.boolean(),
+  }),
+  handler: async (ctx, { orgId, paginationOpts }) => {
+    const result = await ctx.db
+      .query('crmContacts')
+      .withIndex('by_orgId', (q) => q.eq('orgId', orgId))
+      .paginate(paginationOpts)
+    const entries: Array<OtherEmailContact> = []
+    for (const contact of result.page) {
+      for (const email of contact.otherEmails ?? []) {
+        entries.push({
+          email: email.trim().toLowerCase(),
+          contactId: contact._id,
+        })
+      }
     }
-  }
-  return map
-}
+    return {
+      entries,
+      continueCursor: result.continueCursor,
+      isDone: result.isDone,
+    }
+  },
+})
 
-/** Upsert contacts and history rows for part of an event's guest list. */
+/**
+ * Upsert contacts and history rows for part of an event's guest list.
+ *
+ * `otherEmailContacts` are the contacts the caller found by other email for
+ * these guests (listContactOtherEmails). Each is checked again here, so one
+ * that changed since it was read is not matched.
+ */
 export const applyAttendanceChunk = internalMutation({
   args: {
     eventRowId: v.id('events'),
     guests: v.array(attendanceGuestValidator),
+    otherEmailContacts: v.optional(v.array(otherEmailContactValidator)),
   },
   returns: v.object({
     contactsCreated: v.number(),
     activitiesInserted: v.number(),
     activitiesUpdated: v.number(),
   }),
-  handler: async (ctx, { eventRowId, guests }) => {
+  handler: async (ctx, { eventRowId, guests, otherEmailContacts }) => {
     const result = {
       contactsCreated: 0,
       activitiesInserted: 0,
@@ -559,7 +580,9 @@ export const applyAttendanceChunk = internalMutation({
     if (!event) return result
     const orgId = event.orgId
     const now = Date.now()
-    let byOtherEmail: Map<string, Id<'crmContacts'>> | null = null
+    const byOtherEmail = new Map(
+      (otherEmailContacts ?? []).map((c) => [c.email, c.contactId]),
+    )
     // ASTN door check-ins for events managed in ASTN; Luma never sees them.
     const socialEvent = (
       await ctx.db
@@ -597,10 +620,15 @@ export const applyAttendanceChunk = internalMutation({
             .first()
         )?._id ?? null
       if (!contactId) {
-        byOtherEmail ??= await otherEmailIndex(ctx, orgId)
         const other = byOtherEmail.get(guest.email)
         const contact = other ? await ctx.db.get('crmContacts', other) : null
-        if (contact && contact.orgId === orgId) contactId = contact._id
+        if (
+          contact &&
+          contact.orgId === orgId &&
+          hasOtherEmail(contact, guest.email)
+        ) {
+          contactId = contact._id
+        }
       }
       if (!contactId) {
         const fields: Record<string, FieldValue> = {}

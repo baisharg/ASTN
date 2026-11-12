@@ -168,6 +168,26 @@ export type AttendanceStatus =
   | 'declined'
   | 'waitlist'
 
+/**
+ * Whether `email` (lowercased) is one of the contact's other emails, which
+ * are compared trimmed and lowercased.
+ */
+export function hasOtherEmail(
+  contact: { otherEmails?: Array<string> },
+  email: string,
+): boolean {
+  return (contact.otherEmails ?? []).some(
+    (other) => other.trim().toLowerCase() === email,
+  )
+}
+
+/** A contact found by one of its other emails. */
+export const otherEmailContactValidator = v.object({
+  email: v.string(), // lowercased
+  contactId: v.id('crmContacts'),
+})
+export type OtherEmailContact = Infer<typeof otherEmailContactValidator>
+
 /** A guest as the attendance sync needs it. */
 export const attendanceGuestValidator = v.object({
   email: v.string(), // lowercased

@@ -18,7 +18,7 @@ import {
 import type { ActionCtx } from '../_generated/server'
 import type { Id } from '../_generated/dataModel'
 import type { LumaGuest } from '../social/luma'
-import type { AttendanceGuest, SyncTotals } from './shared'
+import type { AttendanceGuest, OtherEmailContact, SyncTotals } from './shared'
 
 /**
  * Mirror the org's Luma calendar through the official API
@@ -194,11 +194,49 @@ type EventSyncResult = {
   totals: SyncTotals
 }
 
-/** Write an event's complete guest list into the CRM. */
+// Contacts read per page when collecting their other emails.
+const OTHER_EMAILS_PAGE_SIZE = 500
+// Stops a cursor that never finishes; far more contacts than any org has.
+const OTHER_EMAILS_MAX_PAGES = 2000
+
+/**
+ * The org's contacts by each of their other emails, read page by page so
+ * the number of contacts has no limit. A guest who registered with one of
+ * these addresses belongs to that contact instead of becoming a new one.
+ */
+async function readOtherEmailContacts(
+  ctx: ActionCtx,
+  orgId: Id<'organizations'>,
+): Promise<Map<string, Id<'crmContacts'>>> {
+  const byEmail = new Map<string, Id<'crmContacts'>>()
+  let cursor: string | null = null
+  for (let page = 0; page < OTHER_EMAILS_MAX_PAGES; page++) {
+    const result: {
+      entries: Array<OtherEmailContact>
+      continueCursor: string
+      isDone: boolean
+    } = await ctx.runQuery(internal.luma.mirror.listContactOtherEmails, {
+      orgId,
+      paginationOpts: { numItems: OTHER_EMAILS_PAGE_SIZE, cursor },
+    })
+    for (const entry of result.entries) {
+      byEmail.set(entry.email, entry.contactId)
+    }
+    if (result.isDone) return byEmail
+    cursor = result.continueCursor
+  }
+  throw new Error("Reading the contacts' other emails did not finish")
+}
+
+/**
+ * Write an event's complete guest list into the CRM. `otherEmailContacts`
+ * is the org's contacts by other email (readOtherEmailContacts).
+ */
 async function writeEventGuests(
   ctx: ActionCtx,
   event: { _id: Id<'events'>; lumaEventId: string },
   guests: Array<LumaGuest>,
+  otherEmailContacts: Map<string, Id<'crmContacts'>>,
 ): Promise<EventSyncResult> {
   const totals: SyncTotals = { ...EMPTY_TOTALS, eventsGuestSynced: 1 }
   const counts = {
@@ -222,9 +260,14 @@ async function writeEventGuests(
     if (row.status === 'checked_in') counts.checkedInCount++
   }
   for (let i = 0; i < rows.length; i += 100) {
+    const chunk = rows.slice(i, i + 100)
     const r = await ctx.runMutation(internal.luma.mirror.applyAttendanceChunk, {
       eventRowId: event._id,
-      guests: rows.slice(i, i + 100),
+      guests: chunk,
+      otherEmailContacts: chunk.flatMap((guest) => {
+        const contactId = otherEmailContacts.get(guest.email)
+        return contactId ? [{ email: guest.email, contactId }] : []
+      }),
     })
     totals.contactsCreated += r.contactsCreated
     totals.activitiesInserted += r.activitiesInserted
@@ -289,6 +332,8 @@ export const guestChain = internalAction({
     })
 
     let lastError: string | undefined
+    // Read once for the whole batch, before the first event that needs it.
+    let otherEmailContacts: Map<string, Id<'crmContacts'>> | null = null
     for (const event of batch) {
       if (event.lumaAccess !== 'manage' && event.lumaAccess !== null) {
         await ctx.runMutation(internal.luma.mirror.finishEventGuestSync, {
@@ -341,7 +386,13 @@ export const guestChain = internalAction({
       }
 
       try {
-        const result = await writeEventGuests(ctx, event, guests)
+        otherEmailContacts ??= await readOtherEmailContacts(ctx, orgId)
+        const result = await writeEventGuests(
+          ctx,
+          event,
+          guests,
+          otherEmailContacts,
+        )
         await ctx.runMutation(internal.luma.mirror.finishEventGuestSync, {
           eventRowId: event._id,
           counts: result.counts,
