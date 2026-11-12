@@ -2,7 +2,12 @@ import { ConvexError, v } from 'convex/values'
 import { internal } from '../_generated/api'
 import { internalMutation, mutation, query } from '../_generated/server'
 import { getUserId, requireAuth } from '../lib/auth'
-import { MAX_NOTE_LENGTH, MAX_OUTGOING_PENDING } from './constants'
+import {
+  MAX_MEETING_EXTENSION_MINUTES,
+  MAX_NOTE_LENGTH,
+  MAX_OUTGOING_PENDING,
+  extensionMinutesGranted,
+} from './constants'
 import {
   approvedGuests,
   attendeeCard,
@@ -171,6 +176,8 @@ export const getLiveState = query({
           ),
           startedAt: v.number(),
           endsAt: v.number(),
+          // Minutes the meeting can still be extended by; 0 at the limit.
+          extensionMinutesLeft: v.number(),
           topics: v.array(v.string()),
         }),
       ),
@@ -250,6 +257,10 @@ export const getLiveState = query({
           : null,
         startedAt: active.startedAt,
         endsAt: active.endsAt,
+        extensionMinutesLeft: Math.max(
+          0,
+          MAX_MEETING_EXTENSION_MINUTES - (active.extendedMinutes ?? 0),
+        ),
         topics: await meetingTopics(ctx, eventId, userId, partnerId),
       }
     }
@@ -591,15 +602,26 @@ async function requireParticipant(
   return meeting
 }
 
+/**
+ * Add time to a meeting in progress, up to MAX_MEETING_EXTENSION_MINUTES
+ * past its original length in total.
+ */
 export const extendMeeting = mutation({
   args: { meetingId: v.id('socialMeetings'), minutes: v.number() },
   returns: v.null(),
   handler: async (ctx, { meetingId, minutes }) => {
     const meeting = await requireParticipant(ctx, meetingId)
     if (meeting.status !== 'active') refuse('ended', 'This meeting has ended')
-    const add = Math.min(15, Math.max(1, Math.round(minutes)))
+    const used = meeting.extendedMinutes ?? 0
+    const add = extensionMinutesGranted(used, minutes)
+    if (add === 0) {
+      refuse('extension_limit', "This meeting can't be extended any further")
+    }
     const endsAt = meeting.endsAt + add * 60 * 1000
-    await ctx.db.patch('socialMeetings', meetingId, { endsAt })
+    await ctx.db.patch('socialMeetings', meetingId, {
+      endsAt,
+      extendedMinutes: used + add,
+    })
     await ctx.scheduler.runAt(endsAt, internal.social.meetings.endIfDue, {
       meetingId,
     })

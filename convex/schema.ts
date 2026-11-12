@@ -2358,6 +2358,8 @@ export default defineSchema({
     spotId: v.optional(v.id('socialEventSpots')),
     startedAt: v.number(),
     endsAt: v.number(),
+    // Minutes added to the original length so far (extendMeeting caps it).
+    extendedMinutes: v.optional(v.number()),
     endedAt: v.optional(v.number()),
     status: v.union(v.literal('active'), v.literal('ended')),
   })
