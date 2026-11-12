@@ -49,20 +49,24 @@ const copy = {
         : null,
     closed: 'La inscripción para este evento está cerrada.',
     signInTitle: 'Registrate una sola vez',
-    signInBody:
-      'Creá tu cuenta con Google, LinkedIn o tu email y anotate a este y a los próximos eventos de BAISH sin llenar formularios.',
+    signInBody: (org: string) =>
+      `Creá tu cuenta con Google, LinkedIn o tu email y anotate a este y a los próximos eventos de ${org} sin llenar formularios.`,
     signInButton: 'Continuar',
-    signInHint:
-      'Si ya participaste en programas de BAISH, te reconocemos por tu mail y tu lugar se confirma al instante.',
+    signInHint: (org: string) =>
+      `Si ya participaste en programas de ${org}, te reconocemos por tu mail y tu lugar se confirma al instante.`,
     onList: 'Estás en la lista de invitados',
-    onListBody:
-      'Ya participaste en programas de BAISH, así que tu lugar se confirma al instante.',
+    onListBody: (org: string) =>
+      `Ya participaste en programas de ${org}, así que tu lugar se confirma al instante.`,
     register: 'Registrarme',
     lumaNote:
       'También te sumamos a la lista de invitados de Luma. La entrada y el código QR para la puerta te llegan por mail desde Luma.',
     requestTitle: 'Pedí tu lugar',
-    requestBody:
-      'El equipo de BAISH revisa cada inscripción y te avisa por mail cuando te aprueban.',
+    // byEmail: the event is linked to Luma, which emails the decision.
+    // Otherwise the answer only shows up on this page.
+    requestBody: (org: string, byEmail: boolean) =>
+      byEmail
+        ? `El equipo de ${org} revisa cada inscripción y te avisa por mail cuando te aprueban.`
+        : `El equipo de ${org} revisa cada inscripción. No mandamos mail: vas a ver la respuesta en esta página.`,
     linkedinLabel: 'Tu LinkedIn',
     linkedinHint: 'Opcional. Nos ayuda a aprobarte más rápido.',
     requestButton: 'Pedir mi lugar',
@@ -76,7 +80,10 @@ const copy = {
     seePeople: 'Ver quiénes van',
     editProfile: 'Editar perfil',
     pending: 'Inscripción pendiente',
-    pendingBody: 'Te avisamos por mail cuando el equipo de BAISH la apruebe.',
+    pendingBody: (org: string, byEmail: boolean) =>
+      byEmail
+        ? `Te avisamos por mail cuando el equipo de ${org} la apruebe.`
+        : `El equipo de ${org} la está revisando. No mandamos mail: volvé a esta página para ver la respuesta.`,
     pendingProfile: 'Mientras tanto, armá tu perfil',
     pendingProfileBody:
       'Lo usamos para sugerirte personas para conocer si te aprueban.',
@@ -84,7 +91,10 @@ const copy = {
     declinedBody:
       'Esta vez no tenemos lugar para vos. Te avisamos de los próximos eventos.',
     waitlist: 'Estás en la lista de espera',
-    waitlistBody: 'Si se libera un lugar te avisamos por mail.',
+    waitlistBody: (byEmail: boolean): string =>
+      byEmail
+        ? 'Si se libera un lugar te avisamos por mail.'
+        : 'Si se libera un lugar, lo vas a ver en esta página.',
     invited: 'Te invitaron a este evento',
     invitedBody: 'Confirmá tu lugar desde la invitación de Luma.',
     openLuma: 'Abrir en Luma',
@@ -121,20 +131,22 @@ const copy = {
         : null,
     closed: 'Registration for this event is closed.',
     signInTitle: 'Register once',
-    signInBody:
-      'Create your account with Google, LinkedIn or your email and sign up for this and future BAISH events without filling in forms.',
+    signInBody: (org: string) =>
+      `Create your account with Google, LinkedIn or your email and sign up for this and future ${org} events without filling in forms.`,
     signInButton: 'Continue',
-    signInHint:
-      "If you've taken part in BAISH programs before, we recognize your email and confirm your place straight away.",
+    signInHint: (org: string) =>
+      `If you've taken part in ${org} programs before, we recognize your email and confirm your place straight away.`,
     onList: "You're on the guest list",
-    onListBody:
-      "You've taken part in BAISH programs before, so your place is confirmed straight away.",
+    onListBody: (org: string) =>
+      `You've taken part in ${org} programs before, so your place is confirmed straight away.`,
     register: 'Register',
     lumaNote:
       "We'll also add you to the Luma guest list. Your ticket and QR code for the door come from Luma by email.",
     requestTitle: 'Ask for a place',
-    requestBody:
-      'The BAISH team reviews every registration and emails you once you are approved.',
+    requestBody: (org: string, byEmail: boolean) =>
+      byEmail
+        ? `The ${org} team reviews every registration and emails you once you are approved.`
+        : `The ${org} team reviews every registration. We don't send an email: you'll see the answer on this page.`,
     linkedinLabel: 'Your LinkedIn',
     linkedinHint: 'Optional. It helps us approve you faster.',
     requestButton: 'Ask for a place',
@@ -148,7 +160,10 @@ const copy = {
     seePeople: "See who's coming",
     editProfile: 'Edit profile',
     pending: 'Registration pending',
-    pendingBody: "We'll email you once the BAISH team approves it.",
+    pendingBody: (org: string, byEmail: boolean) =>
+      byEmail
+        ? `We'll email you once the ${org} team approves it.`
+        : `The ${org} team is reviewing it. We don't send an email: come back to this page to see the answer.`,
     pendingProfile: 'Meanwhile, set up your profile',
     pendingProfileBody:
       "We'll use it to suggest people for you to meet if you're approved.",
@@ -156,7 +171,10 @@ const copy = {
     declinedBody:
       "We don't have room for you this time. We'll let you know about future events.",
     waitlist: "You're on the waitlist",
-    waitlistBody: "We'll email you if a place opens up.",
+    waitlistBody: (byEmail: boolean): string =>
+      byEmail
+        ? "We'll email you if a place opens up."
+        : "If a place opens up, you'll see it on this page.",
     invited: "You've been invited to this event",
     invitedBody: 'Confirm your place from the Luma invitation.',
     openLuma: 'Open in Luma',
@@ -246,11 +264,11 @@ function EventRegistrationPage() {
           <Unauthenticated>
             <SignInPanel
               title={t.signInTitle}
-              body={t.signInBody}
+              body={t.signInBody(event.orgName)}
               buttonLabel={t.signInButton}
             >
               <p className="text-[13px] leading-normal text-muted-foreground">
-                {t.signInHint}
+                {t.signInHint(event.orgName)}
               </p>
             </SignInPanel>
           </Unauthenticated>
@@ -345,6 +363,9 @@ function RegistrationCard() {
     )
 
   const guest = registration.guest
+  // Only Luma emails people about their registration, and only for events
+  // linked to it; otherwise the answer is shown on this page alone.
+  const decisionByEmail = event.lumaUrl !== null
   const profileReady = registration.profileMissing.length === 0
   // "Set up profile" is the main action once approved; otherwise secondary.
   const profileLink = (prominent: boolean) => (
@@ -363,7 +384,9 @@ function RegistrationCard() {
       return (
         <Panel raised aria-label={t.register}>
           <StatusLine tone="ok">{t.onList}</StatusLine>
-          <p className="text-[15px] leading-normal">{t.onListBody}</p>
+          <p className="text-[15px] leading-normal">
+            {t.onListBody(event.orgName)}
+          </p>
           <button
             type="button"
             onClick={onRegister}
@@ -386,7 +409,9 @@ function RegistrationCard() {
           <h2 className="text-[19px] font-semibold text-[var(--baish-strong)]">
             {t.requestTitle}
           </h2>
-          <p className="text-[15px] leading-normal">{t.requestBody}</p>
+          <p className="text-[15px] leading-normal">
+            {t.requestBody(event.orgName, decisionByEmail)}
+          </p>
         </div>
         <div className="flex flex-col gap-1.5">
           <label
@@ -463,7 +488,9 @@ function RegistrationCard() {
       <Panel raised aria-label={t.pending}>
         <div className="flex flex-col gap-1.5">
           <StatusLine tone="warn">{t.pending}</StatusLine>
-          <p className="text-[15px] leading-normal">{t.pendingBody}</p>
+          <p className="text-[15px] leading-normal">
+            {t.pendingBody(event.orgName, decisionByEmail)}
+          </p>
         </div>
         <div className="h-px bg-border" />
         <div className="flex flex-col gap-1.5">
@@ -481,7 +508,7 @@ function RegistrationCard() {
     guest.status === 'declined'
       ? [t.declined, t.declinedBody]
       : guest.status === 'waitlist'
-        ? [t.waitlist, t.waitlistBody]
+        ? [t.waitlist, t.waitlistBody(decisionByEmail)]
         : [t.invited, t.invitedBody]
   return (
     <Panel raised aria-label={title}>
