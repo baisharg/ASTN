@@ -9,17 +9,30 @@ import { useSuspenseQuery } from '@tanstack/react-query'
 import { useAuth } from '@clerk/clerk-react'
 import { convexQuery } from '@convex-dev/react-query'
 import { useConvexAuth, useMutation } from 'convex/react'
-import { Inbox } from 'lucide-react'
+import { CalendarClock, Inbox } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
-import type { AlertsSeen } from '~/lib/social-live'
-import { SocialEventProvider } from '~/components/social/SocialEventContext'
+import type { AgendaSeen, AlertsSeen } from '~/lib/social-live'
+import {
+  SocialEventProvider,
+  useNow,
+} from '~/components/social/SocialEventContext'
+import {
+  BookingDueBanner,
+  useAgenda,
+  useSlotTime,
+} from '~/components/social/booking'
 import { MeetingBanner, useLiveState } from '~/components/social/live'
 import { useHaptic } from '~/hooks/use-haptic'
 import { LangToggle, SocialLangProvider, useCopy } from '~/lib/social-i18n'
-import { liveAlerts, titleWithCount } from '~/lib/social-live'
+import {
+  agendaAlerts,
+  liveAlerts,
+  openProposals,
+  titleWithCount,
+} from '~/lib/social-live'
 
 export const Route = createFileRoute('/org/$slug/e/$eventSlug')({
   loader: async ({ context, params }) => {
@@ -69,6 +82,19 @@ const copy = {
       spot === null
         ? `${name} aceptó tu solicitud. Ya pueden reunirse.`
         : `${name} aceptó tu solicitud. Se reúnen en el lugar ${spot}.`,
+    bookedStarted: (name: string, spot: number | null) =>
+      spot === null
+        ? `Empezó tu 1:1 con ${name}.`
+        : `Empezó tu 1:1 con ${name} en el lugar ${spot}.`,
+    agenda: 'Agenda',
+    agendaProposals: (n: number) => `Agenda, ${n} propuestas nuevas`,
+    newProposal: (name: string, time: string) =>
+      `${name} te propuso un 1:1 a las ${time}`,
+    bookingDue: (name: string, spot: number | null) =>
+      spot === null
+        ? `Tu 1:1 con ${name} empieza ahora`
+        : `Tu 1:1 con ${name} empieza ahora en el lugar ${spot}`,
+    seeAgenda: 'Ver',
   },
   en: {
     notFoundTitle: 'Event not found',
@@ -82,6 +108,19 @@ const copy = {
       spot === null
         ? `${name} accepted your request. You can meet now.`
         : `${name} accepted your request. Meet at spot ${spot}.`,
+    bookedStarted: (name: string, spot: number | null) =>
+      spot === null
+        ? `Your 1:1 with ${name} has started.`
+        : `Your 1:1 with ${name} has started at spot ${spot}.`,
+    agenda: 'Agenda',
+    agendaProposals: (n: number) => `Agenda, ${n} new proposals`,
+    newProposal: (name: string, time: string) =>
+      `${name} proposed a 1:1 at ${time}`,
+    bookingDue: (name: string, spot: number | null) =>
+      spot === null
+        ? `Your 1:1 with ${name} starts now`
+        : `Your 1:1 with ${name} starts now at spot ${spot}`,
+    seeAgenda: 'View',
   },
 }
 
@@ -120,6 +159,7 @@ function EventLayoutInner() {
     <SocialEventProvider value={event}>
       <LinkGuestOnLoad eventId={event._id} />
       <LiveAlerts eventId={event._id} title={eventPageTitle(event)} />
+      {event.bookingEnabled && <AgendaAlerts eventId={event._id} />}
       <header className="sticky top-0 z-20 border-b border-border bg-card/95 backdrop-blur">
         <div className="mx-auto flex max-w-xl items-center justify-between gap-3 px-5 py-2.5">
           <Link
@@ -135,6 +175,7 @@ function EventLayoutInner() {
             </span>
           </Link>
           <div className="flex items-center gap-2">
+            {event.bookingEnabled && <AgendaBadge />}
             <RequestsBadge />
             <LangToggle />
           </div>
@@ -148,6 +189,7 @@ function EventLayoutInner() {
       <div className="mx-auto max-w-xl">
         <Outlet />
         <EventMeetingBanner />
+        {event.bookingEnabled && <EventBookingBanner />}
       </div>
     </SocialEventProvider>
   )
@@ -193,6 +235,8 @@ function LiveAlerts({
   const { userId } = useAuth()
   const { custom: vibrate } = useHaptic()
   const live = useLiveState()
+  // Null at an event with booking off, where no meeting comes from a booking.
+  const agenda = useAgenda()
   const seen = useRef<AlertsSeen | null>(null)
 
   useEffect(() => {
@@ -225,8 +269,10 @@ function LiveAlerts({
       // The person who accepted is already on their way to the meeting
       // page; the one whose request was accepted needs telling.
       if (!meeting.viewerAccepted) {
+        const booked = agenda?.bookings.some((b) => b.meetingId === meeting._id)
+        const started = booked ? t.bookedStarted : t.meetingStarted
         toast.success(
-          t.meetingStarted(meeting.partner.name, meeting.spot?.number ?? null),
+          started(meeting.partner.name, meeting.spot?.number ?? null),
           { duration: 10_000 },
         )
         vibrate([200, 100, 200])
@@ -236,7 +282,7 @@ function LiveAlerts({
         params: { slug, eventSlug },
       })
     }
-  }, [live, userId, eventId, slug, eventSlug, t, navigate, vibrate])
+  }, [live, agenda, userId, eventId, slug, eventSlug, t, navigate, vibrate])
 
   // The number of requests waiting, in the tab title. `pathname` is a
   // dependency so the count is written again after a page change.
@@ -266,6 +312,116 @@ function EventMeetingBanner() {
     pathname.replace(/\/$/, '') === `/org/${slug}/e/${eventSlug}/meeting`
   const meeting = live?.isAttendee && !onMeetingPage ? live.meeting : null
   return <MeetingBanner meeting={meeting} />
+}
+
+/**
+ * Alerts about the viewer's booked 1:1s, at an event with booking on: a
+ * toast and a vibration when someone proposes a time, and when a booked 1:1
+ * reaches its slot.
+ */
+function AgendaAlerts({ eventId }: { eventId: Id<'socialEvents'> }) {
+  const { slug, eventSlug } = Route.useParams()
+  const t = useCopy(copy)
+  const time = useSlotTime()
+  const navigate = useNavigate()
+  const { userId } = useAuth()
+  const { custom: vibrate } = useHaptic()
+  const agenda = useAgenda()
+  const now = useNow(5_000)
+  const seen = useRef<AgendaSeen | null>(null)
+
+  useEffect(() => {
+    // Still loading: keep the baseline from before.
+    if (agenda === undefined) return
+    if (!agenda || !userId) {
+      seen.current = null
+      return
+    }
+    const alerts = agendaAlerts(
+      seen.current,
+      `${eventId}:${userId}`,
+      agenda,
+      now,
+    )
+    seen.current = alerts.seen
+    const action = {
+      label: t.seeAgenda,
+      onClick: () =>
+        void navigate({
+          to: '/org/$slug/e/$eventSlug/agenda',
+          params: { slug, eventSlug },
+        }),
+    }
+    for (const proposal of alerts.newProposals) {
+      toast(t.newProposal(proposal.partner.name, time(proposal.slotStart)), {
+        duration: 10_000,
+        action,
+      })
+    }
+    for (const booking of alerts.due) {
+      toast(t.bookingDue(booking.partner.name, booking.spot?.number ?? null), {
+        duration: 20_000,
+        action,
+      })
+    }
+    if (alerts.due.length > 0) vibrate([200, 100, 200])
+    else if (alerts.newProposals.length > 0) vibrate(200)
+  }, [
+    agenda,
+    now,
+    userId,
+    eventId,
+    slug,
+    eventSlug,
+    t,
+    time,
+    navigate,
+    vibrate,
+  ])
+
+  return null
+}
+
+/**
+ * The "your 1:1 starts now" banner on every page except the agenda, which
+ * shows the 1:1 itself, and never over the banner of a meeting in progress.
+ */
+function EventBookingBanner() {
+  const { slug, eventSlug } = Route.useParams()
+  const pathname = useLocation({ select: (location) => location.pathname })
+  const live = useLiveState()
+  const onAgendaPage =
+    pathname.replace(/\/$/, '') === `/org/${slug}/e/${eventSlug}/agenda`
+  return (
+    <BookingDueBanner
+      hidden={onAgendaPage || !live?.isAttendee || live.meeting !== null}
+    />
+  )
+}
+
+/** The header link to the agenda, with the proposals waiting for an answer. */
+function AgendaBadge() {
+  const { slug, eventSlug } = Route.useParams()
+  const t = useCopy(copy)
+  const now = useNow()
+  const agenda = useAgenda()
+  if (!agenda) return null
+  const count = openProposals(agenda.incoming, now).length
+  return (
+    <Link
+      to="/org/$slug/e/$eventSlug/agenda"
+      params={{ slug, eventSlug }}
+      aria-label={count > 0 ? t.agendaProposals(count) : t.agenda}
+      className="relative flex size-11 items-center justify-center rounded-xl text-foreground hover:bg-muted"
+    >
+      <CalendarClock className="size-[22px]" aria-hidden="true" />
+      {count > 0 && (
+        <span className="absolute right-1 top-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-primary px-1 text-[11px] font-bold text-primary-foreground">
+          {count}
+        </span>
+      )}
+    </Link>
+  )
 }
 
 function RequestsBadge() {

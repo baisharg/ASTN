@@ -2,10 +2,13 @@ import { MAX_OUTGOING_PENDING } from '../../convex/social/constants'
 import {
   ENDED_CARD_MS,
   OUTCOME_VISIBLE_MS,
+  agendaAlerts,
+  bookingsDueNow,
   endedRecently,
   expiryMinutesLeft,
   liveAlerts,
   meetingRanOut,
+  openProposals,
   requestBlock,
   titleWithCount,
   visibleOutcomes,
@@ -293,5 +296,92 @@ describe('meetingRanOut', () => {
     expect(meetingRanOut({ endedAt: 60_000, endsAt: 60_000 })).toBe(true)
     expect(meetingRanOut({ endedAt: 59_000, endsAt: 60_000 })).toBe(true)
     expect(meetingRanOut({ endedAt: 20_000, endsAt: 60_000 })).toBe(false)
+  })
+})
+
+describe('bookingsDueNow', () => {
+  const booking = (status: 'booked' | 'started') => ({
+    status,
+    slotStart: 1_000,
+    slotEnd: 2_000,
+  })
+
+  test('a booked 1:1 is due from the start of its slot to its end', () => {
+    expect(bookingsDueNow([booking('booked')], 999).length).toBe(0)
+    expect(bookingsDueNow([booking('booked')], 1_000).length).toBe(1)
+    expect(bookingsDueNow([booking('booked')], 1_999).length).toBe(1)
+    expect(bookingsDueNow([booking('booked')], 2_000).length).toBe(0)
+  })
+
+  test('one that already started is a meeting, not something due', () => {
+    expect(bookingsDueNow([booking('started')], 1_500).length).toBe(0)
+  })
+})
+
+describe('openProposals', () => {
+  test('a proposal can be answered until its slot starts', () => {
+    const proposals = [{ slotStart: 1_000 }, { slotStart: 3_000 }]
+    expect(openProposals(proposals, 500).length).toBe(2)
+    expect(openProposals(proposals, 1_000)).toEqual([{ slotStart: 3_000 }])
+  })
+})
+
+describe('agendaAlerts', () => {
+  const proposal = (_id: string) => ({ _id, slotStart: 5_000 })
+  const booking = (_id: string) => ({
+    _id,
+    status: 'booked' as const,
+    slotStart: 1_000,
+    slotEnd: 2_000,
+  })
+
+  test('proposals that were waiting when the page loaded do not alert', () => {
+    const first = agendaAlerts(
+      null,
+      'e:u',
+      { incoming: [proposal('p1')], bookings: [] },
+      0,
+    )
+    expect(first.newProposals).toEqual([])
+    const next = agendaAlerts(
+      first.seen,
+      'e:u',
+      { incoming: [proposal('p1'), proposal('p2')], bookings: [] },
+      0,
+    )
+    expect(next.newProposals.map((p) => p._id)).toEqual(['p2'])
+  })
+
+  test('a proposal alerts once', () => {
+    const first = agendaAlerts(null, 'e:u', { incoming: [], bookings: [] }, 0)
+    const agenda = { incoming: [proposal('p1')], bookings: [] }
+    const second = agendaAlerts(first.seen, 'e:u', agenda, 0)
+    expect(second.newProposals.length).toBe(1)
+    expect(agendaAlerts(second.seen, 'e:u', agenda, 0).newProposals).toEqual([])
+  })
+
+  test('a booked 1:1 alerts when its slot starts, once', () => {
+    const agenda = { incoming: [], bookings: [booking('b1')] }
+    const early = agendaAlerts(null, 'e:u', agenda, 500)
+    expect(early.due).toEqual([])
+    const atStart = agendaAlerts(early.seen, 'e:u', agenda, 1_000)
+    expect(atStart.due.map((b) => b._id)).toEqual(['b1'])
+    expect(agendaAlerts(atStart.seen, 'e:u', agenda, 1_200).due).toEqual([])
+  })
+
+  test('a 1:1 whose slot is already on when the page loads alerts too', () => {
+    const agenda = { incoming: [], bookings: [booking('b1')] }
+    expect(agendaAlerts(null, 'e:u', agenda, 1_500).due.length).toBe(1)
+  })
+
+  test('another account on the same device starts from its own baseline', () => {
+    const first = agendaAlerts(null, 'e:u1', { incoming: [], bookings: [] }, 0)
+    const other = agendaAlerts(
+      first.seen,
+      'e:u2',
+      { incoming: [proposal('p1')], bookings: [] },
+      0,
+    )
+    expect(other.newProposals).toEqual([])
   })
 })

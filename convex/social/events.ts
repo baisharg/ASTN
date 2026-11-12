@@ -5,7 +5,7 @@ import { getUserId, requireOrgAdmin } from '../lib/auth'
 import { slugifyTitle } from '../orgOpportunities'
 import schema from '../schema'
 import { requireOrgOwnsApiCalendar } from '../luma/binding'
-import { DEFAULT_MEETING_MINUTES } from './constants'
+import { DEFAULT_MEETING_MINUTES, bookingOpen } from './constants'
 import {
   addToAllowlist,
   autoApprovesKnownGuests,
@@ -56,7 +56,8 @@ const eventPublicValidator = v.object({
   meetingsOpenAt: v.number(),
   meetingsCloseAt: v.number(),
   meetingMinutes: v.number(),
-  // Whether attendees can book 1:1s for a set time at this event.
+  // Whether attendees can book 1:1s for a set time at this event: the
+  // setting is on and the event is not a draft.
   bookingEnabled: v.boolean(),
   focus: v.union(v.string(), v.null()),
   viewerIsAdmin: v.boolean(),
@@ -194,7 +195,7 @@ export const getEventPage = query({
       meetingsOpenAt: meetingsWindow(event).openAt,
       meetingsCloseAt: meetingsWindow(event).closeAt,
       meetingMinutes: event.meetingMinutes,
-      bookingEnabled: event.bookingEnabled === true,
+      bookingEnabled: bookingOpen(event),
       focus: focusFromPrompt(event.matchingPrompt),
       viewerIsAdmin,
     }

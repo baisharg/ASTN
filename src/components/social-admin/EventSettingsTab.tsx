@@ -3,6 +3,7 @@ import { Loader2, Save } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
+import { BookingCard } from './BookingCard'
 import { EventDetailsFields, useEventDetailsForm } from './EventDetailsFields'
 import { AutoApproveCard, StatusCard } from './EventStatusCards'
 import { OneOnOneCard } from './OneOnOneCard'
@@ -30,6 +31,7 @@ export function EventSettingsTab({ event }: { event: AdminEvent }) {
       <AutoApproveCard event={event} />
       <DetailsCard key={`details-${event._id}`} event={event} />
       <OneOnOneCard key={`meetings-${event._id}`} event={event} />
+      <BookingCard event={event} />
       <SpotsCard key={`spots-${event._id}`} event={event} />
     </div>
   )

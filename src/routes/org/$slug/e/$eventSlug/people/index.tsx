@@ -8,6 +8,7 @@ import type { FunctionReturnType } from 'convex/server'
 import type { LiveState } from '~/components/social/live'
 import type { AttendeeState } from '~/components/social/ui'
 import { useNow, useSocialEvent } from '~/components/social/SocialEventContext'
+import { ProposeSlot } from '~/components/social/booking'
 import {
   ArrivalCard,
   AttendeeGate,
@@ -681,6 +682,7 @@ function SuggestionCard({
   here: boolean
 }) {
   const { slug, eventSlug } = Route.useParams()
+  const event = useSocialEvent()
   const t = useCopy(copy)
   const blockText = useCopy(requestBlockCopy)
   const errorMessage = useSocialErrorMessage()
@@ -770,6 +772,9 @@ function SuggestionCard({
         <p className="text-[13px] leading-normal text-muted-foreground">
           {blockText[block](firstName)}
         </p>
+      )}
+      {event.bookingEnabled && (
+        <ProposeSlot userId={s.userId} firstName={firstName} />
       )}
     </article>
   )
