@@ -1,4 +1,3 @@
-import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import { formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -8,7 +7,6 @@ import {
   Link2,
   Link2Off,
   Loader2,
-  Mail,
   RefreshCw,
 } from 'lucide-react'
 import { useState } from 'react'
@@ -139,7 +137,7 @@ export function LumaLinkCard({ event }: { event: AdminEvent }) {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          Luma
+          Vínculo con Luma
           {linked && (
             <Badge
               variant="outline"
@@ -224,20 +222,6 @@ export function LumaLinkCard({ event }: { event: AdminEvent }) {
                   <ExternalLink className="size-4 mr-2" />
                   Abrir en Luma
                 </a>
-              </Button>
-            )}
-            {event.lumaEventId && event.orgSlug && (
-              <Button variant="outline" className="min-h-11" asChild>
-                <Link
-                  to="/org/$slug/admin/events/luma/$lumaEventId"
-                  params={{
-                    slug: event.orgSlug,
-                    lumaEventId: event.lumaEventId,
-                  }}
-                >
-                  <Mail className="size-4 mr-2" />
-                  Emails y ajustes de Luma
-                </Link>
               </Button>
             )}
             <Button
