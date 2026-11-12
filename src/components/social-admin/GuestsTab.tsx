@@ -1,10 +1,21 @@
 import { useMutation, useQuery } from 'convex/react'
+import type { FunctionReturnType } from 'convex/server'
 import { Check, Linkedin, Loader2, Search, X } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
 import { GUEST_STATUS_COLORS, GUEST_STATUS_LABELS, toastError } from './shared'
 import type { GuestStatus } from './shared'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '~/components/ui/alert-dialog'
 import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
 import {
@@ -36,13 +47,25 @@ const LUMA_SYNC_LABELS = {
 } as const
 
 type StatusFilter = 'all' | GuestStatus
+type Guest = FunctionReturnType<typeof api.social.events.listGuests>[number]
 
-export function GuestsTab({ eventId }: { eventId: Id<'socialEvents'> }) {
+export function GuestsTab({
+  eventId,
+  lumaLinked,
+}: {
+  eventId: Id<'socialEvents'>
+  // Linked to Luma: status changes go there too, and Luma may email the guest.
+  lumaLinked: boolean
+}) {
   const guests = useQuery(api.social.events.listGuests, { eventId })
   const setGuestStatus = useMutation(api.social.events.setGuestStatus)
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [search, setSearch] = useState('')
+  // Declining asks first. `declineTarget` stays set while the dialog closes,
+  // so its text doesn't empty out mid-animation.
+  const [declineTarget, setDeclineTarget] = useState<Guest | null>(null)
+  const [declineOpen, setDeclineOpen] = useState(false)
   const { busy, run } = useBusyAction()
 
   if (guests === undefined) {
@@ -53,17 +76,25 @@ export function GuestsTab({ eventId }: { eventId: Id<'socialEvents'> }) {
     )
   }
 
-  const decide = (
-    guestId: Id<'socialEventGuests'>,
-    status: 'approved' | 'declined',
-  ) =>
+  const decide = (guest: Guest, status: 'approved' | 'declined') =>
     run(
-      `${guestId}:${status}`,
-      () => setGuestStatus({ guestId, status }),
+      `${guest._id}:${status}`,
+      () => setGuestStatus({ guestId: guest._id, status }),
       toastError(
         status === 'approved' ? 'No se pudo aprobar' : 'No se pudo rechazar',
       ),
     )
+
+  const askToDecline = (guest: Guest) => {
+    setDeclineTarget(guest)
+    setDeclineOpen(true)
+  }
+
+  const confirmDecline = async () => {
+    if (!declineTarget) return
+    await decide(declineTarget, 'declined')
+    setDeclineOpen(false)
+  }
 
   const pending = guests
     .filter((g) => g.status === 'pending_approval')
@@ -85,8 +116,10 @@ export function GuestsTab({ eventId }: { eventId: Id<'socialEvents'> }) {
         <CardHeader>
           <CardTitle>Pendientes de aprobación ({pending.length})</CardTitle>
           <CardDescription>
-            Aprobar o rechazar acá también lo actualiza en Luma. Aprobar a
-            alguien lo suma a la lista de preaprobados.
+            {lumaLinked
+              ? 'Aprobar o rechazar acá también lo actualiza en Luma, que puede avisarle a la persona por email.'
+              : 'Aprobar o rechazar a quienes se anotaron.'}{' '}
+            Aprobar a alguien lo suma a la lista de preaprobados.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -127,19 +160,15 @@ export function GuestsTab({ eventId }: { eventId: Id<'socialEvents'> }) {
                       variant="outline"
                       className="min-h-11 flex-1 sm:flex-none"
                       disabled={busy !== null}
-                      onClick={() => void decide(g._id, 'declined')}
+                      onClick={() => askToDecline(g)}
                     >
-                      {busy === `${g._id}:declined` ? (
-                        <Loader2 className="size-4 mr-2 animate-spin" />
-                      ) : (
-                        <X className="size-4 mr-2" />
-                      )}
+                      <X className="size-4 mr-2" />
                       Rechazar
                     </Button>
                     <Button
                       className="min-h-11 flex-1 sm:flex-none"
                       disabled={busy !== null}
-                      onClick={() => void decide(g._id, 'approved')}
+                      onClick={() => void decide(g, 'approved')}
                     >
                       {busy === `${g._id}:approved` ? (
                         <Loader2 className="size-4 mr-2 animate-spin" />
@@ -159,6 +188,10 @@ export function GuestsTab({ eventId }: { eventId: Id<'socialEvents'> }) {
       <Card>
         <CardHeader>
           <CardTitle>Todos los invitados ({guests.length})</CardTitle>
+          <CardDescription>
+            Podés cambiar la decisión de cualquiera: aprobar a alguien rechazado
+            o en lista de espera, o rechazar a alguien aprobado que ya no viene.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-col sm:flex-row gap-3">
@@ -216,7 +249,10 @@ export function GuestsTab({ eventId }: { eventId: Id<'socialEvents'> }) {
                     <th className="py-2 pr-3 font-medium">Perfil</th>
                     <th className="py-2 pr-3 font-medium">Cuenta</th>
                     <th className="py-2 pr-3 font-medium">Luma</th>
-                    <th className="py-2 font-medium">Check-in</th>
+                    <th className="py-2 pr-3 font-medium">Check-in</th>
+                    <th className="py-2 font-medium">
+                      <span className="sr-only">Acciones</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -272,7 +308,7 @@ export function GuestsTab({ eventId }: { eventId: Id<'socialEvents'> }) {
                           </span>
                         )}
                       </td>
-                      <td className="py-2">
+                      <td className="py-2 pr-3">
                         {g.checkedIn ? (
                           <Check
                             className="size-4 text-green-700"
@@ -282,6 +318,40 @@ export function GuestsTab({ eventId }: { eventId: Id<'socialEvents'> }) {
                           <span className="text-muted-foreground">—</span>
                         )}
                       </td>
+                      <td className="py-1">
+                        <div className="flex justify-end gap-1">
+                          {g.status !== 'approved' && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="min-h-11"
+                              disabled={busy !== null}
+                              onClick={() => void decide(g, 'approved')}
+                              aria-label={`Aprobar a ${g.name ?? g.email}`}
+                            >
+                              {busy === `${g._id}:approved` ? (
+                                <Loader2 className="size-4 mr-1.5 animate-spin" />
+                              ) : (
+                                <Check className="size-4 mr-1.5" />
+                              )}
+                              Aprobar
+                            </Button>
+                          )}
+                          {g.status !== 'declined' && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="min-h-11"
+                              disabled={busy !== null}
+                              onClick={() => askToDecline(g)}
+                              aria-label={`Rechazar a ${g.name ?? g.email}`}
+                            >
+                              <X className="size-4 mr-1.5" />
+                              Rechazar
+                            </Button>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -290,6 +360,50 @@ export function GuestsTab({ eventId }: { eventId: Id<'socialEvents'> }) {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog
+        open={declineOpen}
+        onOpenChange={(open) => {
+          if (busy === null) setDeclineOpen(open)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              ¿Rechazar a {declineTarget?.name ?? declineTarget?.email}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {declineTarget?.name ? `${declineTarget.email}. ` : ''}
+              {declineTarget?.status === 'approved'
+                ? 'Ahora está aprobado para este evento y pasa a rechazado. '
+                : 'Queda como rechazado para este evento. '}
+              {lumaLinked
+                ? 'El cambio también se hace en Luma, que puede mandarle un email avisándole. '
+                : ''}
+              Si te equivocás, podés volver a aprobarlo desde la lista de
+              invitados.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="min-h-11" disabled={busy !== null}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="min-h-11"
+              disabled={busy !== null}
+              onClick={(e) => {
+                e.preventDefault()
+                void confirmDecline()
+              }}
+            >
+              {busy !== null && (
+                <Loader2 className="size-4 mr-2 animate-spin" />
+              )}
+              Sí, rechazar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
