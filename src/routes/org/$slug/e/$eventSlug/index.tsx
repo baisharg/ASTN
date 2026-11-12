@@ -1,3 +1,4 @@
+import { useClerk } from '@clerk/clerk-react'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import {
   AuthLoading,
@@ -57,7 +58,8 @@ const copy = {
     signInLumaHint:
       '¿Ya te registraste en Luma? Entrá con el mismo email que usaste ahí, así encontramos tu lugar.',
     otherEmailHint: (email: string) =>
-      `Entraste como ${email}. Si ya te registraste en Luma con otro email, cerrá sesión y entrá con ese: no hace falta pedir lugar de nuevo.`,
+      `Entraste como ${email}. Si ya te registraste en Luma con otro email, entrá con ese: no hace falta pedir lugar de nuevo.`,
+    switchAccount: 'Cerrar sesión y entrar con otro email',
     onList: 'Estás en la lista de invitados',
     onListBody: (org: string) =>
       `Ya participaste en programas de ${org}, así que tu lugar se confirma al instante.`,
@@ -143,7 +145,8 @@ const copy = {
     signInLumaHint:
       'Already registered on Luma? Sign in with the same email you used there so we can find your place.',
     otherEmailHint: (email: string) =>
-      `You're signed in as ${email}. If you already registered on Luma with a different email, sign out and sign in with that one: you don't need to ask for a place again.`,
+      `You're signed in as ${email}. If you already registered on Luma with a different email, sign in with that one: you don't need to ask for a place again.`,
+    switchAccount: 'Sign out and use another email',
     onList: "You're on the guest list",
     onListBody: (org: string) =>
       `You've taken part in ${org} programs before, so your place is confirmed straight away.`,
@@ -456,9 +459,7 @@ function RegistrationCard() {
           {submitting ? <Spinner className="size-5" /> : t.requestButton}
         </button>
         {event.lumaUrl && registration.email && (
-          <p className="text-[13px] leading-normal text-muted-foreground">
-            {t.otherEmailHint(registration.email)}
-          </p>
+          <OtherEmailHint email={registration.email} />
         )}
       </Panel>
     )
@@ -546,6 +547,30 @@ function RegistrationCard() {
         </a>
       )}
     </Panel>
+  )
+}
+
+/**
+ * For events linked to Luma, shown to someone signed in with an email that
+ * has no registration: which email that is, and a way to sign out and come
+ * back with the one they used on Luma. Signing out stays on this page.
+ */
+function OtherEmailHint({ email }: { email: string }) {
+  const t = useCopy(copy)
+  const { signOut } = useClerk()
+  return (
+    <div className="flex flex-col items-start">
+      <p className="text-[13px] leading-normal text-muted-foreground">
+        {t.otherEmailHint(email)}
+      </p>
+      <button
+        type="button"
+        onClick={() => void signOut({ redirectUrl: window.location.href })}
+        className="flex min-h-11 items-center text-sm font-semibold text-[var(--baish-brand-text)] underline-offset-2 hover:underline"
+      >
+        {t.switchAccount}
+      </button>
+    </div>
   )
 }
 
