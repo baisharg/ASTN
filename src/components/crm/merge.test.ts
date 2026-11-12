@@ -15,7 +15,10 @@ import {
   type MergeContact,
   type MergeDef,
 } from '../../../convex/contacts/mergeLogic'
-import { countLumaAttendance } from '../../../convex/luma/shared'
+import {
+  attendanceStatusShown,
+  countLumaAttendance,
+} from '../../../convex/luma/shared'
 import {
   mergeRecord,
   planImport,
@@ -465,6 +468,60 @@ describe('countLumaAttendance', () => {
         },
       ]),
     ).toEqual({ approved: 1, checkedIn: 1 })
+  })
+
+  test('an approved registration for a canceled event does not count', () => {
+    expect(
+      countLumaAttendance(
+        [
+          row('evt-1', 'a@x.org', 'approved'),
+          row('evt-2', 'a@x.org', 'approved'),
+        ],
+        new Set(['evt-2']),
+      ),
+    ).toEqual({ approved: 1, checkedIn: 0 })
+  })
+
+  test('a check-in still counts when its event was later canceled or deleted', () => {
+    expect(
+      countLumaAttendance(
+        [
+          row('evt-1', 'a@x.org', 'checked_in'),
+          row('evt-2', 'a@x.org', 'approved'),
+          row('evt-2', 'b@x.org', 'checked_in'),
+        ],
+        new Set(['evt-1', 'evt-2']),
+      ),
+    ).toEqual({ approved: 2, checkedIn: 2 })
+  })
+
+  test('an event that is no longer canceled counts again', () => {
+    const rows = [row('evt-1', 'a@x.org', 'approved')]
+    expect(countLumaAttendance(rows, new Set(['evt-1']))).toEqual({
+      approved: 0,
+      checkedIn: 0,
+    })
+    expect(countLumaAttendance(rows, new Set())).toEqual({
+      approved: 1,
+      checkedIn: 0,
+    })
+  })
+})
+
+describe('attendanceStatusShown', () => {
+  test('a registration for a canceled event shows as canceled', () => {
+    expect(attendanceStatusShown('approved', true)).toBe('canceled')
+    expect(attendanceStatusShown('pending', true)).toBe('canceled')
+    expect(attendanceStatusShown('waitlist', true)).toBe('canceled')
+  })
+
+  test('a check-in shows as a check-in even if the event is canceled', () => {
+    expect(attendanceStatusShown('checked_in', true)).toBe('checked_in')
+  })
+
+  test('statuses of events that are not canceled are shown as stored', () => {
+    expect(attendanceStatusShown('approved', false)).toBe('approved')
+    expect(attendanceStatusShown(undefined, false)).toBe(undefined)
   })
 })
 

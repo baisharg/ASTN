@@ -9,6 +9,8 @@ import {
   lumaSyncValidator,
   socialVisibilityValidator,
   suggestionLanguageValidator,
+  suggestionRunTriggerValidator,
+  suggestionsStatusValidator,
 } from './social/validators'
 import {
   crmActivityKindValidator,
@@ -2317,10 +2319,17 @@ export default defineSchema({
     eventId: v.id('socialEvents'),
     userId: v.string(),
     availability: availabilityValidator,
+    // When the attendee said in the app that they are at the event ("Ya
+    // llegué"), or first sent or accepted a 1:1 request. The door check-in
+    // (socialEventGuests.checkedInAt) counts as being there too.
+    arrivedAt: v.optional(v.number()),
     // When suggestions were last requested for this attendee (throttle).
     suggestionsRequestedAt: v.optional(v.number()),
     // Language the attendee's suggestions are written in (the page's).
     suggestionsLanguage: v.optional(suggestionLanguageValidator),
+    // The attendee's current or last suggestion run, and when it got there.
+    suggestionsStatus: v.optional(suggestionsStatusValidator),
+    suggestionsStatusAt: v.optional(v.number()),
     updatedAt: v.number(),
   }).index('by_eventId_and_userId', ['eventId', 'userId']),
 
@@ -2334,10 +2343,19 @@ export default defineSchema({
       v.literal('accepted'),
       v.literal('declined'),
       v.literal('cancelled'),
+      // Nobody answered before expiresAt.
+      v.literal('expired'),
     ),
     meetingId: v.optional(v.id('socialMeetings')),
     createdAt: v.number(),
+    // When a pending request stops being answerable (REQUEST_EXPIRY_MS after
+    // it was sent). Requests from before expiry existed have none.
+    expiresAt: v.optional(v.number()),
+    // When the request left 'pending', whatever the outcome.
     respondedAt: v.optional(v.number()),
+    // When the requester dismissed the notice that it was declined or
+    // expired, or asked or met the same person again.
+    acknowledgedAt: v.optional(v.number()),
   })
     .index('by_eventId_and_status', ['eventId', 'status'])
     .index('by_eventId_and_toUserId_and_status', [
@@ -2353,11 +2371,14 @@ export default defineSchema({
 
   socialMeetings: defineTable({
     eventId: v.id('socialEvents'),
+    // userA asked for the 1:1 and userB accepted it.
     userA: v.string(),
     userB: v.string(),
     spotId: v.optional(v.id('socialEventSpots')),
     startedAt: v.number(),
     endsAt: v.number(),
+    // Minutes added to the original length so far (extendMeeting caps it).
+    extendedMinutes: v.optional(v.number()),
     endedAt: v.optional(v.number()),
     status: v.union(v.literal('active'), v.literal('ended')),
   })
@@ -2365,7 +2386,8 @@ export default defineSchema({
     .index('by_eventId_and_userA_and_status', ['eventId', 'userA', 'status'])
     .index('by_eventId_and_userB_and_status', ['eventId', 'userB', 'status']),
 
-  // AI suggestions of who an attendee should meet, regenerated as people join.
+  // Who an attendee is suggested to meet: the picks the event-wide assignment
+  // made from each attendee's ranked candidates (socialSuggestionCandidates).
   socialSuggestions: defineTable({
     eventId: v.id('socialEvents'),
     userId: v.string(),
@@ -2375,6 +2397,46 @@ export default defineSchema({
     topics: v.array(v.string()),
     generatedAt: v.number(),
   }).index('by_eventId_and_userId_and_rank', ['eventId', 'userId', 'rank']),
+
+  // The suggestions model's ranking for one attendee: up to 10 people, best
+  // first, each with the reason and topics shown if they become a
+  // suggestion. One row per attendee, replaced on every ranking.
+  socialSuggestionCandidates: defineTable({
+    eventId: v.id('socialEvents'),
+    userId: v.string(),
+    // The language the reasons and topics are written in.
+    language: suggestionLanguageValidator,
+    candidates: v.array(
+      v.object({
+        userId: v.string(),
+        reason: v.string(),
+        topics: v.array(v.string()),
+      }),
+    ),
+    rankedAt: v.number(),
+  }).index('by_eventId_and_userId', ['eventId', 'userId']),
+
+  // One row per event-wide suggestion run: every approved attendee with a
+  // ready profile is ranked, then one assignment picks everyone's
+  // suggestions. The newest row is the event's current or last run.
+  socialSuggestionRuns: defineTable({
+    eventId: v.id('socialEvents'),
+    trigger: suggestionRunTriggerValidator,
+    status: v.union(v.literal('running'), v.literal('finished')),
+    startedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+    // A run still running after this time is finished by its timeout check.
+    timeoutAt: v.number(),
+    // Everyone the run ranks (at most the 500 approved guests an event
+    // reads), and those whose ranking hasn't reported back yet.
+    attendeeUserIds: v.array(v.string()),
+    pendingUserIds: v.array(v.string()),
+    succeeded: v.number(),
+    // Attendees whose ranking failed, and how many had nothing to rank
+    // (no longer approved, or their profile stopped being ready).
+    failedUserIds: v.array(v.string()),
+    skipped: v.number(),
+  }).index('by_eventId', ['eventId']),
 
   // ── Luma: official API mirror state, one row per org (convex/luma/) ──
   lumaSyncState: defineTable({

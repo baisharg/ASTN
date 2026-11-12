@@ -111,10 +111,6 @@ async function lumaRequest<T>(
   return (await response.json()) as T
 }
 
-export function isLumaRateLimited(error: unknown): boolean {
-  return error instanceof LumaApiError && error.status === 429
-}
-
 export type LumaCalendar = { id: string; slug: string | null; name: string }
 
 /** The calendar the API key belongs to. */

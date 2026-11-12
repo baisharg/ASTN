@@ -11,8 +11,10 @@ import {
   findGuestForIdentity,
   focusFromPrompt,
   getProfileByUser,
+  isFreshImageUpload,
   isOnAllowlist,
   isProfileReadyForMatching,
+  lumaStateReset,
   meetingsWindow,
   normalizeEmail,
   profileMissingForMatching,
@@ -28,6 +30,7 @@ import {
   lumaSyncValidator,
   profileMissingValidator,
 } from './validators'
+import type { RegisterErrorCode, RegisterErrorData } from './constants'
 import type { GuestStatus } from './lib'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
@@ -111,6 +114,12 @@ async function countGuestsWithStatus(
     )
     .take(1000)
   return rows.length
+}
+
+/** Refuse a registration with a code the event page translates. */
+function refuseRegistration(code: RegisterErrorCode, message: string): never {
+  const data: RegisterErrorData = { code, message }
+  throw new ConvexError(data)
 }
 
 // ── Public ──────────────────────────────────────────────────────────────
@@ -241,13 +250,16 @@ export const register = mutation({
   }),
   handler: async (ctx, { eventId, linkedinUrl }) => {
     const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new ConvexError('Not authenticated')
+    if (!identity) refuseRegistration('not_authenticated', 'Not authenticated')
     if (!identity.email) {
-      throw new ConvexError('Your account has no email address')
+      refuseRegistration('no_email', 'Your account has no email address')
     }
     const event = await ctx.db.get('socialEvents', eventId)
     if (!event || event.status !== 'published') {
-      throw new ConvexError('Registration is not open for this event')
+      refuseRegistration(
+        'registration_closed',
+        'Registration is not open for this event',
+      )
     }
 
     const userId = identity.subject
@@ -580,11 +592,24 @@ export const linkLumaEvent = mutation({
         'Another event is already linked to that Luma event',
       )
     }
-    await ctx.db.patch('socialEvents', eventId, {
-      lumaEventId: id,
-      lumaLastSyncError: undefined,
-      updatedAt: Date.now(),
-    })
+    if (event.lumaEventId === id) {
+      await ctx.db.patch('socialEvents', eventId, {
+        lumaLastSyncError: undefined,
+        updatedAt: Date.now(),
+      })
+    } else {
+      // A different Luma event: nothing the guests or the event hold from
+      // the previous one applies, and the import pushes the guests to this
+      // one. A first link finds nothing to reset.
+      await ctx.db.patch('socialEvents', eventId, {
+        lumaEventId: id,
+        lumaUrl: undefined,
+        lumaLastSyncedAt: undefined,
+        lumaLastSyncError: undefined,
+        updatedAt: Date.now(),
+      })
+      await resetGuestsLumaState(ctx, eventId, { clearLumaCheckIns: true })
+    }
     await ctx.scheduler.runAfter(0, internal.social.lumaSync.importLumaEvent, {
       eventId,
     })
@@ -592,10 +617,26 @@ export const linkLumaEvent = mutation({
   },
 })
 
+/** Apply `lumaStateReset` to every guest of the event. */
+async function resetGuestsLumaState(
+  ctx: MutationCtx,
+  eventId: Id<'socialEvents'>,
+  options: { clearLumaCheckIns: boolean },
+): Promise<void> {
+  const guests = await ctx.db
+    .query('socialEventGuests')
+    .withIndex('by_eventId_and_email', (q) => q.eq('eventId', eventId))
+    .take(2000)
+  for (const guest of guests) {
+    const patch = lumaStateReset(guest, options)
+    if (patch) await ctx.db.patch('socialEventGuests', guest._id, patch)
+  }
+}
+
 /**
  * Remove the event's Luma link, e.g. after the Luma event was deleted.
  * Guests stay; their Luma mirror state resets, so linking a new Luma event
- * pushes them again.
+ * pushes them again. Check-ins stay too, until another Luma event is linked.
  */
 export const unlinkLumaEvent = mutation({
   args: { eventId: v.id('socialEvents') },
@@ -609,17 +650,7 @@ export const unlinkLumaEvent = mutation({
       lumaLastSyncError: undefined,
       updatedAt: Date.now(),
     })
-    const guests = await ctx.db
-      .query('socialEventGuests')
-      .withIndex('by_eventId_and_email', (q) => q.eq('eventId', eventId))
-      .take(2000)
-    for (const guest of guests) {
-      await ctx.db.patch('socialEventGuests', guest._id, {
-        lumaGuestId: undefined,
-        lumaSync: 'not_linked',
-        lumaSyncError: undefined,
-      })
-    }
+    await resetGuestsLumaState(ctx, eventId, { clearLumaCheckIns: false })
     return null
   },
 })
@@ -871,7 +902,16 @@ export const setFloorPlan = mutation({
   returns: v.null(),
   handler: async (ctx, { eventId, storageId }) => {
     const { event } = await requireEventAdmin(ctx, eventId)
-    if (event.floorPlanStorageId && event.floorPlanStorageId !== storageId) {
+    if (storageId === (event.floorPlanStorageId ?? null)) return null
+    if (storageId !== null) {
+      const file = await ctx.db.system.get('_storage', storageId)
+      if (!isFreshImageUpload(file, Date.now())) {
+        throw new ConvexError(
+          'The floor plan must be an image you just uploaded. Upload it again.',
+        )
+      }
+    }
+    if (event.floorPlanStorageId) {
       await ctx.storage.delete(event.floorPlanStorageId)
     }
     await ctx.db.patch('socialEvents', eventId, {

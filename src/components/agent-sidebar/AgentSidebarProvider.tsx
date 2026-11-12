@@ -6,10 +6,12 @@ import {
   useRef,
   useState,
 } from 'react'
+import { useRouterState } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
 import { ConsentDialog } from '~/components/consent/ConsentDialog'
+import { isSocialEventPath } from '~/lib/socialEventPath'
 
 interface AgentSidebarContextValue {
   isOpen: boolean
@@ -61,6 +63,11 @@ export function AgentSidebarProvider({
   }, [])
 
   const profile = useQuery(api.profiles.getOrCreateProfile)
+  // People reach the in-person event pages for the event, often with an
+  // account made a minute ago: there the assistant opens only when asked.
+  const onEventPage = useRouterState({
+    select: (s) => isSocialEventPath(s.location.pathname),
+  })
   const createThread = useMutation(api.agent.threadOps.createAgentThread)
   const sendMessage = useMutation(api.agent.threadOps.sendMessage)
   const threadCreating = useRef(false)
@@ -104,8 +111,10 @@ export function AgentSidebarProvider({
         const newThreadId = await createThread({ profileId: profile._id })
 
         // Auto-send greeting for new profiles to trigger BAISH CRM lookup
-        // A profile is "new" if it has no name and no enrichment conversation yet
+        // A profile is "new" if it has no name and no enrichment conversation yet.
+        // Not on event pages: the person's own first message opens the chat.
         if (
+          !onEventPage &&
           !profile.name &&
           !profile.hasEnrichmentConversation &&
           !autoGreetSent.current
@@ -129,12 +138,14 @@ export function AgentSidebarProvider({
     }
 
     void setup()
-  }, [profile, isOpen, createThread, sendMessage])
+  }, [profile, isOpen, onEventPage, createThread, sendMessage])
 
   // Auto-open for new users: profile exists but no thread yet
-  // If no consent, show consent dialog instead of opening sidebar
+  // If no consent, show consent dialog instead of opening sidebar.
+  // Waits until the person is off the event pages.
   useEffect(() => {
     if (!profile) return
+    if (onEventPage) return
     if (autoOpenedRef.current) return
     if (!profile.agentThreadId) {
       autoOpenedRef.current = true
@@ -144,7 +155,7 @@ export function AgentSidebarProvider({
         setShowConsentDialog(true)
       }
     }
-  }, [profile])
+  }, [profile, onEventPage])
 
   const toggle = useCallback(() => {
     if (!isOpen && profile && !profile.consentedAt) {

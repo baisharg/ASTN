@@ -15,7 +15,9 @@ import {
   attendanceExternalId,
   attendanceGuestValidator,
   eventEnd,
+  mirrorChanges,
   mirroredEventValidator,
+  newMirrorFields,
   recomputeLumaCounts,
   syncTotalsValidator,
 } from './shared'
@@ -169,14 +171,6 @@ function needsGuestSync(
   return existing.lastGuestSyncAt < settlesAt
 }
 
-function differs(existing: Doc<'events'>, event: MirroredEvent): boolean {
-  for (const [key, value] of Object.entries(event)) {
-    if (value === undefined) continue
-    if (existing[key as keyof Doc<'events'>] !== value) return true
-  }
-  return existing.canceled === true
-}
-
 /** The org's mirror row for a Luma event (each org has its own rows). */
 export async function getOrgEventRow(
   ctx: QueryCtx | MutationCtx,
@@ -198,11 +192,12 @@ async function upsertEvent(
   options: { notify: boolean; now: number },
 ): Promise<'inserted' | 'updated' | 'unchanged'> {
   const existing = await getOrgEventRow(ctx, orgId, event.lumaEventId)
-  const syncNeeded = needsGuestSync(event, existing, options.now)
+  const fields = newMirrorFields(event)
+  const syncNeeded = needsGuestSync(fields, existing, options.now)
 
   if (!existing) {
     const eventId = await ctx.db.insert('events', {
-      ...event,
+      ...fields,
       orgId,
       syncedAt: options.now,
       canceled: false,
@@ -223,17 +218,16 @@ async function upsertEvent(
     return 'inserted'
   }
 
-  const changed = differs(existing, event)
+  // A canceled row that Luma reports again is no longer canceled.
+  const changes = mirrorChanges(existing, event)
+  const changed = Object.keys(changes).length > 0 || existing.canceled === true
   const flagChange = syncNeeded && !existing.guestSyncNeeded
   if (!changed && !flagChange) return 'unchanged'
   const patch: Partial<Doc<'events'>> = { syncedAt: options.now }
-  if (changed) {
-    Object.assign(patch, event, { canceled: false })
-    // The list endpoint has no description; keep the one we have.
-    if (event.description === undefined) delete patch.description
-  }
+  if (changed) Object.assign(patch, changes, { canceled: false })
   if (syncNeeded) patch.guestSyncNeeded = true
   await ctx.db.patch('events', existing._id, patch)
+  if (existing.canceled) await scheduleAttendanceRecount(ctx, [existing._id])
   return changed ? 'updated' : 'unchanged'
 }
 
@@ -277,7 +271,7 @@ export const markMissingCanceled = internalMutation({
       .query('events')
       .withIndex('by_org', (q) => q.eq('orgId', orgId))
       .take(5000)
-    let canceled = 0
+    const canceled: Array<Id<'events'>> = []
     for (const row of rows) {
       if (row.canceled || seen.has(row.lumaEventId)) continue
       if (!row.lumaEventId.startsWith('evt-')) continue // seeds, other sources
@@ -285,9 +279,10 @@ export const markMissingCanceled = internalMutation({
         canceled: true,
         guestSyncNeeded: undefined,
       })
-      canceled++
+      canceled.push(row._id)
     }
-    return canceled
+    await scheduleAttendanceRecount(ctx, canceled)
+    return canceled.length
   },
 })
 
@@ -322,6 +317,7 @@ export const applyWebhookEvent = internalMutation({
           canceled: true,
           guestSyncNeeded: undefined,
         })
+        await scheduleAttendanceRecount(ctx, [existing._id])
       }
       return !!existing
     }
@@ -402,7 +398,12 @@ export const flagAllForGuestSync = internalMutation({
 })
 
 export const nextGuestSyncBatch = internalQuery({
-  args: { orgId: v.id('organizations'), limit: v.number() },
+  args: {
+    orgId: v.id('organizations'),
+    limit: v.number(),
+    // Flagged events the running chain already failed to read.
+    skip: v.optional(v.array(v.id('events'))),
+  },
   returns: v.array(
     v.object({
       _id: v.id('events'),
@@ -410,7 +411,8 @@ export const nextGuestSyncBatch = internalQuery({
       lumaAccess: v.union(v.string(), v.null()),
     }),
   ),
-  handler: async (ctx, { orgId, limit }) => {
+  handler: async (ctx, { orgId, limit, skip }) => {
+    const skipped = new Set(skip ?? [])
     // Newest first: upcoming events matter most.
     const rows = await ctx.db
       .query('events')
@@ -418,12 +420,15 @@ export const nextGuestSyncBatch = internalQuery({
         q.eq('orgId', orgId).eq('guestSyncNeeded', true),
       )
       .order('desc')
-      .take(limit)
-    return rows.map((r) => ({
-      _id: r._id,
-      lumaEventId: r.lumaEventId,
-      lumaAccess: r.lumaAccess ?? null,
-    }))
+      .take(limit + skipped.size)
+    return rows
+      .filter((r) => !skipped.has(r._id))
+      .slice(0, limit)
+      .map((r) => ({
+        _id: r._id,
+        lumaEventId: r.lumaEventId,
+        lumaAccess: r.lumaAccess ?? null,
+      }))
   },
 })
 
@@ -436,17 +441,22 @@ export const renewOrReleaseChain = internalMutation({
     holdMs: v.optional(v.number()),
     // Stop even if events are still flagged (e.g. the org lost the key).
     release: v.optional(v.boolean()),
+    // Flagged events this chain already failed to read. They wait for the
+    // next chain, so they don't keep this one going.
+    skip: v.optional(v.array(v.id('events'))),
   },
   returns: v.boolean(), // true: keep going
-  handler: async (ctx, { orgId, error, holdMs, release }) => {
+  handler: async (ctx, { orgId, error, holdMs, release, skip }) => {
     const state = await ensureState(ctx, orgId)
     const now = Date.now()
-    const pending = await ctx.db
+    const skipped = new Set(skip ?? [])
+    const flagged = await ctx.db
       .query('events')
       .withIndex('by_org_and_guestSyncNeeded_and_startAt', (q) =>
         q.eq('orgId', orgId).eq('guestSyncNeeded', true),
       )
-      .first()
+      .take(skipped.size + 1)
+    const pending = flagged.some((row) => !skipped.has(row._id))
     if (pending && !release) {
       await ctx.db.patch('lumaSyncState', state._id, {
         chainLockedUntil: now + Math.max(CHAIN_LOCK_MS, holdMs ?? 0),
@@ -464,6 +474,35 @@ export const renewOrReleaseChain = internalMutation({
     return false
   },
 })
+
+/**
+ * A page of an event's Luma history rows, in externalId order. `next` is
+ * the `after` of the following page, or null on the last one.
+ */
+async function attendancePage(
+  ctx: QueryCtx | MutationCtx,
+  event: Pick<Doc<'events'>, 'orgId' | 'lumaEventId'>,
+  after: string | undefined,
+  limit: number,
+): Promise<{ rows: Array<Doc<'crmActivities'>>; next: string | null }> {
+  const prefix = attendanceExternalId(event.lumaEventId, '')
+  // ';' sorts right after ':', so this is every id with the prefix.
+  const end = `${prefix.slice(0, -1)};`
+  const page = await ctx.db
+    .query('crmActivities')
+    .withIndex('by_orgId_and_externalId', (q) =>
+      q
+        .eq('orgId', event.orgId)
+        .gt('externalId', after ?? prefix)
+        .lt('externalId', end),
+    )
+    .take(limit)
+  const last = page[page.length - 1]?.externalId
+  return {
+    rows: page.filter((row) => row.source === 'luma'),
+    next: page.length === limit && last ? last : null,
+  }
+}
 
 /** Shallow equality of two `data` bags, ignoring key order. */
 function sameData(a: Record<string, unknown>, b: Record<string, unknown>) {
@@ -634,7 +673,10 @@ export const applyAttendanceChunk = internalMutation({
       if (existing.contactId !== contactId) touched.add(existing.contactId)
     }
 
-    for (const contactId of touched) await recomputeLumaCounts(ctx, contactId)
+    const knownCanceled = new Map<string, boolean>()
+    for (const contactId of touched) {
+      await recomputeLumaCounts(ctx, contactId, knownCanceled)
+    }
     if (result.contactsCreated > 0) {
       await bumpCount(ctx, orgId, 'contacts', result.contactsCreated)
     }
@@ -662,30 +704,99 @@ export const pruneRemovedAttendance = internalMutation({
     const event = await ctx.db.get('events', eventRowId)
     if (!event) return { deleted: 0, next: null }
     const prefix = attendanceExternalId(event.lumaEventId, '')
-    // ';' sorts right after ':', so this is every id with the prefix.
-    const end = `${prefix.slice(0, -1)};`
-    const rows = await ctx.db
-      .query('crmActivities')
-      .withIndex('by_orgId_and_externalId', (q) =>
-        q
-          .eq('orgId', event.orgId)
-          .gt('externalId', after ?? prefix)
-          .lt('externalId', end),
-      )
-      .take(200)
+    const { rows, next } = await attendancePage(ctx, event, after, 200)
     const keep = new Set(keepEmails)
     const touched = new Set<Id<'crmContacts'>>()
     let deleted = 0
     for (const row of rows) {
-      if (row.source !== 'luma' || !row.externalId) continue
+      if (!row.externalId) continue
       if (keep.has(row.externalId.slice(prefix.length))) continue
       await ctx.db.delete('crmActivities', row._id)
       touched.add(row.contactId)
       deleted++
     }
-    for (const contactId of touched) await recomputeLumaCounts(ctx, contactId)
-    const last = rows[rows.length - 1]?.externalId
-    return { deleted, next: rows.length === 200 && last ? last : null }
+    const knownCanceled = new Map<string, boolean>()
+    for (const contactId of touched) {
+      await recomputeLumaCounts(ctx, contactId, knownCanceled)
+    }
+    return { deleted, next }
+  },
+})
+
+// ── Canceled events ─────────────────────────────────────────────────────
+
+// Each contact's whole history is read to recount it.
+const RECOUNT_PAGE = 100
+
+/**
+ * Recount attendance for everyone with a history row for these events, once
+ * the calling mutation commits. Whether an event is canceled changes what
+ * its rows count for (attendanceStatusShown), and the counts are stored on
+ * the contacts, so they are recomputed when an event is canceled or comes
+ * back.
+ */
+async function scheduleAttendanceRecount(
+  ctx: MutationCtx,
+  eventRowIds: Array<Id<'events'>>,
+): Promise<void> {
+  if (eventRowIds.length === 0) return
+  await ctx.scheduler.runAfter(0, internal.luma.mirror.recountAttendance, {
+    eventRowIds,
+  })
+}
+
+/**
+ * Recompute the Luma counts of every contact with a history row for these
+ * events: one page of one event's rows per run, rescheduling itself until
+ * all are done. Safe to run again at any time.
+ */
+export const recountAttendance = internalMutation({
+  args: {
+    eventRowIds: v.array(v.id('events')),
+    // Continue the first event's rows after this externalId.
+    after: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, { eventRowIds, after }) => {
+    if (eventRowIds.length === 0) return null
+    const event = await ctx.db.get('events', eventRowIds[0])
+    let next: string | null = null
+    if (event) {
+      const page = await attendancePage(ctx, event, after, RECOUNT_PAGE)
+      const knownCanceled = new Map<string, boolean>()
+      for (const contactId of new Set(page.rows.map((r) => r.contactId))) {
+        await recomputeLumaCounts(ctx, contactId, knownCanceled)
+      }
+      next = page.next
+    }
+    const rest = next ? eventRowIds : eventRowIds.slice(1)
+    if (rest.length > 0) {
+      await ctx.scheduler.runAfter(0, internal.luma.mirror.recountAttendance, {
+        eventRowIds: rest,
+        after: next ?? undefined,
+      })
+    }
+    return null
+  },
+})
+
+/**
+ * Recount attendance for every canceled event of the org, for running by
+ * hand when the stored counts may not reflect the cancellations. Canceling
+ * an event recounts that event on its own. Returns how many events it
+ * queued.
+ */
+export const recountCanceledEvents = internalMutation({
+  args: { orgId: v.id('organizations') },
+  returns: v.number(),
+  handler: async (ctx, { orgId }) => {
+    const rows = await ctx.db
+      .query('events')
+      .withIndex('by_org', (q) => q.eq('orgId', orgId))
+      .take(5000)
+    const canceled = rows.filter((row) => row.canceled).map((row) => row._id)
+    await scheduleAttendanceRecount(ctx, canceled)
+    return canceled.length
   },
 })
 
@@ -702,19 +813,23 @@ export const finishEventGuestSync = internalMutation({
       }),
     ),
     error: v.optional(v.string()),
+    // With `error`: the failure may pass (see guestReadFailure), so the
+    // event stays flagged and the next chain reads it again.
+    retry: v.optional(v.boolean()),
     totals: syncTotalsValidator,
   },
   returns: v.null(),
-  handler: async (ctx, { eventRowId, counts, error, totals }) => {
+  handler: async (ctx, { eventRowId, counts, error, retry, totals }) => {
     const event = await ctx.db.get('events', eventRowId)
     if (!event) return null
     const now = Date.now()
-    await ctx.db.patch('events', eventRowId, {
+    const patch: Partial<Doc<'events'>> = {
       ...counts,
-      guestSyncNeeded: undefined,
       lastGuestSyncAt: error ? event.lastGuestSyncAt : now,
       guestSyncError: error,
-    })
+    }
+    if (!(error && retry)) patch.guestSyncNeeded = undefined
+    await ctx.db.patch('events', eventRowId, patch)
     const state = await ensureState(ctx, event.orgId)
     await ctx.db.patch('lumaSyncState', state._id, {
       totals: addTotals(state.totals, totals),
