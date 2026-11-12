@@ -2,7 +2,7 @@ import { v } from 'convex/values'
 import { LumaApiError } from '../social/luma'
 import type { Infer } from 'convex/values'
 import type { Doc, Id } from '../_generated/dataModel'
-import type { MutationCtx } from '../_generated/server'
+import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { LumaEvent, LumaGuest } from '../social/luma'
 
 /**
@@ -273,11 +273,31 @@ export function lumaEventOf(row: LumaRow): string | null {
 }
 
 /**
+ * A Luma history row's status as the CRM counts and shows it. A
+ * registration for a canceled event is 'canceled': there was nothing to
+ * attend. A check-in stays a check-in, because the mirror also marks as
+ * canceled an event that was deleted from the calendar after it took place.
+ * The stored status is never rewritten, so an event that comes back counts
+ * again as it did.
+ */
+export function attendanceStatusShown(
+  status: string | undefined,
+  eventCanceled: boolean,
+): string | undefined {
+  return eventCanceled && status !== 'checked_in' ? 'canceled' : status
+}
+
+/**
  * Events a person was approved for (checked in included) and checked in
  * to, counting each Luma event once with its best status: a merged contact
  * can hold one row per email it registered with, and the sync keeps both.
+ * Rows of the events in `canceledEventIds` count as attendanceStatusShown
+ * says.
  */
-export function countLumaAttendance(rows: Array<LumaRow>): {
+export function countLumaAttendance(
+  rows: Array<LumaRow>,
+  canceledEventIds: ReadonlySet<string> = new Set(),
+): {
   approved: number
   checkedIn: number
 } {
@@ -285,7 +305,11 @@ export function countLumaAttendance(rows: Array<LumaRow>): {
   for (const row of rows) {
     const event = lumaEventOf(row)
     if (!event) continue
-    byEvent.set(event, bestStatus(byEvent.get(event), row.status))
+    const status = attendanceStatusShown(
+      row.status,
+      canceledEventIds.has(event),
+    )
+    byEvent.set(event, bestStatus(byEvent.get(event), status))
   }
   let approved = 0
   let checkedIn = 0
@@ -297,12 +321,44 @@ export function countLumaAttendance(rows: Array<LumaRow>): {
 }
 
 /**
+ * Which of these Luma events the org's mirror has as canceled. `known`
+ * holds answers already read for this org, so a caller that asks for many
+ * contacts in one function reads each event once.
+ */
+export async function canceledLumaEvents(
+  ctx: QueryCtx | MutationCtx,
+  orgId: Id<'organizations'>,
+  lumaEventIds: Iterable<string>,
+  known: Map<string, boolean> = new Map(),
+): Promise<Set<string>> {
+  const canceled = new Set<string>()
+  for (const lumaEventId of lumaEventIds) {
+    let isCanceled = known.get(lumaEventId)
+    if (isCanceled === undefined) {
+      const row = await ctx.db
+        .query('events')
+        .withIndex('by_orgId_and_lumaEventId', (q) =>
+          q.eq('orgId', orgId).eq('lumaEventId', lumaEventId),
+        )
+        .first()
+      isCanceled = row?.canceled === true
+      known.set(lumaEventId, isCanceled)
+    }
+    if (isCanceled) canceled.add(lumaEventId)
+  }
+  return canceled
+}
+
+/**
  * Recompute a contact's lumaApproved / lumaCheckedIn fields from its Luma
- * event history. Approved includes checked in.
+ * event history. Approved includes checked in. `knownCanceled` is
+ * canceledLumaEvents' `known`, for callers that recompute many contacts of
+ * one org.
  */
 export async function recomputeLumaCounts(
   ctx: MutationCtx,
   contactId: Id<'crmContacts'>,
+  knownCanceled?: Map<string, boolean>,
 ): Promise<void> {
   const contact = await ctx.db.get('crmContacts', contactId)
   if (!contact) return
@@ -313,7 +369,18 @@ export async function recomputeLumaCounts(
       q.eq('contactId', contactId),
     )
     .take(5000)
-  const { approved, checkedIn } = countLumaAttendance(activities)
+  const lumaEventIds = new Set<string>()
+  for (const activity of activities) {
+    const lumaEventId = lumaEventOf(activity)
+    if (lumaEventId) lumaEventIds.add(lumaEventId)
+  }
+  const canceled = await canceledLumaEvents(
+    ctx,
+    contact.orgId,
+    lumaEventIds,
+    knownCanceled,
+  )
+  const { approved, checkedIn } = countLumaAttendance(activities, canceled)
   const fields = contact.fields ?? {}
   if (fields.lumaApproved === approved && fields.lumaCheckedIn === checkedIn) {
     return
