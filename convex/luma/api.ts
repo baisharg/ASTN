@@ -340,15 +340,17 @@ const lumaFieldValidator = v.union(
 
 /**
  * After an ASTN event linked to Luma changes, send the changed details to
- * Luma (scheduled by social/events.updateEvent).
+ * Luma (scheduled by social/events.updateEvent). Luma emails the guests
+ * about a new name, time or place only with `notifyGuests`.
  */
 export const pushSocialEventToLuma = internalAction({
   args: {
     eventId: v.id('socialEvents'),
     fields: v.array(lumaFieldValidator),
+    notifyGuests: v.optional(v.boolean()),
   },
   returns: v.null(),
-  handler: async (ctx, { eventId, fields }) => {
+  handler: async (ctx, { eventId, fields, notifyGuests }) => {
     const event = await ctx.runQuery(
       internal.luma.admin.getSocialEventForPush,
       { eventId },
@@ -375,7 +377,10 @@ export const pushSocialEventToLuma = internalAction({
     if (Object.keys(body).length === 0) return null
     try {
       await assertOrgOwnsApiCalendar(ctx, event.orgId)
-      await updateLumaEvent(event.lumaEventId, body)
+      await updateLumaEvent(event.lumaEventId, {
+        ...body,
+        suppress_email: notifyGuests !== true,
+      })
       await refreshMirror(ctx, event.orgId, event.lumaEventId)
       await ctx.runMutation(internal.social.lumaSync.setEventSyncResult, {
         eventId,
