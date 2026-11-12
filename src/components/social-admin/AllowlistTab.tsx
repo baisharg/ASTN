@@ -435,11 +435,15 @@ export function AllowlistTab({ orgId }: { orgId: Id<'organizations'> }) {
   )
 }
 
-/** Pull the org's Luma contacts into the CRM, optionally pre-approving them. */
+/**
+ * Pull the org's Luma contacts into the CRM. Pre-approving everyone Luma
+ * counts as approved at a past event is opt-in.
+ */
 function LumaContactsCard({ orgId }: { orgId: Id<'organizations'> }) {
   const importLumaContacts = useAction(api.social.lumaCrm.importLumaContacts)
   const { busy, run } = useBusyAction<'luma'>()
-  const [allowlistApproved, setAllowlistApproved] = useState(true)
+  // Off unless asked for: it pre-approves a lot of people nobody reviewed.
+  const [allowlistApproved, setAllowlistApproved] = useState(false)
 
   const onImport = async () => {
     const result = await run(
@@ -473,10 +477,26 @@ function LumaContactsCard({ orgId }: { orgId: Id<'organizations'> }) {
             id="luma-allowlist"
             checked={allowlistApproved}
             onCheckedChange={(v) => setAllowlistApproved(v === true)}
+            aria-describedby="luma-allowlist-help"
+            className="mt-0.5"
           />
-          <Label htmlFor="luma-allowlist" className="font-normal leading-snug">
-            Preaprobar a quienes ya fueron aprobados en algún evento de Luma
-          </Label>
+          <div className="space-y-1">
+            <Label
+              htmlFor="luma-allowlist"
+              className="font-normal leading-snug"
+            >
+              Además, preaprobar a todas las personas que alguna vez quedaron
+              aprobadas en un evento de Luma
+            </Label>
+            <p
+              id="luma-allowlist-help"
+              className="text-xs text-muted-foreground"
+            >
+              Incluye a todos los que se anotaron en eventos sin aprobación,
+              donde cualquiera queda aprobado al anotarse. Suma a la lista de
+              preaprobados a gente que nadie revisó.
+            </p>
+          </div>
         </div>
         <Button onClick={onImport} disabled={busy !== null}>
           {busy ? (
