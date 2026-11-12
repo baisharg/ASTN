@@ -18,7 +18,8 @@ import {
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
 import { useHaptic } from '~/hooks/use-haptic'
-import { useCopy } from '~/lib/social-i18n'
+import { useCopy, useSocialLang } from '~/lib/social-i18n'
+import { spotName, spotPinText } from '~/lib/social-spot'
 import { endedRecently, meetingRanOut, watchTimeUp } from '~/lib/social-live'
 import { useBusyAction } from '~/lib/use-busy-action'
 
@@ -33,11 +34,7 @@ const copy = {
     meetingWith: 'Te reunís con',
     viewProfile: 'Ver perfil',
     spotSection: 'Lugar de la reunión',
-    spot: (n: number) => `Lugar ${n}`,
-    planLabel: (n: number, label: string | null) =>
-      label
-        ? `Plano del lugar con el lugar ${n} marcado: ${label}`
-        : `Plano del lugar con el lugar ${n} marcado`,
+    planLabel: (spot: string) => `Plano con el lugar marcado: ${spot}`,
     noSpotTitle: 'Sin lugar asignado',
     noSpotBody:
       'Todos los lugares están ocupados. Encuéntrense en algún rincón tranquilo.',
@@ -91,11 +88,7 @@ const copy = {
     meetingWith: "You're meeting",
     viewProfile: 'View profile',
     spotSection: 'Meeting spot',
-    spot: (n: number) => `Spot ${n}`,
-    planLabel: (n: number, label: string | null) =>
-      label
-        ? `Floor plan with spot ${n} marked: ${label}`
-        : `Floor plan with spot ${n} marked`,
+    planLabel: (spot: string) => `Floor plan with the spot marked: ${spot}`,
     noSpotTitle: 'No spot assigned',
     noSpotBody: 'Every spot is taken. Find a quiet corner to meet.',
     timeSection: 'Time left',
@@ -212,6 +205,7 @@ function MeetingContent({ live }: { live: LiveState }) {
 function ActiveMeeting({ meeting }: { meeting: LiveMeeting }) {
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
+  const { lang } = useSocialLang()
   return (
     <>
       <section className="flex flex-col gap-1">
@@ -231,21 +225,14 @@ function ActiveMeeting({ meeting }: { meeting: LiveMeeting }) {
 
       {meeting.spot ? (
         <Panel aria-label={t.spotSection} className="gap-3 p-4">
-          <div className="flex items-baseline justify-between gap-3">
-            <h2 className="text-[22px] font-bold text-[var(--baish-strong)]">
-              {t.spot(meeting.spot.number)}
-            </h2>
-            {meeting.spot.label && (
-              <span className="text-right text-sm text-muted-foreground">
-                {meeting.spot.label}
-              </span>
-            )}
-          </div>
+          <h2 className="text-[22px] font-bold text-[var(--baish-strong)]">
+            {spotName(meeting.spot, lang)}
+          </h2>
           <FloorPlan
             x={meeting.spot.x}
             y={meeting.spot.y}
-            number={meeting.spot.number}
-            label={t.planLabel(meeting.spot.number, meeting.spot.label)}
+            pinText={spotPinText(meeting.spot)}
+            label={t.planLabel(spotName(meeting.spot, lang))}
           />
         </Panel>
       ) : (

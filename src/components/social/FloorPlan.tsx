@@ -6,12 +6,14 @@
 export function FloorPlan({
   x,
   y,
-  number,
+  pinText,
   label,
 }: {
   x: number
   y: number
-  number: number
+  /** Text inside the pin (the spot's number), or null for a plain pin. */
+  pinText: string | null
+  /** What the drawing shows, for screen readers. */
   label: string
 }) {
   const width = 340
@@ -38,16 +40,18 @@ export function FloorPlan({
       />
       <circle cx={cx} cy={cy} r="22" fill="var(--primary)" opacity="0.18" />
       <circle cx={cx} cy={cy} r="15" fill="var(--primary)" />
-      <text
-        x={cx}
-        y={cy + 4.5}
-        textAnchor="middle"
-        fontSize="13"
-        fontWeight="700"
-        fill="var(--primary-foreground)"
-      >
-        {number}
-      </text>
+      {pinText !== null && (
+        <text
+          x={cx}
+          y={cy + 4.5}
+          textAnchor="middle"
+          fontSize="13"
+          fontWeight="700"
+          fill="var(--primary-foreground)"
+        >
+          {pinText}
+        </text>
+      )}
     </svg>
   )
 }
