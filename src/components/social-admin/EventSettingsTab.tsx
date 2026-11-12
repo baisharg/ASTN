@@ -1,25 +1,13 @@
-import { Link } from '@tanstack/react-router'
 import { useMutation } from 'convex/react'
-import { formatDistanceToNow } from 'date-fns'
-import { es } from 'date-fns/locale'
-import {
-  AlertTriangle,
-  ExternalLink,
-  Link2,
-  Loader2,
-  Mail,
-  RefreshCw,
-  Save,
-} from 'lucide-react'
-import { useState } from 'react'
+import { Loader2, Save } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
 import { EventDetailsFields, useEventDetailsForm } from './EventDetailsFields'
+import { LumaLinkCard } from './LumaLinkCard'
 import { OneOnOneCard } from './OneOnOneCard'
 import { SpotsCard } from './SpotsCard'
 import { EVENT_STATUS_LABELS, EventStatusBadge, toastError } from './shared'
 import type { AdminEvent, EventStatus } from './shared'
-import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
 import {
   Card,
@@ -28,8 +16,6 @@ import {
   CardHeader,
   CardTitle,
 } from '~/components/ui/card'
-import { Input } from '~/components/ui/input'
-import { Label } from '~/components/ui/label'
 import { detailsFromEvent } from '~/lib/event-details'
 import { useBusyAction } from '~/lib/use-busy-action'
 import { carryZonedTime } from '~/lib/zoned-time'
@@ -39,7 +25,7 @@ export function EventSettingsTab({ event }: { event: AdminEvent }) {
     <div className="space-y-6">
       <StatusCard event={event} />
       <DetailsCard key={`details-${event._id}`} event={event} />
-      <LumaCard event={event} />
+      <LumaLinkCard event={event} />
       <OneOnOneCard key={`meetings-${event._id}`} event={event} />
       <SpotsCard key={`spots-${event._id}`} event={event} />
     </div>
@@ -179,235 +165,6 @@ function DetailsCard({ event }: { event: AdminEvent }) {
             Guardar
           </Button>
         </form>
-      </CardContent>
-    </Card>
-  )
-}
-
-// ── Luma ────────────────────────────────────────────────────────────────
-
-/** Accepts "evt-…" on its own or inside a Luma admin URL. */
-function extractLumaEventId(input: string): string | null {
-  const match = input.match(/evt-[A-Za-z0-9]+/)
-  return match ? match[0] : null
-}
-
-function LumaCard({ event }: { event: AdminEvent }) {
-  const linkLuma = useMutation(api.social.events.linkLumaEvent)
-  const syncNow = useMutation(api.social.events.syncLumaNow)
-  const retryErrors = useMutation(api.social.events.retryLumaErrors)
-  const { busy, run } = useBusyAction<'link' | 'sync' | 'retry'>()
-
-  const [editing, setEditing] = useState(!event.lumaEventId)
-  const [input, setInput] = useState('')
-
-  const parsedId = extractLumaEventId(input)
-  const linked = !!event.lumaEventId
-
-  const handleLink = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!parsedId) return
-    await run(
-      'link',
-      async () => {
-        await linkLuma({ eventId: event._id, lumaEventId: parsedId })
-        toast.success(
-          'Evento vinculado. Estamos trayendo los invitados de Luma.',
-        )
-        setEditing(false)
-        setInput('')
-      },
-      toastError('No se pudo vincular'),
-    )
-  }
-
-  const handleSync = () =>
-    run(
-      'sync',
-      async () => {
-        await syncNow({ eventId: event._id })
-        toast.success('Sincronizando con Luma')
-      },
-      toastError('No se pudo sincronizar'),
-    )
-
-  const handleRetry = () =>
-    run(
-      'retry',
-      async () => {
-        const n = await retryErrors({ eventId: event._id })
-        toast.success(
-          n === 1 ? 'Reintentando 1 invitado' : `Reintentando ${n} invitados`,
-        )
-      },
-      toastError('No se pudo reintentar'),
-    )
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          Luma
-          {linked && (
-            <Badge
-              variant="outline"
-              className="bg-green-50 text-green-700 border-green-200"
-            >
-              Conectado
-            </Badge>
-          )}
-        </CardTitle>
-        <CardDescription>
-          Inscripciones y aprobaciones se sincronizan en los dos sentidos: lo
-          que hagas acá se refleja en Luma.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {linked && (
-          <div className="space-y-1 text-sm">
-            <p>
-              Evento vinculado:{' '}
-              <span className="font-mono text-xs">{event.lumaEventId}</span>
-            </p>
-            <p className="text-muted-foreground">
-              {event.lumaLastSyncedAt
-                ? `Última sincronización ${formatDistanceToNow(
-                    event.lumaLastSyncedAt,
-                    { addSuffix: true, locale: es },
-                  )}`
-                : 'Todavía no se sincronizó'}
-            </p>
-          </div>
-        )}
-
-        {event.lumaLastSyncError && (
-          <div
-            role="alert"
-            className="flex gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800"
-          >
-            <AlertTriangle className="size-4 shrink-0 mt-0.5" />
-            <span>
-              La última sincronización falló: {event.lumaLastSyncError}
-            </span>
-          </div>
-        )}
-
-        {event.lumaErrors > 0 && (
-          <div className="flex flex-wrap items-center gap-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            <span className="flex-1 min-w-48">
-              {event.lumaErrors === 1
-                ? '1 invitado no se pudo actualizar en Luma.'
-                : `${event.lumaErrors} invitados no se pudieron actualizar en Luma.`}{' '}
-              El detalle está en la pestaña Invitados.
-            </span>
-            <Button
-              variant="outline"
-              className="min-h-11 bg-white"
-              disabled={busy !== null}
-              onClick={() => void handleRetry()}
-            >
-              <Busy show={busy === 'retry'} />
-              Reintentar
-            </Button>
-          </div>
-        )}
-
-        {linked && !editing && (
-          <div className="flex flex-wrap gap-2">
-            <Button
-              className="min-h-11"
-              disabled={busy !== null}
-              onClick={() => void handleSync()}
-            >
-              {busy === 'sync' ? (
-                <Loader2 className="size-4 mr-2 animate-spin" />
-              ) : (
-                <RefreshCw className="size-4 mr-2" />
-              )}
-              Sincronizar ahora
-            </Button>
-            {event.lumaUrl && (
-              <Button variant="outline" className="min-h-11" asChild>
-                <a href={event.lumaUrl} target="_blank" rel="noreferrer">
-                  <ExternalLink className="size-4 mr-2" />
-                  Abrir en Luma
-                </a>
-              </Button>
-            )}
-            {event.lumaEventId && event.orgSlug && (
-              <Button variant="outline" className="min-h-11" asChild>
-                <Link
-                  to="/org/$slug/admin/events/luma/$lumaEventId"
-                  params={{
-                    slug: event.orgSlug,
-                    lumaEventId: event.lumaEventId,
-                  }}
-                >
-                  <Mail className="size-4 mr-2" />
-                  Emails y ajustes de Luma
-                </Link>
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              className="min-h-11"
-              onClick={() => setEditing(true)}
-            >
-              Cambiar evento vinculado
-            </Button>
-          </div>
-        )}
-
-        {editing && (
-          <form onSubmit={handleLink} className="space-y-2">
-            <Label htmlFor="luma-event-id">ID del evento en Luma</Label>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <Input
-                id="luma-event-id"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="evt-…"
-                aria-describedby="luma-event-id-help"
-                className="min-h-11"
-              />
-              <Button
-                type="submit"
-                className="min-h-11"
-                disabled={!parsedId || busy !== null}
-              >
-                {busy === 'link' ? (
-                  <Loader2 className="size-4 mr-2 animate-spin" />
-                ) : (
-                  <Link2 className="size-4 mr-2" />
-                )}
-                Vincular
-              </Button>
-              {linked && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="min-h-11"
-                  onClick={() => setEditing(false)}
-                >
-                  Cancelar
-                </Button>
-              )}
-            </div>
-            <p
-              id="luma-event-id-help"
-              className="text-xs text-muted-foreground"
-            >
-              Está en Luma, en la página de administración del evento: la
-              dirección termina en <span className="font-mono">evt-…</span>.
-              Podés pegar la dirección completa.
-              {input && !parsedId && (
-                <span className="block text-red-600 mt-1">
-                  No encontramos un ID que empiece con evt-.
-                </span>
-              )}
-            </p>
-          </form>
-        )}
       </CardContent>
     </Card>
   )
