@@ -1,8 +1,11 @@
 import {
+  PERSONAL_LINK_IN_FLIGHT_MS,
   PERSONAL_LINK_MAX_SECONDS,
   PERSONAL_LINK_MIN_SECONDS,
   eventPageUrl,
+  openPersonalLinkTokens,
   personalEventLink,
+  personalLinkInFlight,
   personalLinkLifetimeSeconds,
   personalLinkRefusal,
   splitGuestName,
@@ -156,5 +159,58 @@ describe('splitGuestName', () => {
     expect(splitGuestName(undefined)).toEqual({})
     expect(splitGuestName(null)).toEqual({})
     expect(splitGuestName('   ')).toEqual({})
+  })
+})
+
+describe('one working link per account', () => {
+  const now = Date.UTC(2026, 10, 12, 18, 0)
+  const row = (
+    id: string,
+    fields: {
+      createdAt?: number
+      expiresAt?: number
+      finishedAt?: number
+      signInTokenId?: string
+      tokenClosedAt?: number
+    },
+  ) => ({
+    _id: id,
+    createdAt: now - 3_600_000,
+    expiresAt: now + 3_600_000,
+    ...fields,
+  })
+
+  test('an account no link was made for has nothing in flight and nothing to revoke', () => {
+    expect(personalLinkInFlight([], now)).toBe(false)
+    expect(openPersonalLinkTokens([], now)).toEqual([])
+  })
+
+  test('an attempt that has not finished blocks a second one, until it is taken for dead', () => {
+    const started = row('a', { createdAt: now - 5_000 })
+    expect(personalLinkInFlight([started], now)).toBe(true)
+    expect(
+      personalLinkInFlight(
+        [row('a', { createdAt: now - PERSONAL_LINK_IN_FLIGHT_MS })],
+        now,
+      ),
+    ).toBe(false)
+    expect(
+      personalLinkInFlight([{ ...started, finishedAt: now - 1_000 }], now),
+    ).toBe(false)
+  })
+
+  test('the tokens to revoke are the ones made, not expired and not closed', () => {
+    const rows = [
+      row('open', { finishedAt: now - 10, signInTokenId: 'sit_open' }),
+      // An attempt that died after its token was recorded.
+      row('died', { signInTokenId: 'sit_died' }),
+      row('closed', { signInTokenId: 'sit_closed', tokenClosedAt: now - 5 }),
+      row('expired', { signInTokenId: 'sit_expired', expiresAt: now }),
+      row('refused', { finishedAt: now - 10 }),
+    ]
+    expect(openPersonalLinkTokens(rows, now)).toEqual([
+      { logId: 'open', signInTokenId: 'sit_open' },
+      { logId: 'died', signInTokenId: 'sit_died' },
+    ])
   })
 })

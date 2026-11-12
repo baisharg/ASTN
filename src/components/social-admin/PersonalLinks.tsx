@@ -56,6 +56,8 @@ const NO_LINK_REASONS: Record<NoLinkReason, string> = {
   email_has_other_data:
     'Su email ya tiene datos en ASTN fuera de esta organización.',
   not_approved: 'Ya no está aprobado para este evento.',
+  link_in_progress:
+    'Ya se está haciendo un link para esta persona. Probá de nuevo en un par de minutos.',
   clerk_error: 'No se pudo crear la cuenta o el link.',
 }
 
@@ -79,9 +81,9 @@ const CREATES_ACCOUNTS =
 const LINK_IS_A_KEY =
   'Quien tenga el link entra como esa persona: mandalo solo a su email. Funciona una sola vez y vence cuando terminan los 1:1 del evento (como mucho, a los 7 días). ASTN no manda ningún email.'
 const NO_SECOND_LINK =
-  'Solo hay link personal para cuentas que nadie usó todavía. Una vez que la persona entró, no se le puede hacer otro: después entra con su email, como siempre. No abras el link de un invitado para probarlo, porque queda usado.'
-const OLD_LINKS_STAY =
-  'Hacer un link nuevo no anula los anteriores de esa persona: los que no se usaron siguen funcionando hasta vencer. Hacé los links una sola vez, cuando vayas a mandarlos.'
+  'Solo hay link personal para cuentas que nadie usó todavía. Una vez que la persona entró, no se le puede hacer otro y los que tenía sin usar dejan de funcionar: después entra con su email, como siempre. No abras el link de un invitado para probarlo, porque queda usado.'
+const NEW_LINK_CANCELS_OLD =
+  'Cada persona tiene un solo link que funciona: hacer uno nuevo anula el anterior, aunque ya lo hayas mandado. Hacé los links una sola vez, cuando vayas a mandarlos.'
 
 /**
  * The dialog behind "Copiar link personal": says what will happen, makes the
@@ -156,7 +158,7 @@ export function CopyPersonalLinkDialog({
           <AlertDialogTitle>Link personal de {who}</AlertDialogTitle>
           <AlertDialogDescription>
             {current === null
-              ? `${WHAT_A_LINK_IS} ${CREATES_ACCOUNTS} ${LINK_IS_A_KEY} ${NO_SECOND_LINK} ${OLD_LINKS_STAY}`
+              ? `${WHAT_A_LINK_IS} ${CREATES_ACCOUNTS} ${LINK_IS_A_KEY} ${NO_SECOND_LINK} ${NEW_LINK_CANCELS_OLD}`
               : current.result.link
                 ? `El link para ${guest?.email} está listo${
                     current.result.accountCreated
@@ -336,7 +338,7 @@ export function PersonalLinksCard({
                 : ''}
               . Vencen el {formatExpiry(state.expiresAt)}.
               {state.missing > 0 &&
-                ` La exportación se interrumpió: faltan ${state.missing} invitados. Volvé a exportar para incluirlos.`}
+                ` La exportación se interrumpió: faltan ${state.missing} invitados. Si volvés a exportar, usá solo el archivo nuevo: los links de este dejan de funcionar.`}
             </p>
             {state.withoutLink.length > 0 && (
               <details>
@@ -354,8 +356,9 @@ export function PersonalLinksCard({
               </details>
             )}
             <p className="text-muted-foreground">
-              El archivo contiene links que inician sesión: cuidalo como una
-              lista de contraseñas y borralo después de mandar los mails.
+              El archivo contiene links que inician sesión: es una lista de
+              contraseñas guardada en tu computadora. No lo subas a una carpeta
+              compartida y borralo después de mandar los mails.
             </p>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -387,7 +390,8 @@ export function PersonalLinksCard({
             <AlertDialogDescription>
               {CREATES_ACCOUNTS} Esas cuentas quedan creadas aunque después no
               mandes los links. {LINK_IS_A_KEY} Quien ya usa su cuenta de ASTN
-              va en el archivo con el link común del evento. {OLD_LINKS_STAY}
+              va en el archivo con el link común del evento.{' '}
+              {NEW_LINK_CANCELS_OLD}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

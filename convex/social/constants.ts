@@ -332,9 +332,11 @@ export function personalEventLink(eventUrl: string, ticket: string): string {
 
 /**
  * Why a guest gets no personal link:
- * - `account_in_use`: someone has signed in to the account with their email,
- *   or the site holds data for it. It is theirs; nobody else is given a way
- *   in. This includes an account a personal link was already used on.
+ * - `account_in_use`: Clerk has a sign-in, activity or a session on record
+ *   for the account with their email, or the site holds data for it (see
+ *   `getAccountFacts` in convex/social/events.ts for which). It is theirs;
+ *   nobody else is given a way in. This includes an account a personal link
+ *   was already used on.
  * - `email_not_primary`: an account has their email, but not as its verified
  *   primary address, which is the one the site knows an account by.
  * - `account_has_role`: the account administers an organization or the
@@ -358,9 +360,9 @@ export type PersonalLinkAccount =
       kind: 'existing'
       // The guest's email is the account's primary address and is verified.
       emailIsVerifiedPrimary: boolean
-      // Clerk has seen a sign-in to the account.
+      // Clerk has a sign-in, activity or a session on record for the account.
       hasSignedIn: boolean
-      // The site holds a profile, a membership or an event place for it.
+      // The site holds data keyed by the account.
       hasAstnData: boolean
       // The account is an admin of any organization or of the platform.
       hasAdminRole: boolean
@@ -385,6 +387,54 @@ export function personalLinkRefusal(input: {
   }
   if (input.emailHasOtherData) return 'email_has_other_data'
   return null
+}
+
+/** What the personal link log holds about one attempt to make a link. */
+type PersonalLinkLogRow<LogId> = {
+  _id: LogId
+  createdAt: number
+  expiresAt: number
+  finishedAt?: number
+  signInTokenId?: string
+  tokenClosedAt?: number
+}
+
+// An attempt that has not finished after this long is taken to have died.
+// One guest's link takes a few requests to Clerk, well under this.
+export const PERSONAL_LINK_IN_FLIGHT_MS = 2 * 60 * 1000
+
+/**
+ * Whether a link for the same email is being made right now, by this or
+ * another admin. While one is, no second one is started, so an account never
+ * gets two links from calls that overlap.
+ */
+export function personalLinkInFlight<LogId>(
+  rows: ReadonlyArray<PersonalLinkLogRow<LogId>>,
+  now: number,
+): boolean {
+  return rows.some(
+    (row) =>
+      row.finishedAt === undefined &&
+      now - row.createdAt < PERSONAL_LINK_IN_FLIGHT_MS,
+  )
+}
+
+/**
+ * The sign-in tokens among `rows` that may still work: made, not expired,
+ * and not known to be used or revoked. These are revoked before a new link
+ * is made for the same email, and when the account's owner signs in.
+ */
+export function openPersonalLinkTokens<LogId>(
+  rows: ReadonlyArray<PersonalLinkLogRow<LogId>>,
+  now: number,
+): Array<{ logId: LogId; signInTokenId: string }> {
+  return rows.flatMap((row) =>
+    row.signInTokenId !== undefined &&
+    row.tokenClosedAt === undefined &&
+    row.expiresAt > now
+      ? [{ logId: row._id, signInTokenId: row.signInTokenId }]
+      : [],
+  )
 }
 
 /**
