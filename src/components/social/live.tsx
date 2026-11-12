@@ -260,6 +260,7 @@ const meetingErrorCopy = {
     self_in_meeting: 'Primero terminá tu reunión actual.',
     they_in_meeting: 'Está en una reunión. Probá de nuevo cuando termine.',
     ended: 'Esta reunión ya terminó.',
+    extension_limit: 'Esta reunión ya no se puede extender más.',
     not_found: 'Eso ya no existe.',
   },
   en: {
@@ -271,6 +272,7 @@ const meetingErrorCopy = {
     self_in_meeting: 'Finish your current meeting first.',
     they_in_meeting: "They're in a meeting. Try again when it ends.",
     ended: 'This meeting has already ended.',
+    extension_limit: "This meeting can't be extended any further.",
     not_found: 'That no longer exists.',
   },
 } satisfies Record<SocialLang, Record<MeetingErrorCode, string>>

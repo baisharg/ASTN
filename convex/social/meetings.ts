@@ -2,7 +2,12 @@ import { ConvexError, v } from 'convex/values'
 import { internal } from '../_generated/api'
 import { internalMutation, mutation, query } from '../_generated/server'
 import { getUserId, requireAuth } from '../lib/auth'
-import { MAX_NOTE_LENGTH, MAX_OUTGOING_PENDING } from './constants'
+import {
+  MAX_MEETING_EXTENSION_MINUTES,
+  MAX_NOTE_LENGTH,
+  MAX_OUTGOING_PENDING,
+  extensionMinutesGranted,
+} from './constants'
 import {
   approvedGuests,
   attendeeCard,
@@ -58,6 +63,39 @@ async function activeMeetingFor(
       q.eq('eventId', eventId).eq('userB', userId).eq('status', 'active'),
     )
     .first()
+}
+
+/**
+ * The meeting `userId` finished most recently. A person's meetings never
+ * overlap, so the newest ended row on each side is the candidate.
+ */
+async function lastEndedMeetingFor(
+  ctx: QueryCtx,
+  eventId: Id<'socialEvents'>,
+  userId: string,
+): Promise<Doc<'socialMeetings'> | null> {
+  const [asA, asB] = await Promise.all([
+    ctx.db
+      .query('socialMeetings')
+      .withIndex('by_eventId_and_userA_and_status', (q) =>
+        q.eq('eventId', eventId).eq('userA', userId).eq('status', 'ended'),
+      )
+      .order('desc')
+      .first(),
+    ctx.db
+      .query('socialMeetings')
+      .withIndex('by_eventId_and_userB_and_status', (q) =>
+        q.eq('eventId', eventId).eq('userB', userId).eq('status', 'ended'),
+      )
+      .order('desc')
+      .first(),
+  ])
+  if (!asA || !asB) return asA ?? asB
+  return endedAtOf(asA) >= endedAtOf(asB) ? asA : asB
+}
+
+function endedAtOf(meeting: Doc<'socialMeetings'>): number {
+  return meeting.endedAt ?? meeting.endsAt
 }
 
 async function statusRow(
@@ -171,7 +209,21 @@ export const getLiveState = query({
           ),
           startedAt: v.number(),
           endsAt: v.number(),
+          // Minutes the meeting can still be extended by; 0 at the limit.
+          extensionMinutesLeft: v.number(),
           topics: v.array(v.string()),
+        }),
+      ),
+      // The viewer's most recently finished meeting, whenever that was; the
+      // page decides by its own clock whether it is recent enough to show.
+      lastEnded: v.union(
+        v.null(),
+        v.object({
+          _id: v.id('socialMeetings'),
+          partner: cardValidator,
+          endedAt: v.number(),
+          // When its time was due to run out.
+          endsAt: v.number(),
         }),
       ),
       incoming: v.array(
@@ -214,11 +266,18 @@ export const getLiveState = query({
       availability,
     }
     if (!base.isAttendee) {
-      return { ...base, meeting: null, incoming: [], outgoing: [] }
+      return {
+        ...base,
+        meeting: null,
+        lastEnded: null,
+        incoming: [],
+        outgoing: [],
+      }
     }
 
-    const [active, incomingRows, outgoingRows] = await Promise.all([
+    const [active, ended, incomingRows, outgoingRows] = await Promise.all([
       activeMeetingFor(ctx, eventId, userId),
+      lastEndedMeetingFor(ctx, eventId, userId),
       ctx.db
         .query('socialMeetingRequests')
         .withIndex('by_eventId_and_toUserId_and_status', (q) =>
@@ -250,9 +309,26 @@ export const getLiveState = query({
           : null,
         startedAt: active.startedAt,
         endsAt: active.endsAt,
+        extensionMinutesLeft: Math.max(
+          0,
+          MAX_MEETING_EXTENSION_MINUTES - (active.extendedMinutes ?? 0),
+        ),
         topics: await meetingTopics(ctx, eventId, userId, partnerId),
       }
     }
+
+    const lastEnded = ended
+      ? {
+          _id: ended._id,
+          partner: await attendeeCard(
+            ctx,
+            eventId,
+            ended.userA === userId ? ended.userB : ended.userA,
+          ),
+          endedAt: endedAtOf(ended),
+          endsAt: ended.endsAt,
+        }
+      : null
 
     const incoming = await Promise.all(
       incomingRows.map(async (r) => ({
@@ -288,7 +364,7 @@ export const getLiveState = query({
       }),
     )
 
-    return { ...base, meeting, incoming, outgoing }
+    return { ...base, meeting, lastEnded, incoming, outgoing }
   },
 })
 
@@ -591,15 +667,26 @@ async function requireParticipant(
   return meeting
 }
 
+/**
+ * Add time to a meeting in progress, up to MAX_MEETING_EXTENSION_MINUTES
+ * past its original length in total.
+ */
 export const extendMeeting = mutation({
   args: { meetingId: v.id('socialMeetings'), minutes: v.number() },
   returns: v.null(),
   handler: async (ctx, { meetingId, minutes }) => {
     const meeting = await requireParticipant(ctx, meetingId)
     if (meeting.status !== 'active') refuse('ended', 'This meeting has ended')
-    const add = Math.min(15, Math.max(1, Math.round(minutes)))
+    const used = meeting.extendedMinutes ?? 0
+    const add = extensionMinutesGranted(used, minutes)
+    if (add === 0) {
+      refuse('extension_limit', "This meeting can't be extended any further")
+    }
     const endsAt = meeting.endsAt + add * 60 * 1000
-    await ctx.db.patch('socialMeetings', meetingId, { endsAt })
+    await ctx.db.patch('socialMeetings', meetingId, {
+      endsAt,
+      extendedMinutes: used + add,
+    })
     await ctx.scheduler.runAt(endsAt, internal.social.meetings.endIfDue, {
       meetingId,
     })

@@ -1,6 +1,6 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation } from 'convex/react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../convex/_generated/api'
 import type { LiveMeeting, LiveState } from '~/components/social/live'
@@ -17,6 +17,7 @@ import {
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
 import { useCopy } from '~/lib/social-i18n'
+import { endedRecently } from '~/lib/social-live'
 import { useBusyAction } from '~/lib/use-busy-action'
 
 export const Route = createFileRoute('/org/$slug/e/$eventSlug/meeting')({
@@ -42,9 +43,16 @@ const copy = {
     remaining: 'restantes',
     timeUp: 'Se terminó el tiempo',
     timeLeft: (clock: string) => `Quedan ${clock}`,
-    addFive: 'Sumar 5 minutos',
-    added: 'Sumamos 5 minutos.',
+    addMinutes: (n: number) =>
+      n === 1 ? 'Sumar 1 minuto' : `Sumar ${n} minutos`,
+    added: (n: number) =>
+      n === 1 ? 'Sumamos 1 minuto.' : `Sumamos ${n} minutos.`,
+    noMoreTime: 'Ya sumaron todo el tiempo extra posible.',
     end: 'Terminar reunión',
+    endConfirm: (name: string) =>
+      `¿Terminar la reunión? También termina para ${name}.`,
+    endYes: 'Sí, terminar',
+    endNo: 'Seguir en la reunión',
     topics: 'Temas para arrancar',
     endedTitle: 'Reunión terminada',
     endedWith: (name: string) => `Tu reunión con ${name} terminó.`,
@@ -82,9 +90,13 @@ const copy = {
     remaining: 'left',
     timeUp: "Time's up",
     timeLeft: (clock: string) => `${clock} left`,
-    addFive: 'Add 5 minutes',
-    added: 'Added 5 minutes.',
+    addMinutes: (n: number) => (n === 1 ? 'Add 1 minute' : `Add ${n} minutes`),
+    added: (n: number) => (n === 1 ? 'Added 1 minute.' : `Added ${n} minutes.`),
+    noMoreTime: "You've added all the extra time available.",
     end: 'End meeting',
+    endConfirm: (name: string) => `End the meeting? It ends for ${name} too.`,
+    endYes: 'Yes, end it',
+    endNo: 'Keep meeting',
     topics: 'Conversation starters',
     endedTitle: 'Meeting ended',
     endedWith: (name: string) => `Your meeting with ${name} has ended.`,
@@ -113,11 +125,12 @@ function MeetingPage() {
 function MeetingContent({ live }: { live: LiveState }) {
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
-  // The meeting that was on screen, so we can say it ended once it's gone.
-  const [lastMeeting, setLastMeeting] = useState<LiveMeeting | null>(null)
-  useEffect(() => {
-    if (live.meeting) setLastMeeting(live.meeting)
-  }, [live.meeting])
+  const now = useNow()
+  // Said once the meeting is over, whether or not this page was open then.
+  const justEnded =
+    live.lastEnded && endedRecently(live.lastEnded.endedAt, now)
+      ? live.lastEnded
+      : null
 
   const header = (
     <div className="-ml-3 flex items-center justify-between">
@@ -147,8 +160,8 @@ function MeetingContent({ live }: { live: LiveState }) {
   return (
     <main className="flex flex-col gap-[22px] px-5 pb-8 pt-2">
       {header}
-      {lastMeeting ? (
-        <EndedCard live={live} partnerName={lastMeeting.partner.name} />
+      {justEnded ? (
+        <EndedCard live={live} partnerName={justEnded.partner.name} />
       ) : (
         <NoMeeting live={live} />
       )}
@@ -223,6 +236,7 @@ function ActiveMeeting({ meeting }: { meeting: LiveMeeting }) {
 }
 
 const RADIUS = 52
+const EXTEND_STEP_MINUTES = 5
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 
 function Countdown({ meeting }: { meeting: LiveMeeting }) {
@@ -232,6 +246,8 @@ function Countdown({ meeting }: { meeting: LiveMeeting }) {
   const extendMeeting = useMutation(api.social.meetings.extendMeeting)
   const endMeeting = useMutation(api.social.meetings.endMeeting)
   const { busy, run: runBusy } = useBusyAction<'extend' | 'end'>()
+  // Ending is for both people, so it takes a second tap to confirm.
+  const [confirmingEnd, setConfirmingEnd] = useState(false)
 
   const total = Math.max(1, meeting.endsAt - meeting.startedAt)
   const remainingMs = Math.max(0, meeting.endsAt - now)
@@ -241,6 +257,10 @@ function Countdown({ meeting }: { meeting: LiveMeeting }) {
 
   const run = (key: 'extend' | 'end', action: () => Promise<void>) =>
     runBusy(key, action, (error) => toast.error(errorMessage(error)))
+
+  // "Add" gives up to EXTEND_STEP_MINUTES, less when the limit is closer.
+  const addMinutes = Math.min(EXTEND_STEP_MINUTES, meeting.extensionMinutesLeft)
+  const firstName = meeting.partner.name.split(' ')[0] ?? meeting.partner.name
 
   return (
     <Panel
@@ -295,33 +315,70 @@ function Countdown({ meeting }: { meeting: LiveMeeting }) {
           )}
         </div>
       </div>
-      <div className="flex grow flex-col gap-2">
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() =>
-            void run('extend', async () => {
-              await extendMeeting({ meetingId: meeting._id, minutes: 5 })
-              toast.success(t.added)
-            })
-          }
-          className="flex h-11 items-center justify-center rounded-xl border border-input bg-card px-3 text-sm font-semibold text-[var(--baish-brand-text)] hover:bg-muted disabled:opacity-60"
-        >
-          {busy === 'extend' ? <Spinner size="sm" /> : t.addFive}
-        </button>
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() =>
-            void run('end', async () => {
-              await endMeeting({ meetingId: meeting._id })
-            })
-          }
-          className="flex h-11 items-center justify-center rounded-xl bg-muted px-3 text-sm font-semibold text-[var(--baish-strong)] hover:bg-secondary/70 disabled:opacity-60"
-        >
-          {busy === 'end' ? <Spinner size="sm" /> : t.end}
-        </button>
-      </div>
+      {confirmingEnd ? (
+        <div className="flex grow flex-col gap-2">
+          <p className="text-sm leading-snug text-[var(--baish-strong)]">
+            {t.endConfirm(firstName)}
+          </p>
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() =>
+              void run('end', async () => {
+                await endMeeting({ meetingId: meeting._id })
+              })
+            }
+            className="flex h-11 items-center justify-center rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+          >
+            {busy === 'end' ? <Spinner size="sm" /> : t.endYes}
+          </button>
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => setConfirmingEnd(false)}
+            className="flex h-11 items-center justify-center rounded-xl border border-input bg-card px-3 text-sm font-semibold text-[var(--baish-brand-text)] hover:bg-muted disabled:opacity-60"
+          >
+            {t.endNo}
+          </button>
+        </div>
+      ) : (
+        <div className="flex grow flex-col gap-2">
+          {addMinutes > 0 ? (
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() =>
+                void run('extend', async () => {
+                  await extendMeeting({
+                    meetingId: meeting._id,
+                    minutes: addMinutes,
+                  })
+                  toast.success(t.added(addMinutes))
+                })
+              }
+              className="flex h-11 items-center justify-center rounded-xl border border-input bg-card px-3 text-sm font-semibold text-[var(--baish-brand-text)] hover:bg-muted disabled:opacity-60"
+            >
+              {busy === 'extend' ? (
+                <Spinner size="sm" />
+              ) : (
+                t.addMinutes(addMinutes)
+              )}
+            </button>
+          ) : (
+            <p className="text-[13px] leading-snug text-muted-foreground">
+              {t.noMoreTime}
+            </p>
+          )}
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => setConfirmingEnd(true)}
+            className="flex h-11 items-center justify-center rounded-xl bg-muted px-3 text-sm font-semibold text-[var(--baish-strong)] hover:bg-secondary/70 disabled:opacity-60"
+          >
+            {t.end}
+          </button>
+        </div>
+      )}
     </Panel>
   )
 }
