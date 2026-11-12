@@ -5,12 +5,19 @@ import { getUserId, requireOrgAdmin } from '../lib/auth'
 import { slugifyTitle } from '../orgOpportunities'
 import schema from '../schema'
 import { requireOrgOwnsApiCalendar } from '../luma/binding'
-import { DEFAULT_MEETING_MINUTES } from './constants'
+import {
+  DEFAULT_MEETING_MINUTES,
+  MAX_PREAPPROVED_GUESTS_PER_ADD,
+  PREAPPROVED_ADD_APPROVED_LIMIT,
+  looksLikeEmail,
+  planPreapprovedAdd,
+} from './constants'
 import {
   addToAllowlist,
   autoApprovesKnownGuests,
   findGuestForIdentity,
   focusFromPrompt,
+  getGuestByEmail,
   getProfileByUser,
   isFreshImageUpload,
   isOnAllowlist,
@@ -892,7 +899,7 @@ export const importAllowlist = mutation({
     const addedEmails: Array<string> = []
     for (const row of rows) {
       const email = normalizeEmail(row.email)
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      if (!looksLikeEmail(email)) {
         invalid++
         continue
       }
@@ -940,6 +947,85 @@ export const importAllowlist = mutation({
       }
     }
     return { added, alreadyListed, invalid, approvedPending }
+  },
+})
+
+/**
+ * Put the chosen people from the org's pre-approved list on this event's
+ * guest list as approved, without them registering. Only an admin's call
+ * does this, for the entries it names and the one event it names.
+ *
+ * Each new row has no account; it links to one when the person signs in with
+ * that email (linkMyGuest, register). On an event linked to Luma each new
+ * guest is pushed there, and Luma emails them. Someone who already has a
+ * guest row for the event keeps it as it is.
+ */
+export const addPreapprovedGuests = mutation({
+  args: {
+    eventId: v.id('socialEvents'),
+    entryIds: v.array(v.id('orgAllowlist')),
+  },
+  returns: v.object({
+    added: v.number(),
+    alreadyGuest: v.number(),
+    invalid: v.number(),
+  }),
+  handler: async (ctx, { eventId, entryIds }) => {
+    const { event } = await requireEventAdmin(ctx, eventId)
+    if (entryIds.length > MAX_PREAPPROVED_GUESTS_PER_ADD) {
+      throw new ConvexError(
+        `Add at most ${MAX_PREAPPROVED_GUESTS_PER_ADD} people at once`,
+      )
+    }
+
+    const selected: Array<Doc<'orgAllowlist'> | null> = []
+    const guestEmails = new Set<string>()
+    for (const entryId of entryIds) {
+      const entry = await ctx.db.get('orgAllowlist', entryId)
+      selected.push(entry)
+      if (entry && (await getGuestByEmail(ctx, eventId, entry.email))) {
+        guestEmails.add(entry.email)
+      }
+    }
+    const approved = await ctx.db
+      .query('socialEventGuests')
+      .withIndex('by_eventId_and_status', (q) =>
+        q.eq('eventId', eventId).eq('status', 'approved'),
+      )
+      .take(PREAPPROVED_ADD_APPROVED_LIMIT + 1)
+
+    const plan = planPreapprovedAdd({
+      orgId: event.orgId,
+      selected,
+      guestEmails,
+      approvedCount: approved.length,
+    })
+    if (plan.overLimitBy > 0) {
+      throw new ConvexError(
+        `People can be added from the pre-approved list until the event has ${PREAPPROVED_ADD_APPROVED_LIMIT} approved guests; this is ${plan.overLimitBy} too many`,
+      )
+    }
+
+    const now = Date.now()
+    for (const person of plan.toAdd) {
+      const guestId = await ctx.db.insert('socialEventGuests', {
+        eventId,
+        orgId: event.orgId,
+        email: person.email,
+        name: person.name,
+        status: 'approved',
+        source: 'allowlist',
+        lumaSync: 'not_linked',
+        registeredAt: now,
+        updatedAt: now,
+      })
+      await updateGuestAndSync(ctx, event, guestId, {})
+    }
+    return {
+      added: plan.toAdd.length,
+      alreadyGuest: plan.alreadyGuest,
+      invalid: plan.invalid,
+    }
   },
 })
 
