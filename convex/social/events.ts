@@ -28,6 +28,7 @@ import {
   lumaSyncValidator,
   profileMissingValidator,
 } from './validators'
+import type { RegisterErrorCode, RegisterErrorData } from './constants'
 import type { GuestStatus } from './lib'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
@@ -101,6 +102,12 @@ async function countGuestsWithStatus(
     )
     .take(1000)
   return rows.length
+}
+
+/** Refuse a registration with a code the event page translates. */
+function refuseRegistration(code: RegisterErrorCode, message: string): never {
+  const data: RegisterErrorData = { code, message }
+  throw new ConvexError(data)
 }
 
 // ── Public ──────────────────────────────────────────────────────────────
@@ -231,13 +238,16 @@ export const register = mutation({
   }),
   handler: async (ctx, { eventId, linkedinUrl }) => {
     const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new ConvexError('Not authenticated')
+    if (!identity) refuseRegistration('not_authenticated', 'Not authenticated')
     if (!identity.email) {
-      throw new ConvexError('Your account has no email address')
+      refuseRegistration('no_email', 'Your account has no email address')
     }
     const event = await ctx.db.get('socialEvents', eventId)
     if (!event || event.status !== 'published') {
-      throw new ConvexError('Registration is not open for this event')
+      refuseRegistration(
+        'registration_closed',
+        'Registration is not open for this event',
+      )
     }
 
     const userId = identity.subject
