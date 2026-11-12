@@ -10,13 +10,16 @@ import { apiCalendarOrg, assertOrgOwnsApiCalendar } from '../luma/binding'
 import { flagGuestSync } from '../luma/mirror'
 import {
   addToAllowlist,
+  detailsToFillFromLuma,
   getGuestByEmail,
   guestStatusFromLuma,
   isOnAllowlist,
   keepsStatusOverLuma,
+  lumaStatusToPush,
   normalizeEmail,
   updateGuestAndSync,
 } from './lib'
+import { guestSourceValidator, guestStatusValidator } from './validators'
 import {
   LumaApiError,
   addLumaGuests,
@@ -56,7 +59,8 @@ export const getGuestForSync = internalQuery({
       guest: v.object({
         email: v.string(),
         name: v.union(v.string(), v.null()),
-        status: v.string(),
+        status: guestStatusValidator,
+        source: guestSourceValidator,
         lumaGuestId: v.union(v.string(), v.null()),
       }),
       lumaEventId: v.union(v.string(), v.null()),
@@ -73,6 +77,7 @@ export const getGuestForSync = internalQuery({
         email: guest.email,
         name: guest.name ?? null,
         status: guest.status,
+        source: guest.source,
         lumaGuestId: guest.lumaGuestId ?? null,
       },
       lumaEventId: event?.lumaEventId ?? null,
@@ -145,6 +150,7 @@ export const setEventSyncResult = internalMutation({
     error: v.optional(v.string()),
     lumaUrl: v.optional(v.string()),
     venueAddress: v.optional(v.string()),
+    description: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, { eventId, error, ...details }) => {
@@ -155,10 +161,7 @@ export const setEventSyncResult = internalMutation({
       lumaLastSyncError: error,
     }
     if (details.lumaUrl) patch.lumaUrl = details.lumaUrl
-    // Fill in details from Luma only where the admin left them empty.
-    if (details.venueAddress && !event.venueAddress) {
-      patch.venueAddress = details.venueAddress
-    }
+    Object.assign(patch, detailsToFillFromLuma(event, details))
     await ctx.db.patch('socialEvents', eventId, patch)
     return null
   },
@@ -340,16 +343,15 @@ export const pushGuest = internalAction({
     try {
       // Only the org whose calendar the key belongs to may write to Luma.
       await assertOrgOwnsApiCalendar(ctx, orgId)
-      const wanted =
-        guest.status === 'approved' || guest.status === 'declined'
-          ? guest.status
-          : 'pending_approval'
+      // null: the row holds Luma's own status, so nothing is added or
+      // changed there; the push only records the Luma guest it finds.
+      const wanted = lumaStatusToPush(guest)
 
       let lumaGuest = guest.lumaGuestId
         ? await getLumaGuest(lumaEventId, guest.lumaGuestId)
         : await getLumaGuest(lumaEventId, guest.email)
 
-      if (!lumaGuest && wanted !== 'declined') {
+      if (!lumaGuest && wanted !== null && wanted !== 'declined') {
         const skipped = await addLumaGuests({
           eventId: lumaEventId,
           guests: [{ email: guest.email, name: guest.name ?? undefined }],
@@ -366,6 +368,7 @@ export const pushGuest = internalAction({
 
       if (
         lumaGuest &&
+        wanted !== null &&
         guestStatusFromLuma(lumaGuest.approval_status) !== wanted
       ) {
         const lumaIsDecided =
@@ -470,6 +473,7 @@ export const importLumaEvent = internalAction({
           lumaEvent.geo_address_json?.full_address ??
           lumaEvent.geo_address_json?.address ??
           undefined,
+        description: lumaEvent.description_md?.trim() || undefined,
       })
     } catch (error) {
       const message =

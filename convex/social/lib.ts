@@ -47,6 +47,88 @@ export function keepsStatusOverLuma(
   )
 }
 
+/**
+ * The status a push sets for the guest in Luma, or null when ASTN has none
+ * to send. ASTN sends only what it decided: an approval or a decline, and
+ * the pending registration of a row ASTN created (the person registered in
+ * the app, or an admin added them). A waitlist or invited row, and a pending
+ * row that came from Luma, hold Luma's own status, so a push leaves the
+ * guest in Luma as they are.
+ */
+export function lumaStatusToPush(
+  guest: Pick<Doc<'socialEventGuests'>, 'status' | 'source'>,
+): 'approved' | 'declined' | 'pending_approval' | null {
+  if (guest.status === 'approved' || guest.status === 'declined') {
+    return guest.status
+  }
+  if (guest.status === 'pending_approval' && guest.source !== 'luma') {
+    return 'pending_approval'
+  }
+  return null
+}
+
+/**
+ * The patch that makes a guest row forget its Luma event: the Luma guest id,
+ * the ticket code and the sync state, leaving the row `not_linked` (what
+ * `pushUnlinkedGuests` pushes after the next link). Null when the row holds
+ * nothing to forget.
+ *
+ * `clearLumaCheckIns` also removes a check-in made in Luma's app (any
+ * check-in whose source isn't 'astn'). Linking a Luma event passes it: from
+ * then on a Luma check-in means one the new event reported, the pull adds
+ * the ones it has, and a leftover from the previous event could never be
+ * undone (the door page refuses, and the new event doesn't have it). A
+ * check-in made at the ASTN door always stays.
+ */
+export function lumaStateReset(
+  guest: Pick<
+    Doc<'socialEventGuests'>,
+    | 'lumaGuestId'
+    | 'lumaCheckInCode'
+    | 'lumaSync'
+    | 'lumaSyncError'
+    | 'checkedInAt'
+    | 'checkInSource'
+  >,
+  options: { clearLumaCheckIns: boolean },
+): Partial<Doc<'socialEventGuests'>> | null {
+  const patch: Partial<Doc<'socialEventGuests'>> = {}
+  if (guest.lumaGuestId !== undefined) patch.lumaGuestId = undefined
+  if (guest.lumaCheckInCode !== undefined) patch.lumaCheckInCode = undefined
+  if (guest.lumaSyncError !== undefined) patch.lumaSyncError = undefined
+  if (guest.lumaSync !== 'not_linked') patch.lumaSync = 'not_linked'
+  if (
+    options.clearLumaCheckIns &&
+    guest.checkedInAt !== undefined &&
+    guest.checkInSource !== 'astn'
+  ) {
+    patch.checkedInAt = undefined
+    patch.checkInSource = undefined
+  }
+  return Object.keys(patch).length > 0 ? patch : null
+}
+
+/**
+ * The details of the linked Luma event to copy into the ASTN event: only
+ * the ones the ASTN event has empty, so nothing an admin wrote is replaced.
+ * The description matters because saving the ASTN one sends it to Luma
+ * (luma/api.ts pushSocialEventToLuma): an ASTN event left empty would
+ * replace Luma's text on the admin's first edit.
+ */
+export function detailsToFillFromLuma(
+  event: Pick<Doc<'socialEvents'>, 'venueAddress' | 'description'>,
+  luma: { venueAddress?: string; description?: string },
+): { venueAddress?: string; description?: string } {
+  const fill: { venueAddress?: string; description?: string } = {}
+  if (luma.venueAddress && !event.venueAddress) {
+    fill.venueAddress = luma.venueAddress
+  }
+  if (luma.description && !event.description) {
+    fill.description = luma.description
+  }
+  return fill
+}
+
 export async function isOnAllowlist(
   ctx: QueryCtx | MutationCtx,
   orgId: Id<'organizations'>,
@@ -312,6 +394,25 @@ export async function updateGuestAndSync(
       guestId,
     })
   }
+}
+
+// How long after its upload a file can still be attached as a floor plan.
+const FLOOR_PLAN_UPLOAD_WINDOW_MS = 15 * 60 * 1000
+
+/**
+ * Whether a stored file may become an event's floor plan: an image uploaded
+ * in the last few minutes, which is what the admin page sends right after
+ * its upload. Anything else is some other file whose id the caller happens
+ * to know; attaching it would expose it through the plan's URL and delete it
+ * when the plan is replaced.
+ */
+export function isFreshImageUpload(
+  file: { _creationTime: number; contentType?: string } | null,
+  now: number,
+): boolean {
+  if (!file) return false
+  if (!file.contentType?.toLowerCase().startsWith('image/')) return false
+  return now - file._creationTime <= FLOOR_PLAN_UPLOAD_WINDOW_MS
 }
 
 /** Approved guests of an event (with or without an account). */
