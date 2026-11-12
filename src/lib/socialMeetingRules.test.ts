@@ -1,5 +1,6 @@
 import {
   MAX_MEETING_EXTENSION_MINUTES,
+  compareAttendees,
   extensionMinutesGranted,
   meetingsOpenNow,
 } from '../../convex/social/constants'
@@ -14,6 +15,7 @@ declare const describe: BunTestFn
 declare const test: BunTestFn
 declare const expect: <T>(actual: T) => {
   toBe(expected: unknown): void
+  toEqual(expected: unknown): void
 }
 
 describe('extensionMinutesGranted', () => {
@@ -63,5 +65,22 @@ describe('meetingsOpenNow', () => {
 
   test('a draft never has 1:1s', () => {
     expect(meetingsOpenNow('draft', window, 1_500)).toBe(false)
+  })
+})
+
+describe('compareAttendees', () => {
+  test('people at the event come first, each group by name', () => {
+    const list = [
+      { name: 'Zoe', here: false },
+      { name: 'Bruno', here: true },
+      { name: 'Ana', here: false },
+      { name: 'Carla', here: true },
+    ]
+    expect(list.sort(compareAttendees).map((a) => a.name)).toEqual([
+      'Bruno',
+      'Carla',
+      'Ana',
+      'Zoe',
+    ])
   })
 })

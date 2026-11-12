@@ -15,6 +15,12 @@ export const DEFAULT_EVENT_HOURS = 6
 export type SocialEventStatus = 'draft' | 'published' | 'closed'
 
 /**
+ * What an attendee is doing right now. Whether they are at the event at all
+ * is a separate boolean (`here`) next to it.
+ */
+export type AttendeeState = 'available' | 'in_meeting' | 'busy'
+
+/**
  * Whether 1:1s are running at `now`: inside the 1:1 window of an event that
  * is not a draft. A 'closed' event only stopped taking new registrations, so
  * its 1:1s run like a published event's.
@@ -27,11 +33,24 @@ export function meetingsOpenNow(
   return status !== 'draft' && now >= window.openAt && now <= window.closeAt
 }
 
+/**
+ * Order of the attendee list: people who are at the event first, then by
+ * name.
+ */
+export function compareAttendees(
+  a: { here: boolean; name: string },
+  b: { here: boolean; name: string },
+): number {
+  if (a.here !== b.here) return a.here ? -1 : 1
+  return a.name.localeCompare(b.name)
+}
+
 /** Why a 1:1 action was refused. Sent as ConvexError data `{ code }`. */
 export type MeetingErrorCode =
   | 'closed'
   | 'not_attendee'
   | 'self'
+  | 'not_here'
   | 'busy'
   | 'limit'
   | 'self_in_meeting'

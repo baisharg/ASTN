@@ -9,11 +9,11 @@ import type { LiveState } from '~/components/social/live'
 import type { AttendeeState } from '~/components/social/ui'
 import { useNow, useSocialEvent } from '~/components/social/SocialEventContext'
 import {
+  ArrivalCard,
   AttendeeGate,
   MeetingBanner,
   PageSpinner,
   formatDuration,
-  requestBlock,
   requestBlockCopy,
   useMeetingsOpen,
   useSocialErrorMessage,
@@ -31,6 +31,7 @@ import {
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
 import { cn } from '~/lib/utils'
+import { requestBlock } from '~/lib/social-live'
 import { useBusyAction } from '~/lib/use-busy-action'
 import { formatTime, useCopy, useSocialLang } from '~/lib/social-i18n'
 
@@ -144,6 +145,9 @@ function PeopleContent({ live }: { live: LiveState }) {
   const stateById = new Map<string, AttendeeState>(
     (attendees ?? []).map((a) => [a.userId, a.state]),
   )
+  const hereById = new Map<string, boolean>(
+    (attendees ?? []).map((a) => [a.userId, a.here]),
+  )
 
   return (
     <main className="flex flex-col gap-[18px] px-5 pb-8 pt-[18px]">
@@ -151,6 +155,8 @@ function PeopleContent({ live }: { live: LiveState }) {
         <PageTitle>{event.title}</PageTitle>
         <MeetingsWindowLine open={meetingsOpen} />
       </div>
+
+      <ArrivalCard live={live} />
 
       <AvailabilityToggle live={live} />
 
@@ -206,6 +212,7 @@ function PeopleContent({ live }: { live: LiveState }) {
             meetingsOpen={meetingsOpen}
             suggestions={suggestions}
             stateById={stateById}
+            hereById={hereById}
             refreshResult={refreshResult}
             onSeeEveryone={() => setTab('everyone')}
           />
@@ -317,6 +324,7 @@ function SuggestedPanel({
   meetingsOpen,
   suggestions,
   stateById,
+  hereById,
   refreshResult,
   onSeeEveryone,
 }: {
@@ -324,6 +332,7 @@ function SuggestedPanel({
   meetingsOpen: boolean
   suggestions: Array<Suggestion> | undefined
   stateById: Map<string, AttendeeState>
+  hereById: Map<string, boolean>
   refreshResult: RefreshResult | null
   onSeeEveryone: () => void
 }) {
@@ -386,6 +395,7 @@ function SuggestedPanel({
           meetingsOpen={meetingsOpen}
           suggestion={s}
           state={stateById.get(s.userId) ?? 'available'}
+          here={hereById.get(s.userId) ?? true}
         />
       ))}
     </div>
@@ -397,11 +407,13 @@ function SuggestionCard({
   meetingsOpen,
   suggestion: s,
   state,
+  here,
 }: {
   live: LiveState
   meetingsOpen: boolean
   suggestion: Suggestion
   state: AttendeeState
+  here: boolean
 }) {
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
@@ -414,7 +426,7 @@ function SuggestionCard({
   const theyAsked = live.incoming.some((r) => r.from.userId === s.userId)
   const block = requested
     ? null
-    : requestBlock(live, meetingsOpen, s.userId, state)
+    : requestBlock(live, meetingsOpen, { userId: s.userId, state, here })
   const firstName = s.name.split(' ')[0] ?? s.name
 
   const onMeet = async () => {
@@ -441,7 +453,7 @@ function SuggestionCard({
           )}
         </div>
       </div>
-      <StateLabel state={state} />
+      <StateLabel state={state} here={here} />
       <p className="text-sm leading-normal">
         <span className="font-semibold text-[var(--baish-strong)]">
           {t.why}
@@ -528,7 +540,7 @@ function EveryonePanel({
               )}
             </span>
             <span className="shrink-0">
-              <StateLabel state={a.state} compact />
+              <StateLabel state={a.state} here={a.here} compact />
             </span>
           </Link>
         </li>

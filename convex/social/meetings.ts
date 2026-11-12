@@ -6,6 +6,7 @@ import {
   MAX_MEETING_EXTENSION_MINUTES,
   MAX_NOTE_LENGTH,
   MAX_OUTGOING_PENDING,
+  compareAttendees,
   extensionMinutesGranted,
   meetingsOpenNow,
 } from './constants'
@@ -23,11 +24,9 @@ import {
   socialProfileView,
 } from './lib'
 import { availabilityValidator } from './validators'
-import type { MeetingErrorCode } from './constants'
+import type { AttendeeState, MeetingErrorCode } from './constants'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
-
-type AttendeeState = 'available' | 'in_meeting' | 'busy'
 
 /** Refuse a 1:1 action with a code the pages translate. */
 function refuse(code: MeetingErrorCode, message: string): never {
@@ -120,13 +119,61 @@ async function availabilityFor(
   return (await statusRow(ctx, eventId, userId))?.availability ?? 'available'
 }
 
-async function attendeeState(
+/**
+ * Whether a person is at the event: the door checked them in, or they said
+ * so in the app (which sending or accepting a request also does).
+ */
+function isHere(
+  guest: Doc<'socialEventGuests'> | null,
+  status: Doc<'socialAttendeeStatus'> | null,
+): boolean {
+  return guest?.checkedInAt !== undefined || status?.arrivedAt !== undefined
+}
+
+/**
+ * What others see of an attendee right now: their state and whether they
+ * are at the event. Pass `knownGuest` when the guest row is already loaded.
+ */
+async function attendeePresence(
   ctx: QueryCtx | MutationCtx,
   eventId: Id<'socialEvents'>,
   userId: string,
-): Promise<AttendeeState> {
-  if (await activeMeetingFor(ctx, eventId, userId)) return 'in_meeting'
-  return await availabilityFor(ctx, eventId, userId)
+  knownGuest?: Doc<'socialEventGuests'>,
+): Promise<{ state: AttendeeState; here: boolean }> {
+  const [meeting, status, guest] = await Promise.all([
+    activeMeetingFor(ctx, eventId, userId),
+    statusRow(ctx, eventId, userId),
+    knownGuest ?? getGuestByUser(ctx, eventId, userId),
+  ])
+  return {
+    state: meeting ? 'in_meeting' : (status?.availability ?? 'available'),
+    here: isHere(guest, status),
+  }
+}
+
+/** Record that `userId` is at the event, unless that is already known. */
+async function recordArrival(
+  ctx: MutationCtx,
+  eventId: Id<'socialEvents'>,
+  userId: string,
+): Promise<void> {
+  const row = await statusRow(ctx, eventId, userId)
+  if (row?.arrivedAt !== undefined) return
+  const now = Date.now()
+  if (row) {
+    await ctx.db.patch('socialAttendeeStatus', row._id, {
+      arrivedAt: now,
+      updatedAt: now,
+    })
+  } else {
+    await ctx.db.insert('socialAttendeeStatus', {
+      eventId,
+      userId,
+      availability: 'available',
+      arrivedAt: now,
+      updatedAt: now,
+    })
+  }
 }
 
 async function pendingRequestsFrom(
@@ -192,6 +239,8 @@ export const getLiveState = query({
       meetingsOpenAt: v.number(),
       meetingsCloseAt: v.number(),
       availability: availabilityValidator,
+      // Whether the viewer counts as being at the event (see isHere).
+      here: v.boolean(),
       meeting: v.union(
         v.null(),
         v.object({
@@ -232,6 +281,7 @@ export const getLiveState = query({
           note: v.union(v.string(), v.null()),
           createdAt: v.number(),
           fromState: stateValidator,
+          fromHere: v.boolean(),
         }),
       ),
       outgoing: v.array(
@@ -242,6 +292,7 @@ export const getLiveState = query({
           createdAt: v.number(),
           queuePosition: v.number(),
           toState: stateValidator,
+          toHere: v.boolean(),
         }),
       ),
     }),
@@ -251,10 +302,10 @@ export const getLiveState = query({
     if (!userId) return null
     const event = await ctx.db.get('socialEvents', eventId)
     if (!event) return null
-    const [guest, profile, availability] = await Promise.all([
+    const [guest, profile, status] = await Promise.all([
       getGuestByUser(ctx, eventId, userId),
       getProfileByUser(ctx, userId),
-      availabilityFor(ctx, eventId, userId),
+      statusRow(ctx, eventId, userId),
     ])
     const window = meetingsWindow(event)
     const base = {
@@ -262,7 +313,8 @@ export const getLiveState = query({
       profileReady: isProfileReadyForMatching(profile),
       meetingsOpenAt: window.openAt,
       meetingsCloseAt: window.closeAt,
-      availability,
+      availability: status?.availability ?? ('available' as const),
+      here: isHere(guest, status),
     }
     if (!base.isAttendee) {
       return {
@@ -330,13 +382,17 @@ export const getLiveState = query({
       : null
 
     const incoming = await Promise.all(
-      incomingRows.map(async (r) => ({
-        _id: r._id,
-        from: await attendeeCard(ctx, eventId, r.fromUserId),
-        note: r.note ?? null,
-        createdAt: r.createdAt,
-        fromState: await attendeeState(ctx, eventId, r.fromUserId),
-      })),
+      incomingRows.map(async (r) => {
+        const from = await attendeePresence(ctx, eventId, r.fromUserId)
+        return {
+          _id: r._id,
+          from: await attendeeCard(ctx, eventId, r.fromUserId),
+          note: r.note ?? null,
+          createdAt: r.createdAt,
+          fromState: from.state,
+          fromHere: from.here,
+        }
+      }),
     )
 
     const outgoing = await Promise.all(
@@ -352,13 +408,15 @@ export const getLiveState = query({
               .lt('_creationTime', r._creationTime),
           )
           .take(50)
+        const to = await attendeePresence(ctx, eventId, r.toUserId)
         return {
           _id: r._id,
           to: await attendeeCard(ctx, eventId, r.toUserId),
           note: r.note ?? null,
           createdAt: r.createdAt,
           queuePosition: ahead.length + 1,
-          toState: await attendeeState(ctx, eventId, r.toUserId),
+          toState: to.state,
+          toHere: to.here,
         }
       }),
     )
@@ -370,6 +428,7 @@ export const getLiveState = query({
 /**
  * Approved attendees with an account, for other approved attendees. Everyone
  * at the event can see each other regardless of their wider visibility.
+ * People who are at the event come first.
  */
 export const listAttendees = query({
   args: { eventId: v.id('socialEvents') },
@@ -380,6 +439,9 @@ export const listAttendees = query({
       initials: v.string(),
       headline: v.union(v.string(), v.null()),
       state: stateValidator,
+      // False until the door checks them in or they say they arrived. Kept
+      // apart from `state`, which stays one of the three values above.
+      here: v.boolean(),
     }),
   ),
   handler: async (ctx, { eventId }) => {
@@ -398,11 +460,11 @@ export const listAttendees = query({
             name,
             initials: initialsOf(name),
             headline: profile?.headline ?? null,
-            state: await attendeeState(ctx, eventId, otherId),
+            ...(await attendeePresence(ctx, eventId, otherId, g)),
           }
         }),
     )
-    return rows.sort((a, b) => a.name.localeCompare(b.name))
+    return rows.sort(compareAttendees)
   },
 })
 
@@ -414,6 +476,7 @@ export const getAttendeeProfile = query({
       viewerIsAttendee: v.boolean(),
       initials: v.string(),
       state: stateValidator,
+      here: v.boolean(),
       profile: v.any(),
       suggestion: v.union(
         v.null(),
@@ -439,17 +502,18 @@ export const getAttendeeProfile = query({
       return null
     }
     const view = socialProfileView(profile, otherGuest.name)
-    const [suggestion, mine, theirs, state] = await Promise.all([
+    const [suggestion, mine, theirs, presence] = await Promise.all([
       findSuggestion(ctx, eventId, viewerId, otherId),
       pendingRequestsFrom(ctx, eventId, viewerId),
       pendingRequestsFrom(ctx, eventId, otherId),
-      attendeeState(ctx, eventId, otherId),
+      attendeePresence(ctx, eventId, otherId, otherGuest),
     ])
 
     return {
       viewerIsAttendee,
       initials: initialsOf(view.name),
-      state,
+      state: presence.state,
+      here: presence.here,
       profile: view,
       suggestion: suggestion
         ? { reason: suggestion.reason, topics: suggestion.topics }
@@ -485,6 +549,25 @@ export const setAvailability = mutation({
         updatedAt: Date.now(),
       })
     }
+    return null
+  },
+})
+
+/**
+ * "Ya llegué": the attendee says they are at the event, so others can ask
+ * them for a 1:1. Only while 1:1s are open, so nobody marks themselves
+ * present days before.
+ */
+export const markArrived = mutation({
+  args: { eventId: v.id('socialEvents') },
+  returns: v.null(),
+  handler: async (ctx, { eventId }) => {
+    const userId = await requireAuth(ctx)
+    const event = await ctx.db.get('socialEvents', eventId)
+    if (!event) refuse('not_found', 'Event not found')
+    requireMeetingsOpen(event)
+    await requireApprovedAttendee(ctx, eventId, userId)
+    await recordArrival(ctx, eventId, userId)
     return null
   },
 })
@@ -538,6 +621,8 @@ async function acceptRequest(
   if (await activeMeetingFor(ctx, event._id, request.fromUserId)) {
     refuse('they_in_meeting', 'They are in a meeting right now')
   }
+  // Accepting means being there; the requester was recorded when they asked.
+  await recordArrival(ctx, event._id, request.toUserId)
   const meetingId = await startMeeting(
     ctx,
     event,
@@ -583,6 +668,8 @@ export const requestMeeting = mutation({
       return { requestId: reverse._id, meetingId }
     }
 
+    const them = await attendeePresence(ctx, eventId, toUserId)
+    if (!them.here) refuse('not_here', "They haven't arrived yet")
     if ((await availabilityFor(ctx, eventId, toUserId)) === 'busy') {
       refuse('busy', 'They are not taking requests right now')
     }
@@ -596,6 +683,8 @@ export const requestMeeting = mutation({
       )
     }
 
+    // Asking means being there.
+    await recordArrival(ctx, eventId, userId)
     const requestId = await ctx.db.insert('socialMeetingRequests', {
       eventId,
       fromUserId: userId,

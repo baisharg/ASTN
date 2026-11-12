@@ -2317,6 +2317,10 @@ export default defineSchema({
     eventId: v.id('socialEvents'),
     userId: v.string(),
     availability: availabilityValidator,
+    // When the attendee said in the app that they are at the event ("Ya
+    // llegué"), or first sent or accepted a 1:1 request. The door check-in
+    // (socialEventGuests.checkedInAt) counts as being there too.
+    arrivedAt: v.optional(v.number()),
     // When suggestions were last requested for this attendee (throttle).
     suggestionsRequestedAt: v.optional(v.number()),
     // Language the attendee's suggestions are written in (the page's).

@@ -2,6 +2,7 @@ import { SignInButton } from '@clerk/clerk-react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useConvexAuth, useMutation, useQuery } from 'convex/react'
 import { ArrowRight, MapPin } from 'lucide-react'
+import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
 import {
   MAX_OUTGOING_PENDING,
@@ -12,11 +13,12 @@ import { Panel, primaryButtonClass, secondaryButtonClass } from './ui'
 import type { FunctionReturnType } from 'convex/server'
 import type { Id } from '../../../convex/_generated/dataModel'
 import type { MeetingErrorCode } from '../../../convex/social/constants'
-import type { AttendeeState } from './ui'
+import type { RequestBlock } from '~/lib/social-live'
 import type { SocialLang } from '~/lib/social-i18n'
 import { Spinner } from '~/components/ui/spinner'
 import { errorCode, errorText } from '~/lib/convex-error'
 import { useCopy, useSocialLang } from '~/lib/social-i18n'
+import { useBusyAction } from '~/lib/use-busy-action'
 
 /** Live state for the signed-in attendee (see meetings.getLiveState). */
 export type LiveState = NonNullable<
@@ -38,6 +40,11 @@ const copy = {
     bannerNoSpot: 'Tenés una reunión en curso',
     bannerWith: (name: string) => `con ${name}`,
     bannerOpen: 'Abrir',
+    arrivalTitle: '¿Ya llegaste?',
+    arrivalBody:
+      'Avisanos cuando estés en el evento. Hasta entonces los demás te ven como "Todavía no llegó" y no pueden pedirte un 1:1.',
+    arrivalButton: 'Ya llegué',
+    arrivalDone: 'Listo. Ya te pueden pedir un 1:1.',
   },
   en: {
     signInTitle: 'Sign in to continue',
@@ -52,6 +59,11 @@ const copy = {
     bannerNoSpot: 'You have a meeting in progress',
     bannerWith: (name: string) => `with ${name}`,
     bannerOpen: 'Open',
+    arrivalTitle: 'Are you here yet?',
+    arrivalBody:
+      'Let us know once you\'re at the event. Until then others see you as "Not here yet" and can\'t ask you for a 1:1.',
+    arrivalButton: "I'm here",
+    arrivalDone: 'Done. People can now ask you for a 1:1.',
   },
 }
 
@@ -196,6 +208,57 @@ function AttendeeOnly({
   return <>{children(live)}</>
 }
 
+/**
+ * "¿Ya llegaste?": shown while 1:1s are open to an attendee who isn't known
+ * to be at the event, with the button that says they are.
+ */
+export function ArrivalCard({ live }: { live: LiveState }) {
+  const event = useSocialEvent()
+  const t = useCopy(copy)
+  const meetingsOpen = useMeetingsOpen()
+  const errorMessage = useSocialErrorMessage()
+  const markArrived = useMutation(api.social.meetings.markArrived)
+  const { busy, run } = useBusyAction<'arrive'>()
+
+  if (!meetingsOpen || live.here) return null
+
+  const onArrive = () =>
+    run(
+      'arrive',
+      async () => {
+        await markArrived({ eventId: event._id })
+        toast.success(t.arrivalDone)
+      },
+      (error) => toast.error(errorMessage(error)),
+    )
+
+  return (
+    <Panel
+      raised
+      aria-labelledby="arrival-title"
+      className="gap-3 border-input p-4"
+    >
+      <div className="flex flex-col gap-1">
+        <h2
+          id="arrival-title"
+          className="text-[17px] font-semibold text-[var(--baish-strong)]"
+        >
+          {t.arrivalTitle}
+        </h2>
+        <p className="text-[15px] leading-normal">{t.arrivalBody}</p>
+      </div>
+      <button
+        type="button"
+        disabled={busy !== null}
+        onClick={() => void onArrive()}
+        className={primaryButtonClass}
+      >
+        {busy ? <Spinner size="sm" /> : t.arrivalButton}
+      </button>
+    </Panel>
+  )
+}
+
 export function PageSpinner() {
   return (
     <div className="flex justify-center px-5 py-16">
@@ -258,6 +321,7 @@ const meetingErrorCopy = {
     closed: 'Los 1:1 no están abiertos en este momento.',
     not_attendee: 'Esto es solo para asistentes confirmados.',
     self: 'No podés pedirte un 1:1 a vos mismo.',
+    not_here: 'Esta persona todavía no llegó al evento.',
     busy: 'Esta persona no está tomando solicitudes ahora.',
     limit: `Ya tenés ${MAX_OUTGOING_PENDING} solicitudes esperando. Cancelá alguna para mandar otra.`,
     self_in_meeting: 'Primero terminá tu reunión actual.',
@@ -270,6 +334,7 @@ const meetingErrorCopy = {
     closed: '1:1s are not open right now.',
     not_attendee: 'This is only for confirmed attendees.',
     self: "You can't ask yourself for a 1:1.",
+    not_here: "They haven't arrived at the event yet.",
     busy: "They're not taking requests right now.",
     limit: `You already have ${MAX_OUTGOING_PENDING} requests waiting. Cancel one to send another.`,
     self_in_meeting: 'Finish your current meeting first.',
@@ -317,36 +382,11 @@ export function formatDuration(ms: number): string {
 
 // ── Requests ────────────────────────────────────────────────────────────
 
-export type RequestBlock = Extract<
-  MeetingErrorCode,
-  'closed' | 'busy' | 'limit' | 'self_in_meeting' | 'they_in_meeting'
->
-
-/**
- * Why the viewer can't ask `otherUserId` to meet right now, or null if they
- * can. Mirrors the checks in requestMeeting: when the other person already
- * asked, sending accepts their request, which needs both people free.
- */
-export function requestBlock(
-  live: LiveState,
-  meetingsOpen: boolean,
-  otherUserId: string,
-  otherState: AttendeeState,
-): RequestBlock | null {
-  if (!meetingsOpen) return 'closed'
-  if (live.incoming.some((r) => r.from.userId === otherUserId)) {
-    if (live.meeting) return 'self_in_meeting'
-    if (otherState === 'in_meeting') return 'they_in_meeting'
-    return null
-  }
-  if (otherState === 'busy') return 'busy'
-  if (live.outgoing.length >= MAX_OUTGOING_PENDING) return 'limit'
-  return null
-}
-
 export const requestBlockCopy = {
   es: {
     closed: () => 'Los 1:1 no están abiertos en este momento.',
+    not_here: (name: string) =>
+      `${name} todavía no llegó al evento. Vas a poder pedirle un 1:1 cuando llegue.`,
     busy: (name: string) => `${name} no está tomando solicitudes ahora.`,
     limit: () =>
       `Tenés ${MAX_OUTGOING_PENDING} solicitudes esperando. Cancelá alguna para mandar otra.`,
@@ -357,6 +397,8 @@ export const requestBlockCopy = {
   },
   en: {
     closed: () => '1:1s are not open right now.',
+    not_here: (name: string) =>
+      `${name} hasn't arrived at the event yet. You can ask for a 1:1 once they're here.`,
     busy: (name: string) => `${name} isn't taking requests right now.`,
     limit: () =>
       `You have ${MAX_OUTGOING_PENDING} requests waiting. Cancel one to send another.`,

@@ -6,6 +6,7 @@ import { api } from '../../../../../../convex/_generated/api'
 import type { LiveState } from '~/components/social/live'
 import { useNow } from '~/components/social/SocialEventContext'
 import {
+  ArrivalCard,
   AttendeeGate,
   timeAgo,
   useMeetingsOpen,
@@ -59,6 +60,7 @@ const copy = {
     queue: (n: number) => `${n}.º en su fila`,
     theyInMeeting: 'en una reunión',
     theyBusy: 'no disponible por ahora',
+    theyNotHere: 'todavía no llegó',
     cancelLabel: (name: string) => `Cancelar solicitud a ${name}`,
     acceptLabel: (name: string) => `Aceptar a ${name}`,
     declineLabel: (name: string) => `Rechazar a ${name}`,
@@ -90,6 +92,7 @@ const copy = {
     queue: (n: number) => `#${n} in their queue`,
     theyInMeeting: 'in a meeting',
     theyBusy: 'not available for now',
+    theyNotHere: 'not here yet',
     cancelLabel: (name: string) => `Cancel request to ${name}`,
     acceptLabel: (name: string) => `Accept ${name}`,
     declineLabel: (name: string) => `Decline ${name}`,
@@ -111,6 +114,8 @@ function RequestsContent({ live }: { live: LiveState }) {
   return (
     <main className="flex flex-col gap-[22px] px-5 pb-8 pt-4">
       <PageTitle>{t.title}</PageTitle>
+
+      <ArrivalCard live={live} />
 
       {live.meeting && (
         <Panel className="gap-2.5 border-[var(--baish-warn-dot)] bg-[var(--baish-warn-bg)] p-4">
@@ -306,11 +311,13 @@ function OutgoingRow({ request: r }: { request: Outgoing }) {
   const status = [
     t.waiting,
     t.queue(r.queuePosition),
-    r.toState === 'in_meeting'
-      ? t.theyInMeeting
-      : r.toState === 'busy'
-        ? t.theyBusy
-        : null,
+    !r.toHere
+      ? t.theyNotHere
+      : r.toState === 'in_meeting'
+        ? t.theyInMeeting
+        : r.toState === 'busy'
+          ? t.theyBusy
+          : null,
   ]
     .filter(Boolean)
     .join(' · ')
