@@ -90,7 +90,8 @@ const MAX_ROSTER = 150
 // Approved guests read per event (approvedGuests).
 const MAX_EVENT_ATTENDEES = 500
 // How many of a person's events (the most recent) a change of their opt-out
-// is applied to.
+// is applied to. At older events their own suggestion rows stay stored: they
+// are hidden while suggestions are off and show again if turned back on.
 const MAX_EVENTS_PER_PERSON = 50
 
 type SuggestionLanguage = Infer<typeof suggestionLanguageValidator>
@@ -716,8 +717,9 @@ async function startEventRun(
  * neither picked for anyone nor given picks.
  *
  * An attendee whose picks are the same keeps their rows untouched. The row
- * for the person an attendee is meeting right now always stays, because the
- * meeting page reads its topics from it. Attendees a run is still ranking
+ * for the person an attendee is meeting right now stays, because the meeting
+ * page reads its topics from it, unless that person turned suggestions off.
+ * Attendees a run is still ranking
  * keep their "generating" state; everyone else with a ranking becomes
  * `ready` or `nobody`.
  */
@@ -780,7 +782,9 @@ async function assignEventSuggestions(
       )
       .take(50)
     const replaceable = currentRows.filter(
-      (row) => !meetingNow.has(pairKey(row.userId, row.suggestedUserId)),
+      (row) =>
+        optedOut.has(row.suggestedUserId) ||
+        !meetingNow.has(pairKey(row.userId, row.suggestedUserId)),
     )
     const unchanged =
       replaceable.length === wanted.length &&
@@ -927,6 +931,9 @@ export const getSuggestionContext = internalQuery({
  * - skipped: nothing to rank (no longer an approved attendee with a ready
  *   profile, or they turned suggestions off)
  *
+ * A ranking for an attendee who turned suggestions off while it was being
+ * made counts as skipped.
+ *
  * With `runId`, the outcome also counts towards that event run, and the last
  * one in closes it, which assigns for the whole event. A ranking on its own
  * (or one that reports after its run was closed) is assigned straight away,
@@ -948,8 +955,14 @@ export const recordRankOutcome = internalMutation({
     ),
   },
   returns: v.null(),
-  handler: async (ctx, { eventId, userId, runId, outcome }) => {
+  handler: async (ctx, { eventId, userId, runId, outcome: reported }) => {
     const now = Date.now()
+    // A ranking that arrives after the attendee turned suggestions off
+    // (their request to the model was already under way) is not stored.
+    const arrivedAfterOptOut =
+      reported.kind === 'ranked' &&
+      (await suggestionOptOutsAmong(ctx, [userId])).has(userId)
+    const outcome = arrivedAfterOptOut ? { kind: 'skipped' as const } : reported
     if (outcome.kind === 'ranked') {
       const ranking = {
         language: outcome.language,
