@@ -14,6 +14,7 @@ import {
   isFreshImageUpload,
   isOnAllowlist,
   isProfileReadyForMatching,
+  lumaStateReset,
   meetingsWindow,
   normalizeEmail,
   profileMissingForMatching,
@@ -560,11 +561,24 @@ export const linkLumaEvent = mutation({
         'Another event is already linked to that Luma event',
       )
     }
-    await ctx.db.patch('socialEvents', eventId, {
-      lumaEventId: id,
-      lumaLastSyncError: undefined,
-      updatedAt: Date.now(),
-    })
+    if (event.lumaEventId === id) {
+      await ctx.db.patch('socialEvents', eventId, {
+        lumaLastSyncError: undefined,
+        updatedAt: Date.now(),
+      })
+    } else {
+      // A different Luma event: nothing the guests or the event hold from
+      // the previous one applies, and the import pushes the guests to this
+      // one. A first link finds nothing to reset.
+      await ctx.db.patch('socialEvents', eventId, {
+        lumaEventId: id,
+        lumaUrl: undefined,
+        lumaLastSyncedAt: undefined,
+        lumaLastSyncError: undefined,
+        updatedAt: Date.now(),
+      })
+      await resetGuestsLumaState(ctx, eventId, { clearLumaCheckIns: true })
+    }
     await ctx.scheduler.runAfter(0, internal.social.lumaSync.importLumaEvent, {
       eventId,
     })
@@ -572,10 +586,26 @@ export const linkLumaEvent = mutation({
   },
 })
 
+/** Apply `lumaStateReset` to every guest of the event. */
+async function resetGuestsLumaState(
+  ctx: MutationCtx,
+  eventId: Id<'socialEvents'>,
+  options: { clearLumaCheckIns: boolean },
+): Promise<void> {
+  const guests = await ctx.db
+    .query('socialEventGuests')
+    .withIndex('by_eventId_and_email', (q) => q.eq('eventId', eventId))
+    .take(2000)
+  for (const guest of guests) {
+    const patch = lumaStateReset(guest, options)
+    if (patch) await ctx.db.patch('socialEventGuests', guest._id, patch)
+  }
+}
+
 /**
  * Remove the event's Luma link, e.g. after the Luma event was deleted.
  * Guests stay; their Luma mirror state resets, so linking a new Luma event
- * pushes them again.
+ * pushes them again. Check-ins stay too, until another Luma event is linked.
  */
 export const unlinkLumaEvent = mutation({
   args: { eventId: v.id('socialEvents') },
@@ -589,17 +619,7 @@ export const unlinkLumaEvent = mutation({
       lumaLastSyncError: undefined,
       updatedAt: Date.now(),
     })
-    const guests = await ctx.db
-      .query('socialEventGuests')
-      .withIndex('by_eventId_and_email', (q) => q.eq('eventId', eventId))
-      .take(2000)
-    for (const guest of guests) {
-      await ctx.db.patch('socialEventGuests', guest._id, {
-        lumaGuestId: undefined,
-        lumaSync: 'not_linked',
-        lumaSyncError: undefined,
-      })
-    }
+    await resetGuestsLumaState(ctx, eventId, { clearLumaCheckIns: false })
     return null
   },
 })

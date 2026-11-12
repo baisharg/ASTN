@@ -68,6 +68,47 @@ export function lumaStatusToPush(
 }
 
 /**
+ * The patch that makes a guest row forget its Luma event: the Luma guest id,
+ * the ticket code and the sync state, leaving the row `not_linked` (what
+ * `pushUnlinkedGuests` pushes after the next link). Null when the row holds
+ * nothing to forget.
+ *
+ * `clearLumaCheckIns` also removes a check-in made in Luma's app (any
+ * check-in whose source isn't 'astn'). Linking a Luma event passes it: from
+ * then on a Luma check-in means one the new event reported, the pull adds
+ * the ones it has, and a leftover from the previous event could never be
+ * undone (the door page refuses, and the new event doesn't have it). A
+ * check-in made at the ASTN door always stays.
+ */
+export function lumaStateReset(
+  guest: Pick<
+    Doc<'socialEventGuests'>,
+    | 'lumaGuestId'
+    | 'lumaCheckInCode'
+    | 'lumaSync'
+    | 'lumaSyncError'
+    | 'checkedInAt'
+    | 'checkInSource'
+  >,
+  options: { clearLumaCheckIns: boolean },
+): Partial<Doc<'socialEventGuests'>> | null {
+  const patch: Partial<Doc<'socialEventGuests'>> = {}
+  if (guest.lumaGuestId !== undefined) patch.lumaGuestId = undefined
+  if (guest.lumaCheckInCode !== undefined) patch.lumaCheckInCode = undefined
+  if (guest.lumaSyncError !== undefined) patch.lumaSyncError = undefined
+  if (guest.lumaSync !== 'not_linked') patch.lumaSync = 'not_linked'
+  if (
+    options.clearLumaCheckIns &&
+    guest.checkedInAt !== undefined &&
+    guest.checkInSource !== 'astn'
+  ) {
+    patch.checkedInAt = undefined
+    patch.checkInSource = undefined
+  }
+  return Object.keys(patch).length > 0 ? patch : null
+}
+
+/**
  * The details of the linked Luma event to copy into the ASTN event: only
  * the ones the ASTN event has empty, so nothing an admin wrote is replaced.
  * The description matters because saving the ASTN one sends it to Luma
