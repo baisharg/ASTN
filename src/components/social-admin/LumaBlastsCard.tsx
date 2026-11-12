@@ -1,5 +1,5 @@
 import { useAction } from 'convex/react'
-import { Loader2, Mail, RefreshCw, Send } from 'lucide-react'
+import { AlertTriangle, Loader2, Mail, RefreshCw, Send } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
@@ -32,6 +32,7 @@ import { Spinner } from '~/components/ui/spinner'
 import { Switch } from '~/components/ui/switch'
 import { Textarea } from '~/components/ui/textarea'
 import { errorText } from '~/lib/convex-error'
+import { findJustSentBlast } from '~/lib/luma-blasts'
 import { useBusyAction } from '~/lib/use-busy-action'
 import { formatEventDateTime, zonedToEpoch } from '~/lib/zoned-time'
 
@@ -110,15 +111,21 @@ export function LumaBlastsCard({
   const [date, setDate] = useState('')
   const [time, setTime] = useState('10:00')
   const [confirmOpen, setConfirmOpen] = useState(false)
+  // Shown by the send button after a send whose outcome needs checking.
+  const [sendWarning, setSendWarning] = useState<string | null>(null)
   const { busy, run } = useBusyAction<'send'>()
 
-  const load = useCallback(async () => {
+  /** Reads the blasts from Luma; null when that fails. */
+  const load = useCallback(async (): Promise<Array<Blast> | null> => {
     setLoading(true)
     setLoadError(null)
     try {
-      setBlasts(await listBlasts({ orgId, lumaEventId }))
+      const list = await listBlasts({ orgId, lumaEventId })
+      setBlasts(list)
+      return list
     } catch (err) {
       setLoadError(errorText(err, 'No se pudieron leer los emails de Luma'))
+      return null
     } finally {
       setLoading(false)
     }
@@ -159,26 +166,84 @@ export function LumaBlastsCard({
       checked ? [...prev, value] : prev.filter((r) => r !== value),
     )
 
-  const handleSend = () =>
-    run(
+  const clearForm = () => {
+    setSubject('')
+    setContent('')
+    setSchedule(false)
+  }
+
+  /**
+   * The send failed on our side, which doesn't mean Luma didn't get it (a
+   * dropped connection loses the answer, not the request). Read the list
+   * back and say what we know, so the admin doesn't send it twice.
+   */
+  const afterFailedSend = async (
+    err: unknown,
+    attempt: { knownIds: ReadonlySet<string> | null; startedAt: number },
+  ) => {
+    setConfirmOpen(false)
+    const list = await load()
+    if (list === null) {
+      setSendWarning(
+        'No sabemos si el email salió: se cortó la conexión con Luma. Antes de mandarlo de nuevo, actualizá la lista de emails enviados y fijate si ya está.',
+      )
+      toastError('No sabemos si el email salió')(err)
+      return
+    }
+    const sent = findJustSentBlast({
+      blasts: list,
+      subject,
+      content,
+      ...attempt,
+    })
+    if (sent) {
+      setSendWarning(
+        'Hubo un error, pero Luma ya tiene este email: está en la lista de emails enviados. No lo mandes de nuevo.',
+      )
+      toast.warning('Parece que el email sí salió', {
+        description: 'Está en la lista de emails enviados.',
+      })
+      clearForm()
+      return
+    }
+    // Not listed, which isn't proof it wasn't sent: Luma can answer with an
+    // error after accepting an email, and can take a moment to list a new one.
+    setSendWarning(
+      'El email no aparece entre los enviados. Antes de mandarlo de nuevo, actualizá esa lista una vez más, por si Luma tardó en registrarlo.',
+    )
+    toastError('No se pudo enviar el email')(err)
+  }
+
+  const handleSend = () => {
+    const attempt = {
+      knownIds: blasts ? new Set(blasts.map((b) => b.id)) : null,
+      startedAt: Date.now(),
+    }
+    setSendWarning(null)
+    return run(
       'send',
       async () => {
-        const result = await sendBlast({
-          orgId,
-          lumaEventId,
-          subject,
-          contentMd: content,
-          recipients,
-          scheduledFor,
-        })
+        let result
+        try {
+          result = await sendBlast({
+            orgId,
+            lumaEventId,
+            subject,
+            contentMd: content,
+            recipients,
+            scheduledFor,
+          })
+        } catch (err) {
+          console.error(err)
+          await afterFailedSend(err, attempt)
+          return
+        }
         toast.success(
           result.status === 'scheduled' && scheduledFor
             ? 'Email programado en Luma'
             : 'Email enviado a Luma para mandar',
         )
-        setSubject('')
-        setContent('')
-        setSchedule(false)
+        clearForm()
         setConfirmOpen(false)
         await load()
       },
@@ -187,6 +252,7 @@ export function LumaBlastsCard({
         toastError('No se pudo enviar el email')(err)
       },
     )
+  }
 
   const recipientText = recipients
     .map((r) => RECIPIENTS.find((x) => x.value === r)?.label.toLowerCase())
@@ -295,6 +361,15 @@ export function LumaBlastsCard({
                 </div>
               )}
             </div>
+            {sendWarning && (
+              <div
+                role="alert"
+                className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+              >
+                <AlertTriangle className="size-4 shrink-0 mt-0.5" />
+                <span>{sendWarning}</span>
+              </div>
+            )}
             <Button
               type="submit"
               className="min-h-11"

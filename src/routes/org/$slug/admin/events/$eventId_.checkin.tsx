@@ -1,5 +1,5 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { useMutation, useQuery } from 'convex/react'
+import { useConvexConnectionState, useMutation, useQuery } from 'convex/react'
 import {
   ArrowLeft,
   Camera,
@@ -10,8 +10,9 @@ import {
   RefreshCw,
   Search,
   Undo2,
+  WifiOff,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../convex/_generated/api'
 import type { FunctionReturnType } from 'convex/server'
@@ -30,6 +31,7 @@ import { Card } from '~/components/ui/card'
 import { Input } from '~/components/ui/input'
 import { Label } from '~/components/ui/label'
 import { Spinner } from '~/components/ui/spinner'
+import { matchesSearch } from '~/lib/search-text'
 import { useBusyAction } from '~/lib/use-busy-action'
 
 export const Route = createFileRoute(
@@ -38,6 +40,10 @@ export const Route = createFileRoute(
 
 type CheckInData = FunctionReturnType<typeof api.social.checkin.listForCheckIn>
 type Guest = CheckInData['guests'][number]
+
+// The scanner keeps reading the QR of the person just let in. For this long
+// after marking them here, that isn't reported as "already checked in".
+const JUST_MARKED_MS = 20_000
 
 function CheckInRoute() {
   const { slug, eventId } = Route.useParams()
@@ -88,9 +94,35 @@ function CheckInPage({
   eventId: Id<'socialEvents'>
 }) {
   const data = useQuery(api.social.checkin.listForCheckIn, { eventId })
-  const setCheckedIn = useMutation(api.social.checkin.setCheckedIn)
+  // The list changes at once and the server catches up, so a slow or dropped
+  // connection never holds up the next guest.
+  const setCheckedIn = useMutation(
+    api.social.checkin.setCheckedIn,
+  ).withOptimisticUpdate((localStore, { guestId, checkedIn }) => {
+    const current = localStore.getQuery(api.social.checkin.listForCheckIn, {
+      eventId,
+    })
+    if (current === undefined) return
+    localStore.setQuery(
+      api.social.checkin.listForCheckIn,
+      { eventId },
+      {
+        ...current,
+        guests: current.guests.map((g) =>
+          g._id === guestId
+            ? {
+                ...g,
+                checkedInAt: checkedIn ? Date.now() : null,
+                checkInSource: checkedIn ? ('astn' as const) : null,
+              }
+            : g,
+        ),
+      },
+    )
+  })
   const syncLuma = useMutation(api.social.events.syncLumaNow)
-  const { busy, run } = useBusyAction()
+  const offline = !useConvexConnectionState().isWebSocketConnected
+  const { busy, run } = useBusyAction<'sync'>()
 
   const [scanning, setScanning] = useState(false)
   const [search, setSearch] = useState('')
@@ -99,6 +131,10 @@ function CheckInPage({
     null,
   )
   const [scanError, setScanError] = useState<string | null>(null)
+  // Guests whose check-in (or undo) hasn't reached the server yet.
+  const [saving, setSaving] = useState<ReadonlySet<string>>(() => new Set())
+  // When each guest was marked from this device (see JUST_MARKED_MS).
+  const markedHere = useRef(new Map<string, number>())
 
   if (data === undefined) {
     return (
@@ -111,7 +147,12 @@ function CheckInPage({
   const guests = data.guests
   const selected = guests.find((g) => g._id === selectedId) ?? null
   const approved = guests.filter((g) => g.status === 'approved')
-  const arrived = guests.filter((g) => g.checkedInAt !== null)
+  const arrivedApproved = approved.filter((g) => g.checkedInAt !== null)
+  const arrivedOthers = guests.filter(
+    (g) => g.status !== 'approved' && g.checkedInAt !== null,
+  )
+  // Only guests who came through Luma have a ticket QR.
+  const hasTickets = guests.some((g) => g.checkInCode !== null)
 
   const handleCode = (code: string) => {
     const guest = findByCode(guests, code)
@@ -125,28 +166,45 @@ function CheckInPage({
     }
     setSelectedId(guest._id)
     if (guest.checkedInAt !== null) {
-      toast.info(
-        `${guest.name} ya hizo check-in a las ${timeOf(guest.checkedInAt)}`,
-      )
+      const markedAt = markedHere.current.get(guest._id)
+      const justMarkedHere =
+        markedAt !== undefined && Date.now() - markedAt < JUST_MARKED_MS
+      if (!justMarkedHere) {
+        toast.info(
+          `${guest.name} ya hizo check-in a las ${timeOf(guest.checkedInAt)}`,
+        )
+      }
     }
   }
 
-  const mark = (guest: Guest, checkedIn: boolean) =>
-    run(
-      `${guest._id}:${checkedIn}`,
-      async () => {
-        await setCheckedIn({ guestId: guest._id, checkedIn })
-        if (checkedIn) toast.success(`Check-in: ${guest.name}`)
-      },
+  const mark = async (guest: Guest, checkedIn: boolean) => {
+    if (checkedIn) markedHere.current.set(guest._id, Date.now())
+    else markedHere.current.delete(guest._id)
+    setSaving((prev) => new Set(prev).add(guest._id))
+    try {
+      await setCheckedIn({ guestId: guest._id, checkedIn })
+      if (checkedIn) toast.success(`Check-in: ${guest.name}`)
+    } catch (err) {
+      console.error(err)
+      markedHere.current.delete(guest._id)
       toastError(
-        checkedIn ? 'No se pudo marcar el check-in' : 'No se pudo deshacer',
-      ),
-    )
+        checkedIn
+          ? `No se pudo marcar el check-in de ${guest.name}`
+          : `No se pudo deshacer el check-in de ${guest.name}`,
+      )(err)
+    } finally {
+      setSaving((prev) => {
+        const next = new Set(prev)
+        next.delete(guest._id)
+        return next
+      })
+    }
+  }
 
-  const q = search.trim().toLowerCase()
-  const results = q
+  const searching = search.trim() !== ''
+  const results = searching
     ? guests
-        .filter((g) => g.name.toLowerCase().includes(q) || g.email.includes(q))
+        .filter((g) => matchesSearch(search, [g.name, g.email]))
         .sort((a, b) => a.name.localeCompare(b.name, 'es'))
         .slice(0, 30)
     : []
@@ -168,6 +226,19 @@ function CheckInPage({
           </h1>
         </div>
 
+        {offline && (
+          <div
+            className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+            role="status"
+          >
+            <WifiOff className="size-4 shrink-0 mt-0.5" />
+            <span>
+              Sin conexión. Podés seguir marcando check-ins: se guardan cuando
+              vuelva. Hasta entonces no cierres ni recargues esta página.
+            </span>
+          </div>
+        )}
+
         <Card className="p-4 flex items-center justify-between gap-4">
           <div>
             <p className="text-sm text-muted-foreground">Llegaron</p>
@@ -175,12 +246,17 @@ function CheckInPage({
               className="text-4xl font-semibold tabular-nums"
               aria-live="polite"
             >
-              {arrived.length}
+              {arrivedApproved.length}
               <span className="text-lg text-muted-foreground font-normal">
                 {' '}
                 / {approved.length} aprobados
               </span>
             </p>
+            {arrivedOthers.length > 0 && (
+              <p className="text-sm text-amber-800">
+                + {arrivedOthers.length} sin aprobar
+              </p>
+            )}
           </div>
           {data.lumaLinked && (
             <Button
@@ -221,76 +297,86 @@ function CheckInPage({
         {selected && (
           <SelectedGuest
             guest={selected}
-            busy={busy}
+            saving={saving.has(selected._id)}
             onMark={(checkedIn) => void mark(selected, checkedIn)}
             onClose={() => setSelectedId(null)}
           />
         )}
 
-        <Card className="p-4 space-y-4">
-          <Button
-            className="w-full min-h-12 text-base"
-            variant={scanning ? 'outline' : 'default'}
-            onClick={() => {
-              setScanError(null)
-              setScanning((s) => !s)
-            }}
-          >
-            {scanning ? (
-              <>
-                <CameraOff className="size-5 mr-2" />
-                Cerrar la cámara
-              </>
-            ) : (
-              <>
-                <Camera className="size-5 mr-2" />
-                Escanear el QR del ticket de Luma
-              </>
-            )}
-          </Button>
-          {scanning && (
-            <QrScanner
-              onScan={(code) => handleCode(code)}
-              onError={(message) => {
-                setScanError(message)
-                setScanning(false)
+        {hasTickets ? (
+          <Card className="p-4 space-y-4">
+            <Button
+              className="w-full min-h-12 text-base"
+              variant={scanning ? 'outline' : 'default'}
+              onClick={() => {
+                setScanError(null)
+                setScanning((s) => !s)
               }}
-            />
-          )}
-          {scanError && (
-            <p className="text-sm text-red-700" role="alert">
-              {scanError} Podés buscar por nombre o pegar el código abajo.
-            </p>
-          )}
-          <form
-            className="space-y-1"
-            onSubmit={(e) => {
-              e.preventDefault()
-              handleCode(manualCode)
-              setManualCode('')
-            }}
-          >
-            <Label htmlFor="checkin-code">O ingresá el código del ticket</Label>
-            <div className="flex gap-2">
-              <Input
-                id="checkin-code"
-                value={manualCode}
-                onChange={(e) => setManualCode(e.target.value)}
-                placeholder="El enlace del QR o su código"
-                autoComplete="off"
-                className="min-h-11"
+            >
+              {scanning ? (
+                <>
+                  <CameraOff className="size-5 mr-2" />
+                  Cerrar la cámara
+                </>
+              ) : (
+                <>
+                  <Camera className="size-5 mr-2" />
+                  Escanear el QR del ticket de Luma
+                </>
+              )}
+            </Button>
+            {scanning && (
+              <QrScanner
+                onScan={(code) => handleCode(code)}
+                onError={(message) => {
+                  setScanError(message)
+                  setScanning(false)
+                }}
               />
-              <Button
-                type="submit"
-                variant="outline"
-                className="min-h-11"
-                disabled={!manualCode.trim()}
-              >
-                Buscar
-              </Button>
-            </div>
-          </form>
-        </Card>
+            )}
+            {scanError && (
+              <p className="text-sm text-red-700" role="alert">
+                {scanError} Podés buscar por nombre o pegar el código abajo.
+              </p>
+            )}
+            <form
+              className="space-y-1"
+              onSubmit={(e) => {
+                e.preventDefault()
+                handleCode(manualCode)
+                setManualCode('')
+              }}
+            >
+              <Label htmlFor="checkin-code">
+                O ingresá el código del ticket
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  id="checkin-code"
+                  value={manualCode}
+                  onChange={(e) => setManualCode(e.target.value)}
+                  placeholder="El enlace del QR o su código"
+                  autoComplete="off"
+                  className="min-h-11"
+                />
+                <Button
+                  type="submit"
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={!manualCode.trim()}
+                >
+                  Buscar
+                </Button>
+              </div>
+            </form>
+          </Card>
+        ) : (
+          <Card className="p-4 text-sm text-muted-foreground">
+            {data.lumaLinked
+              ? 'Todavía no tenemos los QR de los tickets de Luma de este evento, así que no hay nada para escanear. Probá “Actualizar desde Luma”; mientras tanto, buscá a cada persona por nombre o email.'
+              : 'Este evento no está vinculado con Luma, así que los invitados no tienen ticket con QR para escanear. Buscá a cada persona por nombre o email.'}
+          </Card>
+        )}
 
         <div className="space-y-3">
           <div className="relative">
@@ -304,7 +390,7 @@ function CheckInPage({
               autoComplete="off"
             />
           </div>
-          {q && results.length === 0 && (
+          {searching && results.length === 0 && (
             <p className="text-sm text-muted-foreground">
               No hay invitados con ese nombre o email.
             </p>
@@ -314,7 +400,7 @@ function CheckInPage({
               <li key={g._id}>
                 <GuestRow
                   guest={g}
-                  busy={busy}
+                  saving={saving.has(g._id)}
                   onMark={(checkedIn) => void mark(g, checkedIn)}
                 />
               </li>
@@ -334,30 +420,34 @@ function StatusBadge({ guest }: { guest: Guest }) {
   )
 }
 
-function CheckedInNote({ guest }: { guest: Guest }) {
+function CheckedInNote({ guest, saving }: { guest: Guest; saving: boolean }) {
   if (guest.checkedInAt === null) return null
   return (
     <span className="inline-flex items-center gap-1 text-sm text-green-700">
       <CheckCircle2 className="size-4" />
       Llegó {timeOf(guest.checkedInAt)}
       {guest.checkInSource === 'luma' ? ' (en Luma)' : ''}
+      {saving && <span className="text-muted-foreground"> · guardando…</span>}
     </span>
   )
 }
 
+/**
+ * Check a guest in, or undo it. Disabled only while this guest's own change
+ * is on its way to the server, so a second tap can't undo the first.
+ */
 function MarkButton({
   guest,
-  busy,
+  saving,
   onMark,
   large = false,
 }: {
   guest: Guest
-  busy: string | null
+  saving: boolean
   onMark: (checkedIn: boolean) => void
   large?: boolean
 }) {
   const checkedIn = guest.checkedInAt !== null
-  const working = busy === `${guest._id}:${!checkedIn}`
   // Check-ins made in Luma's app can only be undone there.
   if (checkedIn && guest.checkInSource !== 'astn') return null
   if (checkedIn) {
@@ -365,10 +455,10 @@ function MarkButton({
       <Button
         variant="ghost"
         className={large ? 'min-h-12' : 'min-h-11'}
-        disabled={busy !== null}
+        disabled={saving}
         onClick={() => onMark(false)}
       >
-        {working ? (
+        {saving ? (
           <Loader2 className="size-4 mr-2 animate-spin" />
         ) : (
           <Undo2 className="size-4 mr-2" />
@@ -380,10 +470,10 @@ function MarkButton({
   return (
     <Button
       className={large ? 'min-h-12 text-base w-full sm:w-auto' : 'min-h-11'}
-      disabled={busy !== null}
+      disabled={saving}
       onClick={() => onMark(true)}
     >
-      {working ? (
+      {saving ? (
         <Loader2 className="size-4 mr-2 animate-spin" />
       ) : (
         <CheckCircle2 className="size-4 mr-2" />
@@ -395,12 +485,12 @@ function MarkButton({
 
 function SelectedGuest({
   guest,
-  busy,
+  saving,
   onMark,
   onClose,
 }: {
   guest: Guest
-  busy: string | null
+  saving: boolean
   onMark: (checkedIn: boolean) => void
   onClose: () => void
 }) {
@@ -425,9 +515,9 @@ function SelectedGuest({
           aprobarlo primero desde la pestaña Invitados.
         </p>
       )}
-      <CheckedInNote guest={guest} />
+      <CheckedInNote guest={guest} saving={saving} />
       <div className="flex flex-wrap gap-2">
-        <MarkButton guest={guest} busy={busy} onMark={onMark} large />
+        <MarkButton guest={guest} saving={saving} onMark={onMark} large />
         <Button variant="outline" className="min-h-12" onClick={onClose}>
           Listo
         </Button>
@@ -438,11 +528,11 @@ function SelectedGuest({
 
 function GuestRow({
   guest,
-  busy,
+  saving,
   onMark,
 }: {
   guest: Guest
-  busy: string | null
+  saving: boolean
   onMark: (checkedIn: boolean) => void
 }) {
   return (
@@ -453,9 +543,9 @@ function GuestRow({
           <StatusBadge guest={guest} />
         </div>
         <p className="text-sm text-muted-foreground truncate">{guest.email}</p>
-        <CheckedInNote guest={guest} />
+        <CheckedInNote guest={guest} saving={saving} />
       </div>
-      <MarkButton guest={guest} busy={busy} onMark={onMark} />
+      <MarkButton guest={guest} saving={saving} onMark={onMark} />
     </Card>
   )
 }

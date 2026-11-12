@@ -14,6 +14,10 @@ import type { Id } from '../../../../../../convex/_generated/dataModel'
 import { AllowlistTab } from '~/components/social-admin/AllowlistTab'
 import { EventSettingsTab } from '~/components/social-admin/EventSettingsTab'
 import { GuestsTab } from '~/components/social-admin/GuestsTab'
+import {
+  KeptTabsContent,
+  useKeptTabs,
+} from '~/components/social-admin/KeptTabs'
 import { LiveTab } from '~/components/social-admin/LiveTab'
 import {
   EventStatusBadge,
@@ -22,7 +26,7 @@ import {
 } from '~/components/social-admin/shared'
 import { Button } from '~/components/ui/button'
 import { Spinner } from '~/components/ui/spinner'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
+import { Tabs, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { formatEventDateTime } from '~/lib/zoned-time'
 
 export const Route = createFileRoute('/org/$slug/admin/events/$eventId')({
@@ -54,6 +58,11 @@ function AdminEventPage({
   eventId: Id<'socialEvents'>
 }) {
   const event = useQuery(api.social.events.getEventAdmin, { eventId })
+  // Panels stay mounted once opened: unsaved spots or details survive a look
+  // at another tab.
+  const { tab, openTab, visited } = useKeptTabs<
+    'settings' | 'guests' | 'allowlist' | 'live'
+  >('settings')
 
   if (event === undefined) {
     return (
@@ -139,7 +148,7 @@ function AdminEventPage({
           </div>
         </div>
 
-        <Tabs defaultValue="settings">
+        <Tabs value={tab} onValueChange={openTab}>
           <div className="overflow-x-auto">
             <TabsList>
               <TabsTrigger value="settings" className="gap-2">
@@ -169,18 +178,18 @@ function AdminEventPage({
             </TabsList>
           </div>
 
-          <TabsContent value="settings" className="mt-6">
+          <KeptTabsContent value="settings" visited={visited} className="mt-6">
             <EventSettingsTab event={event} />
-          </TabsContent>
-          <TabsContent value="guests" className="mt-6">
+          </KeptTabsContent>
+          <KeptTabsContent value="guests" visited={visited} className="mt-6">
             <GuestsTab eventId={event._id} />
-          </TabsContent>
-          <TabsContent value="allowlist" className="mt-6">
+          </KeptTabsContent>
+          <KeptTabsContent value="allowlist" visited={visited} className="mt-6">
             <AllowlistTab orgId={event.orgId} />
-          </TabsContent>
-          <TabsContent value="live" className="mt-6">
+          </KeptTabsContent>
+          <KeptTabsContent value="live" visited={visited} className="mt-6">
             <LiveTab eventId={event._id} />
-          </TabsContent>
+          </KeptTabsContent>
         </Tabs>
       </div>
     </PageShell>

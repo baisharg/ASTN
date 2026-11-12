@@ -22,7 +22,12 @@ import {
   lumaArgs,
   useLumaEventForm,
 } from './LumaEventForm'
-import { VisibilityBadge, guestCountsText, useNow } from './luma-shared'
+import {
+  VisibilityBadge,
+  guestCountsText,
+  useLastDefined,
+  useNow,
+} from './luma-shared'
 import type { LumaEventRow } from './luma-shared'
 import { toastError } from './shared'
 import { Badge } from '~/components/ui/badge'
@@ -55,7 +60,12 @@ export function LumaCalendarSection({
   slug: string
 }) {
   const now = useNow()
-  const data = useQuery(api.luma.admin.listLumaEvents, { orgId, now })
+  // `now` changes every minute, which reloads the query: keep the last list
+  // on screen meanwhile, so the page doesn't flash a spinner and reset.
+  const data = useLastDefined(
+    useQuery(api.luma.admin.listLumaEvents, { orgId, now }),
+    orgId,
+  )
   const status = useQuery(api.luma.admin.getSyncStatus, { orgId })
   const syncNow = useMutation(api.luma.admin.syncNow)
   const { busy, run } = useBusyAction<'sync'>()

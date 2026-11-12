@@ -14,12 +14,8 @@ import {
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
-import { DEFAULT_EVENT_HOURS } from '../../../convex/social/constants'
-import {
-  EventDetailsFields,
-  detailsFromEvent,
-  useEventDetailsForm,
-} from './EventDetailsFields'
+import { EventDetailsFields, useEventDetailsForm } from './EventDetailsFields'
+import { OneOnOneCard } from './OneOnOneCard'
 import { SpotsCard } from './SpotsCard'
 import { EVENT_STATUS_LABELS, EventStatusBadge, toastError } from './shared'
 import type { AdminEvent, EventStatus } from './shared'
@@ -34,21 +30,9 @@ import {
 } from '~/components/ui/card'
 import { Input } from '~/components/ui/input'
 import { Label } from '~/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '~/components/ui/select'
-import { Textarea } from '~/components/ui/textarea'
+import { detailsFromEvent } from '~/lib/event-details'
 import { useBusyAction } from '~/lib/use-busy-action'
-import {
-  epochToZoned,
-  nextDate,
-  timeOnEventNight,
-  zonedToEpoch,
-} from '~/lib/zoned-time'
+import { carryZonedTime } from '~/lib/zoned-time'
 
 export function EventSettingsTab({ event }: { event: AdminEvent }) {
   return (
@@ -131,48 +115,38 @@ function StatusCard({ event }: { event: AdminEvent }) {
 
 // ── Details ─────────────────────────────────────────────────────────────
 
-/**
- * Move a stored time to a new event date/timezone, keeping its wall-clock
- * time and whether it falls on the event night's second day.
- */
-function carryTime(
-  ms: number | undefined,
-  old: { date: string; tz: string },
-  next: { date: string; tz: string },
-): number | null {
-  if (ms === undefined) return null
-  const z = epochToZoned(ms, old.tz)
-  const date = z.date === old.date ? next.date : nextDate(next.date)
-  return zonedToEpoch(date, z.time, next.tz)
-}
-
 function DetailsCard({ event }: { event: AdminEvent }) {
   const updateEvent = useMutation(api.social.events.updateEvent)
-  const form = useEventDetailsForm(detailsFromEvent(event))
+  const stored = detailsFromEvent(event)
+  const form = useEventDetailsForm(stored)
   const { busy, run } = useBusyAction<'save'>()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.canSave || busy) return
-    const { date, timezone } = form.values
-    const oldDate = epochToZoned(event.startAt, event.timezone).date
-    // Moving the event to another day keeps the 1:1 window on it.
-    const moved = date !== oldDate || timezone !== event.timezone
-    const old = { date: oldDate, tz: event.timezone }
-    const next = { date, tz: timezone }
+    if (!form.canSave || !form.hasChanges || busy) return
+    const saved = form.values
+    // Moving the event to another day or timezone takes the 1:1 window along.
+    const moved =
+      saved.date !== stored.date || saved.timezone !== stored.timezone
+    const old = { date: stored.date, timeZone: stored.timezone }
+    const next = { date: saved.date, timeZone: saved.timezone }
+    const { meetingsOpenAt, meetingsCloseAt } = event
     await run(
       'save',
       async () => {
+        // Only what the admin edited: the rest may have changed since the
+        // page loaded (e.g. an address read from Luma after linking).
         await updateEvent({
           eventId: event._id,
-          ...form.toArgs(),
-          ...(moved
-            ? {
-                meetingsOpenAt: carryTime(event.meetingsOpenAt, old, next),
-                meetingsCloseAt: carryTime(event.meetingsCloseAt, old, next),
-              }
+          ...form.changes,
+          ...(moved && meetingsOpenAt !== undefined
+            ? { meetingsOpenAt: carryZonedTime(meetingsOpenAt, old, next) }
+            : {}),
+          ...(moved && meetingsCloseAt !== undefined
+            ? { meetingsCloseAt: carryZonedTime(meetingsCloseAt, old, next) }
             : {}),
         })
+        form.markSaved(saved)
         toast.success('Datos del evento guardados')
       },
       toastError('No se pudieron guardar los datos'),
@@ -195,7 +169,7 @@ function DetailsCard({ event }: { event: AdminEvent }) {
           <Button
             type="submit"
             className="min-h-11"
-            disabled={!form.canSave || busy !== null}
+            disabled={!form.canSave || !form.hasChanges || busy !== null}
           >
             {busy ? (
               <Loader2 className="size-4 mr-2 animate-spin" />
@@ -434,159 +408,6 @@ function LumaCard({ event }: { event: AdminEvent }) {
             </p>
           </form>
         )}
-      </CardContent>
-    </Card>
-  )
-}
-
-// ── 1:1 settings ────────────────────────────────────────────────────────
-
-const MEETING_LENGTHS = [15, 20, 30]
-
-function OneOnOneCard({ event }: { event: AdminEvent }) {
-  const updateEvent = useMutation(api.social.events.updateEvent)
-  const { busy, run } = useBusyAction<'save'>()
-  const start = epochToZoned(event.startAt, event.timezone)
-
-  const [openTime, setOpenTime] = useState(
-    event.meetingsOpenAt
-      ? epochToZoned(event.meetingsOpenAt, event.timezone).time
-      : '',
-  )
-  const [closeTime, setCloseTime] = useState(
-    event.meetingsCloseAt
-      ? epochToZoned(event.meetingsCloseAt, event.timezone).time
-      : '',
-  )
-  const [minutes, setMinutes] = useState(String(event.meetingMinutes))
-  const [prompt, setPrompt] = useState(event.matchingPrompt ?? '')
-
-  const toEpoch = (time: string) =>
-    time ? timeOnEventNight(start.date, start.time, time, event.timezone) : null
-  const openAt = toEpoch(openTime)
-  const closeAt = toEpoch(closeTime)
-  const windowInvalid = openAt !== null && closeAt !== null && closeAt <= openAt
-
-  const lengths = MEETING_LENGTHS.includes(event.meetingMinutes)
-    ? MEETING_LENGTHS
-    : [...MEETING_LENGTHS, event.meetingMinutes].sort((a, b) => a - b)
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (windowInvalid || busy) return
-    await run(
-      'save',
-      async () => {
-        await updateEvent({
-          eventId: event._id,
-          meetingsOpenAt: openAt,
-          meetingsCloseAt: closeAt,
-          meetingMinutes: Number(minutes),
-          matchingPrompt: prompt,
-        })
-        toast.success('Configuración de 1:1 guardada')
-      },
-      toastError('No se pudo guardar'),
-    )
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>1:1</CardTitle>
-        <CardDescription>
-          Cuándo pueden pedirse reuniones los asistentes y cuánto dura cada una.
-          Horarios en la hora del evento ({event.timezone.replace(/_/g, ' ')});
-          los anteriores al inicio del evento cuentan como del día siguiente.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="space-y-1">
-              <Label htmlFor="meetings-open">Abren a las</Label>
-              <Input
-                id="meetings-open"
-                type="time"
-                value={openTime}
-                onChange={(e) => setOpenTime(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="meetings-close">Cierran a las</Label>
-              <Input
-                id="meetings-close"
-                type="time"
-                value={closeTime}
-                onChange={(e) => setCloseTime(e.target.value)}
-                aria-invalid={windowInvalid || undefined}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="meetings-minutes">Duración de cada reunión</Label>
-              <Select value={minutes} onValueChange={setMinutes}>
-                <SelectTrigger id="meetings-minutes" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {lengths.map((m) => (
-                    <SelectItem key={m} value={String(m)}>
-                      {m} minutos
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          {windowInvalid && (
-            <p className="text-sm text-red-600">
-              El cierre tiene que ser después de la apertura.
-            </p>
-          )}
-          {(!openTime || !closeTime) && (
-            <p className="text-xs text-muted-foreground">
-              Sin horario de apertura, los 1:1 abren cuando empieza el evento.
-              Sin horario de cierre, cierran cuando termina, o{' '}
-              {DEFAULT_EVENT_HOURS} horas después del inicio si el evento no
-              tiene hora de fin.
-            </p>
-          )}
-
-          <div className="space-y-1">
-            <Label htmlFor="matching-prompt">
-              ¿Qué querés que la gente se lleve de esta noche?
-            </Label>
-            <Textarea
-              id="matching-prompt"
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              rows={4}
-              aria-describedby="matching-prompt-help"
-              placeholder="Conectar a personas nuevas en AI safety con quienes ya trabajan en el área. Priorizá esos cruces por sobre juntar gente con perfiles parecidos."
-            />
-            <p
-              id="matching-prompt-help"
-              className="text-xs text-muted-foreground"
-            >
-              El asistente usa esto para sugerir quién debería conocerse y de
-              qué hablar. La primera oración se muestra a los asistentes como el
-              foco de la noche.
-            </p>
-          </div>
-
-          <Button
-            type="submit"
-            className="min-h-11"
-            disabled={windowInvalid || busy !== null}
-          >
-            {busy ? (
-              <Loader2 className="size-4 mr-2 animate-spin" />
-            ) : (
-              <Save className="size-4 mr-2" />
-            )}
-            Guardar
-          </Button>
-        </form>
       </CardContent>
     </Card>
   )

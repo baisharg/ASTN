@@ -16,6 +16,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
+import {
+  KeptTabsContent,
+  useKeptTabs,
+} from '~/components/social-admin/KeptTabs'
 import { LumaBlastsCard } from '~/components/social-admin/LumaBlastsCard'
 import {
   LumaEventFields,
@@ -45,7 +49,7 @@ import {
   CardTitle,
 } from '~/components/ui/card'
 import { Spinner } from '~/components/ui/spinner'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
+import { Tabs, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { errorText } from '~/lib/convex-error'
 import { useBusyAction } from '~/lib/use-busy-action'
 import { formatEventDateTime } from '~/lib/zoned-time'
@@ -81,6 +85,11 @@ function LumaEventPage({
   const refreshGuests = useMutation(api.luma.admin.refreshGuests)
   const navigate = useNavigate()
   const { busy, run } = useBusyAction<'manage' | 'refresh'>()
+  // Panels stay mounted once opened: a half-written email or unsaved
+  // settings survive a look at another tab.
+  const { tab, openTab, visited } = useKeptTabs<
+    'guests' | 'settings' | 'emails'
+  >('guests')
 
   if (event === undefined) {
     return (
@@ -228,7 +237,7 @@ function LumaEventPage({
             acá.
           </Card>
         ) : (
-          <Tabs defaultValue="guests">
+          <Tabs value={tab} onValueChange={openTab}>
             <div className="overflow-x-auto">
               <TabsList>
                 <TabsTrigger value="guests" className="gap-2">
@@ -245,7 +254,7 @@ function LumaEventPage({
                 </TabsTrigger>
               </TabsList>
             </div>
-            <TabsContent value="guests" className="mt-6">
+            <KeptTabsContent value="guests" visited={visited} className="mt-6">
               <Card>
                 <CardHeader className="flex flex-row items-start justify-between gap-4">
                   <div>
@@ -274,16 +283,20 @@ function LumaEventPage({
                   <LumaGuestsList orgId={orgId} lumaEventId={lumaEventId} />
                 </CardContent>
               </Card>
-            </TabsContent>
-            <TabsContent value="settings" className="mt-6">
+            </KeptTabsContent>
+            <KeptTabsContent
+              value="settings"
+              visited={visited}
+              className="mt-6"
+            >
               <EditLumaEventCard
                 orgId={orgId}
                 slug={slug}
                 lumaEventId={lumaEventId}
                 socialEventId={event.socialEventId}
               />
-            </TabsContent>
-            <TabsContent value="emails" className="mt-6">
+            </KeptTabsContent>
+            <KeptTabsContent value="emails" visited={visited} className="mt-6">
               <LumaBlastsCard
                 orgId={orgId}
                 lumaEventId={lumaEventId}
@@ -294,7 +307,7 @@ function LumaEventPage({
                   checkedIn: event.checkedInCount,
                 }}
               />
-            </TabsContent>
+            </KeptTabsContent>
           </Tabs>
         )}
       </div>

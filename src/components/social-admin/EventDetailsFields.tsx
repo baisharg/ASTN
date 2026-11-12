@@ -1,90 +1,70 @@
 import { useState } from 'react'
-import type { Doc } from '../../../convex/_generated/dataModel'
 import { DEFAULT_EVENT_TIMEZONE } from './shared'
 import { TimezoneSelector } from '~/components/org/TimezoneSelector'
 import { Input } from '~/components/ui/input'
 import { Label } from '~/components/ui/label'
 import { Textarea } from '~/components/ui/textarea'
 import {
-  differsFromBrowserZone,
-  epochToZoned,
-  timeOnEventNight,
-  zonedToEpoch,
-} from '~/lib/zoned-time'
-
-/** The event's details as the admin types them: wall-clock times, raw text. */
-export type EventDetailsValues = {
-  title: string
-  date: string
-  startTime: string
-  endTime: string
-  timezone: string
-  venueName: string
-  venueAddress: string
-  description: string
-}
+  changedEventDetails,
+  eventDetailsArgs,
+  eventDetailsProblem,
+} from '~/lib/event-details'
+import type { EventDetailsValues } from '~/lib/event-details'
+import { differsFromBrowserZone } from '~/lib/zoned-time'
 
 export const EMPTY_EVENT_DETAILS: EventDetailsValues = {
   title: '',
   date: '',
   startTime: '19:00',
   endTime: '',
+  endDate: '',
   timezone: DEFAULT_EVENT_TIMEZONE,
   venueName: '',
   venueAddress: '',
   description: '',
 }
 
-export function detailsFromEvent(
-  event: Doc<'socialEvents'>,
-): EventDetailsValues {
-  const start = epochToZoned(event.startAt, event.timezone)
-  return {
-    title: event.title,
-    date: start.date,
-    startTime: start.time,
-    endTime: event.endAt ? epochToZoned(event.endAt, event.timezone).time : '',
-    timezone: event.timezone,
-    venueName: event.venueName ?? '',
-    venueAddress: event.venueAddress ?? '',
-    description: event.description ?? '',
-  }
-}
-
 /**
- * Form state for an event's details. `toArgs` converts the wall-clock times
- * (in the event's timezone) to epoch ms; an end time earlier than the start
- * falls on the next day.
+ * Form state for an event's details: the stored values with the admin's edits
+ * on top. A field the admin hasn't edited follows `stored`, so a value that
+ * changes while the form is open (e.g. an address read from Luma) shows up
+ * and is never overwritten. `changes` holds only what the admin edited.
+ * `toArgs` converts the wall-clock times (in the event's timezone) to epoch
+ * ms; see `eventDetailsArgs`.
  */
-export function useEventDetailsForm(initial: EventDetailsValues) {
-  const [values, setValues] = useState(initial)
+export function useEventDetailsForm(stored: EventDetailsValues) {
+  const [edits, setEdits] = useState<Partial<EventDetailsValues>>({})
+  const values: EventDetailsValues = { ...stored, ...edits }
 
   const set = <K extends keyof EventDetailsValues>(
     key: K,
     value: EventDetailsValues[K],
-  ) => setValues((prev) => ({ ...prev, [key]: value }))
+  ) => setEdits((prev) => ({ ...prev, [key]: value }))
 
-  const canSave =
-    values.title.trim() !== '' && values.date !== '' && values.startTime !== ''
+  /** Drop the edits that were saved; anything typed since then stays. */
+  const markSaved = (saved: EventDetailsValues) =>
+    setEdits((prev) => {
+      const rest: Partial<EventDetailsValues> = {}
+      for (const key of Object.keys(prev) as Array<keyof EventDetailsValues>) {
+        if (prev[key] !== saved[key]) rest[key] = prev[key]
+      }
+      return rest
+    })
 
-  const toArgs = () => ({
-    title: values.title.trim(),
-    startAt: zonedToEpoch(values.date, values.startTime, values.timezone),
-    endAt: values.endTime
-      ? timeOnEventNight(
-          values.date,
-          values.startTime,
-          values.endTime,
-          values.timezone,
-        )
-      : null,
-    timezone: values.timezone,
-    venueName: values.venueName,
-    venueAddress: values.venueAddress,
-    description: values.description,
-  })
+  const problem = eventDetailsProblem(values)
+  const changes = changedEventDetails(stored, values)
+  const toArgs = () => eventDetailsArgs(values)
 
-  return { values, set, canSave, toArgs }
+  return {
+    values,
+    set,
+    markSaved,
+    problem,
+    canSave: problem === null,
+    changes,
+    hasChanges: Object.keys(changes).length > 0,
+    toArgs,
+  }
 }
 
 export type EventDetailsForm = ReturnType<typeof useEventDetailsForm>
@@ -98,6 +78,12 @@ export function EventDetailsFields({
 }) {
   const { values, set } = form
   const id = (field: string) => `${idPrefix}-${field}`
+  const endProblem =
+    form.problem === 'ends_before_start'
+      ? 'El evento tiene que terminar después de empezar.'
+      : form.problem === 'end_date_without_time'
+        ? 'Si ponés una fecha de fin, poné también la hora en que termina.'
+        : null
 
   return (
     <>
@@ -141,6 +127,27 @@ export function EventDetailsFields({
             onChange={(e) => set('endTime', e.target.value)}
           />
         </div>
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor={id('end-date')}>Fecha de fin (opcional)</Label>
+        <Input
+          id={id('end-date')}
+          type="date"
+          value={values.endDate}
+          min={values.date}
+          onChange={(e) => set('endDate', e.target.value)}
+          aria-describedby={id('end-date-help')}
+          aria-invalid={endProblem ? true : undefined}
+        />
+        <p id={id('end-date-help')} className="text-xs text-muted-foreground">
+          Solo si dura más de un día. Vacía: termina esa noche (o la madrugada
+          siguiente).
+        </p>
+        {endProblem && (
+          <p className="text-sm text-red-600" role="alert">
+            {endProblem}
+          </p>
+        )}
       </div>
       <div className="space-y-1">
         <Label htmlFor={id('tz')}>Zona horaria</Label>
