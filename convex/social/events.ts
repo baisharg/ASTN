@@ -1718,8 +1718,16 @@ export const releasePersonalLinks = internalMutation({
     const releaseRefusal = async (
       row: Doc<'socialPersonalLinkLog'>,
     ): Promise<NoPersonalLinkReason | null> => {
-      // A later attempt for the email ended this one.
-      if (row.finishedAt !== undefined) return 'link_in_progress'
+      // The attempt has been ended: for a reason of its own (the account's
+      // owner signed in), or by a later attempt or the settling.
+      if (row.finishedAt !== undefined) {
+        const reason = row.noLinkReason
+        return reason === undefined ||
+          reason === 'superseded' ||
+          reason === 'unexpected_error'
+          ? 'link_in_progress'
+          : reason
+      }
       // The token was revoked: the account's owner signed in.
       if (row.tokenClosedAt !== undefined) return 'account_in_use'
       if (!call) return 'changed_meanwhile'
