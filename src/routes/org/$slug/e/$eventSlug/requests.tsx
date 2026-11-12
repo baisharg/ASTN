@@ -54,6 +54,7 @@ const copy = {
     waitingForYou: 'En espera. Podés aceptarla cuando termine tu reunión.',
     requesterInMeeting:
       'Está en una reunión. Vas a poder aceptar cuando termine.',
+    requesterUnavailable: 'Ya no está disponible, así que no se puede aceptar.',
     closedHint: 'Los 1:1 no están abiertos en este momento.',
     noIncoming: 'Nadie te pidió un 1:1 todavía.',
     noOutgoing: 'No tenés solicitudes enviadas esperando respuesta.',
@@ -86,6 +87,8 @@ const copy = {
     openMeeting: 'Open meeting',
     waitingForYou: 'On hold. You can accept it once your meeting ends.',
     requesterInMeeting: "They're in a meeting. You can accept once it ends.",
+    requesterUnavailable:
+      "They're no longer available, so it can't be accepted.",
     closedHint: '1:1s are not open right now.',
     noIncoming: 'Nobody has asked you for a 1:1 yet.',
     noOutgoing: "You don't have any sent requests waiting for an answer.",
@@ -228,7 +231,9 @@ function IncomingCard({
       ? t.closedHint
       : r.fromState === 'in_meeting'
         ? t.requesterInMeeting
-        : null
+        : r.fromState === 'busy'
+          ? t.requesterUnavailable
+          : null
   const canAccept = hint === null
 
   return (

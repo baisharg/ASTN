@@ -47,6 +47,8 @@ export function visibleOutcomes<T extends { resolvedAt: number }>(
 export type RequestBlock = Extract<
   MeetingErrorCode,
   | 'closed'
+  | 'self_busy'
+  | 'they_unavailable'
   | 'declined_recently'
   | 'not_here'
   | 'busy'
@@ -57,6 +59,7 @@ export type RequestBlock = Extract<
 
 /** The part of the viewer's live state that requestBlock reads. */
 export type RequestBlockLive = {
+  availability: 'available' | 'busy'
   meeting: object | null
   incoming: ReadonlyArray<{ from: { userId: string } }>
   outgoing: ReadonlyArray<object>
@@ -66,7 +69,8 @@ export type RequestBlockLive = {
 /**
  * Why the viewer can't ask `other` to meet right now, or null if they can.
  * Mirrors the checks in requestMeeting: when the other person already asked,
- * sending accepts their request, which needs both people free.
+ * sending accepts their request, which needs both people free and the other
+ * still available.
  */
 export function requestBlock(
   live: RequestBlockLive,
@@ -78,8 +82,10 @@ export function requestBlock(
   if (live.incoming.some((r) => r.from.userId === other.userId)) {
     if (live.meeting) return 'self_in_meeting'
     if (other.state === 'in_meeting') return 'they_in_meeting'
+    if (other.state === 'busy') return 'they_unavailable'
     return null
   }
+  if (live.availability === 'busy') return 'self_busy'
   const declinedMe = live.cooldowns.find((c) => c.userId === other.userId)
   if (declinedMe && declinedMe.askAgainAt > now) return 'declined_recently'
   if (!other.here) return 'not_here'

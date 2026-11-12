@@ -66,6 +66,8 @@ export type MeetingErrorCode =
   | 'closed'
   | 'not_attendee'
   | 'self'
+  | 'self_busy'
+  | 'they_unavailable'
   | 'not_here'
   | 'declined_recently'
   | 'busy'

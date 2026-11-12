@@ -649,6 +649,11 @@ export const getAttendeeProfile = query({
 
 // ── Mutations ───────────────────────────────────────────────────────────
 
+/**
+ * Say whether the attendee is taking 1:1 requests. Becoming unavailable also
+ * cancels the requests they sent that are still waiting, so nobody accepts a
+ * request from someone who stepped away.
+ */
 export const setAvailability = mutation({
   args: {
     eventId: v.id('socialEvents'),
@@ -658,19 +663,28 @@ export const setAvailability = mutation({
   handler: async (ctx, { eventId, availability }) => {
     const userId = await requireAuth(ctx)
     await requireApprovedAttendee(ctx, eventId, userId)
+    const now = Date.now()
     const row = await statusRow(ctx, eventId, userId)
     if (row) {
       await ctx.db.patch('socialAttendeeStatus', row._id, {
         availability,
-        updatedAt: Date.now(),
+        updatedAt: now,
       })
     } else {
       await ctx.db.insert('socialAttendeeStatus', {
         eventId,
         userId,
         availability,
-        updatedAt: Date.now(),
+        updatedAt: now,
       })
+    }
+    if (availability === 'busy') {
+      for (const request of await pendingRequestsFrom(ctx, eventId, userId)) {
+        await ctx.db.patch('socialMeetingRequests', request._id, {
+          status: 'cancelled',
+          respondedAt: now,
+        })
+      }
     }
     return null
   },
@@ -732,8 +746,8 @@ async function startMeeting(
 }
 
 /**
- * Accept a pending request that hasn't expired: both must be free; starts
- * the meeting.
+ * Accept a pending request that hasn't expired: both must be free and the
+ * requester still available; starts the meeting.
  */
 async function acceptRequest(
   ctx: MutationCtx,
@@ -749,6 +763,9 @@ async function acceptRequest(
   }
   if (await activeMeetingFor(ctx, event._id, request.fromUserId)) {
     refuse('they_in_meeting', 'They are in a meeting right now')
+  }
+  if ((await availabilityFor(ctx, event._id, request.fromUserId)) === 'busy') {
+    refuse('they_unavailable', 'They are no longer available')
   }
   // Accepting means being there; the requester was recorded when they asked.
   await recordArrival(ctx, event._id, request.toUserId)
@@ -814,6 +831,9 @@ export const requestMeeting = mutation({
       return { requestId: reverse._id, meetingId }
     }
 
+    if ((await availabilityFor(ctx, eventId, userId)) === 'busy') {
+      refuse('self_busy', 'Mark yourself as available to ask for a 1:1')
+    }
     // The cooldown comes from the declined request itself, read in this
     // transaction, so it can't be raced past.
     const declines = await resolvedRequestsFrom(

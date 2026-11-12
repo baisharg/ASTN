@@ -391,6 +391,9 @@ const meetingErrorCopy = {
     closed: 'Los 1:1 no están abiertos en este momento.',
     not_attendee: 'Esto es solo para asistentes confirmados.',
     self: 'No podés pedirte un 1:1 a vos mismo.',
+    self_busy:
+      'Estás como no disponible. Pasá a "Disponible" para pedir un 1:1.',
+    they_unavailable: 'Esta persona ya no está disponible.',
     not_here: 'Esta persona todavía no llegó al evento.',
     declined_recently:
       'Esta persona no pudo recién. Probá de nuevo en unos minutos.',
@@ -407,6 +410,9 @@ const meetingErrorCopy = {
     closed: '1:1s are not open right now.',
     not_attendee: 'This is only for confirmed attendees.',
     self: "You can't ask yourself for a 1:1.",
+    self_busy:
+      'You\'re marked as not available. Switch to "Available" to ask for a 1:1.',
+    they_unavailable: "They're no longer available.",
     not_here: "They haven't arrived at the event yet.",
     declined_recently: "They couldn't just now. Try again in a few minutes.",
     busy: "They're not taking requests right now.",
@@ -476,6 +482,10 @@ export function formatDuration(ms: number): string {
 export const requestBlockCopy = {
   es: {
     closed: () => 'Los 1:1 no están abiertos en este momento.',
+    self_busy: () =>
+      'Estás como no disponible. Pasá a "Disponible" para pedir un 1:1.',
+    they_unavailable: (name: string) =>
+      `${name} te pidió un 1:1, pero ya no está disponible.`,
     declined_recently: (name: string) =>
       `${name} no pudo recién. Vas a poder pedirle de nuevo en unos minutos.`,
     not_here: (name: string) =>
@@ -490,6 +500,10 @@ export const requestBlockCopy = {
   },
   en: {
     closed: () => '1:1s are not open right now.',
+    self_busy: () =>
+      'You\'re marked as not available. Switch to "Available" to ask for a 1:1.',
+    they_unavailable: (name: string) =>
+      `${name} asked you for a 1:1 but is no longer available.`,
     declined_recently: (name: string) =>
       `${name} couldn't just now. You can ask again in a few minutes.`,
     not_here: (name: string) =>

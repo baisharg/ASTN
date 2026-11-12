@@ -42,6 +42,7 @@ describe('endedRecently', () => {
 
 describe('requestBlock', () => {
   const idle: RequestBlockLive = {
+    availability: 'available',
     meeting: null,
     incoming: [],
     outgoing: [],
@@ -91,6 +92,20 @@ describe('requestBlock', () => {
     ).toBe('they_in_meeting')
     expect(requestBlock({ ...asked, meeting: {} }, true, ana, NOW)).toBe(
       'self_in_meeting',
+    )
+  })
+
+  test('a viewer who is not available cannot ask, but can still accept', () => {
+    const away = { ...idle, availability: 'busy' as const }
+    expect(requestBlock(away, true, ana, NOW)).toBe('self_busy')
+    const awayButAsked = { ...away, incoming: [{ from: { userId: 'ana' } }] }
+    expect(requestBlock(awayButAsked, true, ana, NOW)).toBe(null)
+  })
+
+  test('a request from someone who became unavailable cannot be accepted', () => {
+    const asked = { ...idle, incoming: [{ from: { userId: 'ana' } }] }
+    expect(requestBlock(asked, true, { ...ana, state: 'busy' }, NOW)).toBe(
+      'they_unavailable',
     )
   })
 

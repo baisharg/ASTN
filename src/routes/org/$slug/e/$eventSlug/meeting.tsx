@@ -60,6 +60,14 @@ const copy = {
       `Siguiente en tu fila: ${name} quiere reunirse.`,
     takeBreak: 'Tomarme un descanso',
     breakSet: 'Listo, te marcamos como no disponible.',
+    breakSetCancelled: (n: number) =>
+      n === 1
+        ? 'Listo, te marcamos como no disponible y cancelamos la solicitud que enviaste.'
+        : `Listo, te marcamos como no disponible y cancelamos las ${n} solicitudes que enviaste.`,
+    breakHint: (n: number) =>
+      n === 1
+        ? 'Si te tomás un descanso, cancelamos la solicitud que enviaste.'
+        : `Si te tomás un descanso, cancelamos las ${n} solicitudes que enviaste.`,
     breakFailed: 'No pudimos cambiar tu estado. Probá de nuevo.',
     seeRequest: 'Ver solicitud',
     findMore: 'Buscar a alguien más',
@@ -103,6 +111,14 @@ const copy = {
     nextInQueue: (name: string) => `Next in your queue: ${name} wants to meet.`,
     takeBreak: 'Take a break',
     breakSet: "Done, you're marked as not available.",
+    breakSetCancelled: (n: number) =>
+      n === 1
+        ? "Done, you're marked as not available and we cancelled the request you sent."
+        : `Done, you're marked as not available and we cancelled the ${n} requests you sent.`,
+    breakHint: (n: number) =>
+      n === 1
+        ? 'If you take a break, we cancel the request you sent.'
+        : `If you take a break, we cancel the ${n} requests you sent.`,
     breakFailed: "We couldn't change your status. Please try again.",
     seeRequest: 'See request',
     findMore: 'Find someone else',
@@ -396,13 +412,18 @@ function EndedCard({
   const setAvailability = useMutation(api.social.meetings.setAvailability)
   const { busy, run } = useBusyAction<'break'>()
   const next = live.incoming.at(0)
+  // Becoming unavailable cancels the requests the viewer sent.
+  const sentWaiting = live.outgoing.length
+  const canTakeBreak = live.availability === 'available'
 
   const takeBreak = () =>
     run(
       'break',
       async () => {
         await setAvailability({ eventId: event._id, availability: 'busy' })
-        toast.success(t.breakSet)
+        toast.success(
+          sentWaiting > 0 ? t.breakSetCancelled(sentWaiting) : t.breakSet,
+        )
       },
       () => toast.error(t.breakFailed),
     )
@@ -416,7 +437,7 @@ function EndedCard({
         {next ? t.nextInQueue(next.from.name) : t.endedWith(partnerName)}
       </p>
       <div className="flex gap-2">
-        {live.availability === 'available' && (
+        {canTakeBreak && (
           <button
             type="button"
             disabled={busy !== null}
@@ -444,6 +465,11 @@ function EndedCard({
           </Link>
         )}
       </div>
+      {canTakeBreak && sentWaiting > 0 && (
+        <p className="text-[13px] leading-normal text-muted-foreground">
+          {t.breakHint(sentWaiting)}
+        </p>
+      )}
     </Panel>
   )
 }

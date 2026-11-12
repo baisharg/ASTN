@@ -59,6 +59,14 @@ const copy = {
     available: 'Disponible',
     busy: 'No disponible',
     statusFailed: 'No pudimos cambiar tu estado. Probá de nuevo.',
+    busyHint: (n: number) =>
+      n === 1
+        ? 'Si pasás a "No disponible", cancelamos la solicitud que enviaste.'
+        : `Si pasás a "No disponible", cancelamos las ${n} solicitudes que enviaste.`,
+    busyCancelled: (n: number) =>
+      n === 1
+        ? 'Cancelamos la solicitud que habías enviado.'
+        : `Cancelamos las ${n} solicitudes que habías enviado.`,
     focus: 'El foco de esta noche',
     tabsLabel: 'Asistentes',
     suggested: (n: number) => `Sugeridos (${n})`,
@@ -88,6 +96,14 @@ const copy = {
     available: 'Available',
     busy: 'Not available',
     statusFailed: "We couldn't change your status. Please try again.",
+    busyHint: (n: number) =>
+      n === 1
+        ? 'If you switch to "Not available", we cancel the request you sent.'
+        : `If you switch to "Not available", we cancel the ${n} requests you sent.`,
+    busyCancelled: (n: number) =>
+      n === 1
+        ? 'We cancelled the request you had sent.'
+        : `We cancelled the ${n} requests you had sent.`,
     focus: "Tonight's focus",
     tabsLabel: 'Attendees',
     suggested: (n: number) => `Suggested (${n})`,
@@ -266,12 +282,19 @@ function AvailabilityToggle({ live }: { live: LiveState }) {
   const setAvailability = useMutation(api.social.meetings.setAvailability)
   const { busy, run } = useBusyAction<'status'>()
   const saving = busy !== null
+  // Becoming unavailable cancels the requests the viewer sent.
+  const sentWaiting = live.outgoing.length
 
   const choose = async (availability: LiveState['availability']) => {
     if (availability === live.availability || saving) return
     await run(
       'status',
-      () => setAvailability({ eventId: event._id, availability }),
+      async () => {
+        await setAvailability({ eventId: event._id, availability })
+        if (availability === 'busy' && sentWaiting > 0) {
+          toast.success(t.busyCancelled(sentWaiting))
+        }
+      },
       () => toast.error(t.statusFailed),
     )
   }
@@ -282,42 +305,49 @@ function AvailabilityToggle({ live }: { live: LiveState }) {
   ] as const
 
   return (
-    <div className="flex items-center justify-between gap-3">
-      <span
-        id="status-label"
-        className="text-sm font-semibold text-[var(--baish-strong)]"
-      >
-        {t.yourStatus}
-      </span>
-      <div
-        role="group"
-        aria-labelledby="status-label"
-        aria-busy={saving}
-        className="flex gap-0.5 rounded-xl border border-border bg-muted p-[3px]"
-      >
-        {options.map(({ value, label }) => {
-          const active = live.availability === value
-          return (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={active}
-              disabled={saving}
-              onClick={() => void choose(value)}
-              className={cn(
-                'h-11 rounded-[10px] px-3.5 text-sm font-semibold',
-                active
-                  ? 'bg-card shadow-[0_1px_2px_rgba(17,12,46,0.12)]'
-                  : 'text-muted-foreground hover:text-foreground',
-                active && value === 'available' && 'text-[var(--baish-ok)]',
-                active && value === 'busy' && 'text-[var(--baish-strong)]',
-              )}
-            >
-              {label}
-            </button>
-          )
-        })}
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between gap-3">
+        <span
+          id="status-label"
+          className="text-sm font-semibold text-[var(--baish-strong)]"
+        >
+          {t.yourStatus}
+        </span>
+        <div
+          role="group"
+          aria-labelledby="status-label"
+          aria-busy={saving}
+          className="flex gap-0.5 rounded-xl border border-border bg-muted p-[3px]"
+        >
+          {options.map(({ value, label }) => {
+            const active = live.availability === value
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={active}
+                disabled={saving}
+                onClick={() => void choose(value)}
+                className={cn(
+                  'h-11 rounded-[10px] px-3.5 text-sm font-semibold',
+                  active
+                    ? 'bg-card shadow-[0_1px_2px_rgba(17,12,46,0.12)]'
+                    : 'text-muted-foreground hover:text-foreground',
+                  active && value === 'available' && 'text-[var(--baish-ok)]',
+                  active && value === 'busy' && 'text-[var(--baish-strong)]',
+                )}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
       </div>
+      {live.availability === 'available' && sentWaiting > 0 && (
+        <p className="text-[13px] leading-normal text-muted-foreground">
+          {t.busyHint(sentWaiting)}
+        </p>
+      )}
     </div>
   )
 }
