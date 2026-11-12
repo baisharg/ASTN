@@ -9,6 +9,7 @@ import {
   MAX_OUTGOING_PENDING,
   compareAttendees,
   extensionMinutesGranted,
+  meetingNoteToStore,
   meetingsOpenNow,
   requestExpiryTime,
   requestPastExpiry,
@@ -1070,6 +1071,89 @@ export const endIfDue = internalMutation({
     await ctx.db.patch('socialMeetings', meetingId, {
       status: 'ended',
       endedAt: now,
+    })
+    return null
+  },
+})
+
+// ── Private notes ───────────────────────────────────────────────────────
+
+/** The note `userId` wrote about `aboutUserId` at the event, if any. */
+async function meetingNoteRow(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+  userId: string,
+  aboutUserId: string,
+): Promise<Doc<'socialMeetingNotes'> | null> {
+  return await ctx.db
+    .query('socialMeetingNotes')
+    .withIndex('by_eventId_and_userId_and_aboutUserId', (q) =>
+      q
+        .eq('eventId', eventId)
+        .eq('userId', userId)
+        .eq('aboutUserId', aboutUserId),
+    )
+    .first()
+}
+
+/**
+ * The private note the caller wrote about a person at the event: its text,
+ * or null when there is none. Only ever the caller's own note.
+ */
+export const getMyNoteAbout = query({
+  args: { eventId: v.id('socialEvents'), aboutUserId: v.string() },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, { eventId, aboutUserId }) => {
+    const userId = await requireAuth(ctx)
+    await requireApprovedAttendee(ctx, eventId, userId)
+    const note = await meetingNoteRow(ctx, eventId, userId, aboutUserId)
+    return note?.text ?? null
+  },
+})
+
+/**
+ * Write the caller's private note about a person at the event. The text is
+ * trimmed and cut at MAX_MEETING_NOTE_LENGTH; an empty text deletes the
+ * note. A new note can only be about another approved attendee, so nobody
+ * stores rows about made-up people; a note that exists can always be
+ * changed or deleted.
+ */
+export const setMyNoteAbout = mutation({
+  args: {
+    eventId: v.id('socialEvents'),
+    aboutUserId: v.string(),
+    text: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, { eventId, aboutUserId, text }) => {
+    const userId = await requireAuth(ctx)
+    await requireApprovedAttendee(ctx, eventId, userId)
+    const existing = await meetingNoteRow(ctx, eventId, userId, aboutUserId)
+    const stored = meetingNoteToStore(text)
+    if (stored === null) {
+      if (existing) await ctx.db.delete('socialMeetingNotes', existing._id)
+      return null
+    }
+    if (existing) {
+      await ctx.db.patch('socialMeetingNotes', existing._id, {
+        text: stored,
+        updatedAt: Date.now(),
+      })
+      return null
+    }
+    const about =
+      aboutUserId === userId
+        ? null
+        : await getGuestByUser(ctx, eventId, aboutUserId)
+    if (about?.status !== 'approved') {
+      refuse('not_found', 'A note is about another attendee of the event')
+    }
+    await ctx.db.insert('socialMeetingNotes', {
+      eventId,
+      userId,
+      aboutUserId,
+      text: stored,
+      updatedAt: Date.now(),
     })
     return null
   },

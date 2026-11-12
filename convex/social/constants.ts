@@ -5,6 +5,8 @@
 
 export const MAX_OUTGOING_PENDING = 5
 export const MAX_NOTE_LENGTH = 280
+// A private note about a person at the event can be this long.
+export const MAX_MEETING_NOTE_LENGTH = 2000
 export const DEFAULT_MEETING_MINUTES = 20
 // A meeting can run at most this long past its original length.
 export const MAX_MEETING_EXTENSION_MINUTES = 15
@@ -156,4 +158,13 @@ export function suggestionOutcome(input: {
       .length,
     chanceShare: pairs > 0 ? Math.min(1, input.suggestionCount / pairs) : null,
   }
+}
+
+/**
+ * What is stored for a private note the author wrote as `text`: the text
+ * without surrounding whitespace, cut at MAX_MEETING_NOTE_LENGTH. Null means
+ * there is nothing to keep, so the note is deleted.
+ */
+export function meetingNoteToStore(text: string): string | null {
+  return text.trim().slice(0, MAX_MEETING_NOTE_LENGTH).trimEnd() || null
 }
