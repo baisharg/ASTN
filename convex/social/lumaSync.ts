@@ -12,8 +12,8 @@ import {
   addToAllowlist,
   getGuestByEmail,
   guestStatusFromLuma,
-  hasStatusLumaLacks,
   isOnAllowlist,
+  keepsStatusOverLuma,
   normalizeEmail,
   updateGuestAndSync,
 } from './lib'
@@ -166,8 +166,7 @@ export const setEventSyncResult = internalMutation({
 
 /**
  * Upsert one guest as Luma reports it. Shared by the webhook and the pull.
- * Rows whose status Luma doesn't have yet (the push is pending or failed)
- * keep their status.
+ * Some rows keep their status whatever Luma reports: see keepsStatusOverLuma.
  */
 async function applyLumaGuest(
   ctx: MutationCtx,
@@ -231,7 +230,7 @@ async function applyLumaGuest(
   ) {
     patch.lumaCheckInCode = incoming.checkInCode
   }
-  if (!hasStatusLumaLacks(existing.lumaSync) && existing.status !== status) {
+  if (!keepsStatusOverLuma(existing) && existing.status !== status) {
     patch.status = status
     // An admin approved them in Luma: remember them for future events.
     if (status === 'approved' && existing.status === 'pending_approval') {

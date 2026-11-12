@@ -31,14 +31,20 @@ export function guestStatusFromLuma(lumaStatus: string): GuestStatus {
 }
 
 /**
- * Whether a guest's status was decided in ASTN and Luma doesn't have it yet:
- * the push is on its way ('pending') or failed ('error'). Such a status
- * stays as it is whatever Luma reports, until a push succeeds.
+ * Whether a guest's status stays as it is when Luma reports a different one.
+ * It does while a push to Luma is on its way ('pending'), and after a failed
+ * push ('error') when the status is a decision made in ASTN (approved or
+ * declined). A status ASTN didn't decide follows Luma, so someone approved
+ * in Luma is approved here even if their registration never reached it.
  */
-export function hasStatusLumaLacks(
-  lumaSync: Doc<'socialEventGuests'>['lumaSync'],
+export function keepsStatusOverLuma(
+  guest: Pick<Doc<'socialEventGuests'>, 'status' | 'lumaSync'>,
 ): boolean {
-  return lumaSync === 'pending' || lumaSync === 'error'
+  if (guest.lumaSync === 'pending') return true
+  return (
+    guest.lumaSync === 'error' &&
+    (guest.status === 'approved' || guest.status === 'declined')
+  )
 }
 
 export async function isOnAllowlist(
