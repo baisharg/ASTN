@@ -58,6 +58,10 @@ const NO_LINK_REASONS: Record<NoLinkReason, string> = {
   not_approved: 'Ya no está aprobado para este evento.',
   link_in_progress:
     'Ya se está haciendo un link para esta persona. Probá de nuevo en un par de minutos.',
+  too_many_links:
+    'Se pidieron demasiados links para esta persona en los últimos días. Entra con su email, como siempre.',
+  changed_meanwhile:
+    'El evento, la invitación o tus permisos cambiaron mientras se hacía el link. Probá de nuevo.',
   clerk_error:
     'No se pudo crear la cuenta o el link. Si tenía un link anterior, quedó anulado.',
 }

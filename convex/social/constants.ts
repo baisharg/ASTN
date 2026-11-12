@@ -400,9 +400,85 @@ type PersonalLinkLogRow<LogId> = {
   tokenClosedAt?: number
 }
 
-// An attempt that has not finished after this long is taken to have died.
-// One guest's link takes a few requests to Clerk, well under this.
+// How long an attempt that has not ended keeps a second one for the same
+// email from starting. One guest's link takes a few requests to Clerk, well
+// under this. An attempt older than this is ended by the next one.
 export const PERSONAL_LINK_IN_FLIGHT_MS = 2 * 60 * 1000
+
+/** How many attempts one email may have within PERSONAL_LINK_MAX_SECONDS. */
+export const PERSONAL_LINK_ATTEMPTS_BOUND = 200
+
+// Convex stops an action after this long (docs.convex.dev/functions/actions).
+const CONVEX_ACTION_LIMIT_MS = 10 * 60 * 1000
+
+/**
+ * How long after an attempt starts it is settled (see
+ * `personalLinkSettlement`): late enough that the call which started it has
+ * returned or been stopped.
+ */
+export const PERSONAL_LINK_SETTLE_AFTER_MS =
+  CONVEX_ACTION_LIMIT_MS + 2 * 60 * 1000
+
+/**
+ * Why a new attempt for an email does not start, or null when it does:
+ * another one is in flight, or the email has had as many attempts as the log
+ * is read for (the earlier links could not all be found and revoked).
+ */
+export function personalLinkStartRefusal<LogId>(
+  rows: ReadonlyArray<PersonalLinkLogRow<LogId>>,
+  now: number,
+): 'link_in_progress' | 'too_many_links' | null {
+  if (rows.length >= PERSONAL_LINK_ATTEMPTS_BOUND) return 'too_many_links'
+  return personalLinkInFlight(rows, now) ? 'link_in_progress' : null
+}
+
+/**
+ * Whether an attempt ended with its link released to the admin. Only such an
+ * attempt's token is meant to keep working.
+ */
+export function personalLinkWasReleased(row: {
+  finishedAt?: number
+  noLinkReason?: string
+}): boolean {
+  return row.finishedAt !== undefined && row.noLinkReason === undefined
+}
+
+/**
+ * What is left to do for an attempt once the call that started it is over.
+ * - `withdraw`: its link was not released, because it was refused, its call
+ *   failed or died, or a later attempt ended it. Nobody holds the link: the
+ *   attempt is ended if it is still open, and its token revoked if it has
+ *   one that may work.
+ * - `findAccount`: it asked Clerk to create an account and never recorded
+ *   which one, so Clerk is asked whether the email has an account now.
+ */
+export function personalLinkSettlement(row: {
+  finishedAt?: number
+  noLinkReason?: string
+  accountCreationStartedAt?: number
+  accountUserId?: string
+}): { withdraw: boolean; findAccount: boolean } {
+  return {
+    withdraw: !personalLinkWasReleased(row),
+    findAccount:
+      row.accountCreationStartedAt !== undefined &&
+      row.accountUserId === undefined,
+  }
+}
+
+/**
+ * Why no personal link is made for an event right now, or null: guests can't
+ * open a draft's page, and an event whose 1:1s have closed has nothing left
+ * to sign in for.
+ */
+export function personalLinkEventRefusal(
+  event: { status: string },
+  meetingsCloseAt: number,
+  now: number,
+): 'draft' | 'meetings_closed' | null {
+  if (event.status === 'draft') return 'draft'
+  return now >= meetingsCloseAt ? 'meetings_closed' : null
+}
 
 /**
  * Whether a link for the same email is being made right now, by this or

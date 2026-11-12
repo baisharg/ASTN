@@ -1,13 +1,18 @@
 import {
+  PERSONAL_LINK_ATTEMPTS_BOUND,
   PERSONAL_LINK_IN_FLIGHT_MS,
   PERSONAL_LINK_MAX_SECONDS,
   PERSONAL_LINK_MIN_SECONDS,
   eventPageUrl,
   openPersonalLinkTokens,
   personalEventLink,
+  personalLinkEventRefusal,
   personalLinkInFlight,
   personalLinkLifetimeSeconds,
   personalLinkRefusal,
+  personalLinkSettlement,
+  personalLinkStartRefusal,
+  personalLinkWasReleased,
   splitGuestName,
 } from '../../convex/social/constants'
 
@@ -211,5 +216,107 @@ describe('one working link per account', () => {
       { logId: 'open', signInTokenId: 'sit_open' },
       { logId: 'died', signInTokenId: 'sit_died' },
     ])
+  })
+})
+
+describe('starting an attempt', () => {
+  const now = Date.UTC(2026, 10, 12, 18, 0)
+  const ended = (index: number) => ({
+    _id: `row-${index}`,
+    createdAt: now - 3_600_000,
+    expiresAt: now + 3_600_000,
+    finishedAt: now - 3_500_000,
+  })
+
+  test('an email with no attempts, or only ended ones, starts', () => {
+    expect(personalLinkStartRefusal([], now)).toBe(null)
+    expect(personalLinkStartRefusal([ended(0)], now)).toBe(null)
+  })
+
+  test('an attempt in flight keeps a second one from starting', () => {
+    const inFlight = {
+      ...ended(0),
+      createdAt: now - 5_000,
+      finishedAt: undefined,
+    }
+    expect(personalLinkStartRefusal([inFlight], now)).toBe('link_in_progress')
+  })
+
+  test('the last attempt allowed is the one that fills the bound', () => {
+    const rows = Array.from({ length: PERSONAL_LINK_ATTEMPTS_BOUND }, (_, i) =>
+      ended(i),
+    )
+    expect(personalLinkStartRefusal(rows.slice(1), now)).toBe(null)
+    expect(personalLinkStartRefusal(rows, now)).toBe('too_many_links')
+  })
+})
+
+describe('personalLinkEventRefusal', () => {
+  const closeAt = Date.UTC(2026, 10, 14, 22, 0)
+
+  test('a published event whose 1:1s have not closed gets links', () => {
+    expect(
+      personalLinkEventRefusal({ status: 'published' }, closeAt, closeAt - 1),
+    ).toBe(null)
+  })
+
+  test('a draft gets none, whatever the time', () => {
+    expect(
+      personalLinkEventRefusal({ status: 'draft' }, closeAt, closeAt - 1),
+    ).toBe('draft')
+  })
+
+  test('an event gets none from the moment its 1:1s close', () => {
+    expect(
+      personalLinkEventRefusal({ status: 'published' }, closeAt, closeAt),
+    ).toBe('meetings_closed')
+  })
+})
+
+describe('settling an attempt after its call is over', () => {
+  const now = Date.UTC(2026, 10, 12, 18, 0)
+
+  test('only an attempt that ended with no reason against it has a released link', () => {
+    expect(personalLinkWasReleased({ finishedAt: now })).toBe(true)
+    expect(personalLinkWasReleased({})).toBe(false)
+    expect(
+      personalLinkWasReleased({ finishedAt: now, noLinkReason: 'superseded' }),
+    ).toBe(false)
+  })
+
+  test('a released link is left alone', () => {
+    expect(
+      personalLinkSettlement({ finishedAt: now, accountUserId: 'user_1' }),
+    ).toEqual({ withdraw: false, findAccount: false })
+  })
+
+  test('an attempt whose call died is withdrawn', () => {
+    expect(personalLinkSettlement({ accountUserId: 'user_1' })).toEqual({
+      withdraw: true,
+      findAccount: false,
+    })
+  })
+
+  test('an attempt that ended without a link is withdrawn too: a token recorded on it late is still revoked', () => {
+    expect(
+      personalLinkSettlement({ finishedAt: now, noLinkReason: 'superseded' }),
+    ).toEqual({ withdraw: true, findAccount: false })
+  })
+
+  test('an account whose creation was started and never recorded is looked for', () => {
+    expect(
+      personalLinkSettlement({
+        finishedAt: now,
+        noLinkReason: 'clerk_error',
+        accountCreationStartedAt: now - 60_000,
+      }),
+    ).toEqual({ withdraw: true, findAccount: true })
+    expect(
+      personalLinkSettlement({
+        finishedAt: now,
+        accountCreationStartedAt: now - 60_000,
+        accountUserId: 'user_1',
+      }),
+    ).toEqual({ withdraw: false, findAccount: false })
   })
 })
