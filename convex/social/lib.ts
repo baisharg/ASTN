@@ -625,13 +625,18 @@ export async function attendeeCard(
   }
 }
 
-/** The suggestion `owner` got about `other`, if any. */
+/**
+ * The suggestion `owner` got about `other`, if any. None once either of them
+ * turned suggestions off, even while an older row about them is still stored.
+ */
 export async function findSuggestion(
   ctx: QueryCtx | MutationCtx,
   eventId: Id<'socialEvents'>,
   owner: string,
   other: string,
 ): Promise<Doc<'socialSuggestions'> | null> {
+  const optedOut = await suggestionOptOutsAmong(ctx, [owner, other])
+  if (optedOut.size > 0) return null
   const rows = await ctx.db
     .query('socialSuggestions')
     .withIndex('by_eventId_and_userId_and_rank', (q) =>
