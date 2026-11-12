@@ -3,7 +3,10 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { useConvexAuth, useMutation, useQuery } from 'convex/react'
 import { ArrowRight, MapPin } from 'lucide-react'
 import { api } from '../../../convex/_generated/api'
-import { MAX_OUTGOING_PENDING } from '../../../convex/social/constants'
+import {
+  MAX_OUTGOING_PENDING,
+  meetingsOpenNow,
+} from '../../../convex/social/constants'
 import { useNow, useSocialEvent } from './SocialEventContext'
 import { Panel, primaryButtonClass, secondaryButtonClass } from './ui'
 import type { FunctionReturnType } from 'convex/server'
@@ -71,10 +74,10 @@ export function useLiveState(): LiveState | null | undefined {
 export function useMeetingsOpen(): boolean {
   const event = useSocialEvent()
   const now = useNow()
-  return (
-    event.status === 'published' &&
-    now >= event.meetingsOpenAt &&
-    now <= event.meetingsCloseAt
+  return meetingsOpenNow(
+    event.status,
+    { openAt: event.meetingsOpenAt, closeAt: event.meetingsCloseAt },
+    now,
   )
 }
 

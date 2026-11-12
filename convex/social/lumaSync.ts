@@ -98,12 +98,14 @@ export const listSyncableEvents = internalQuery({
   args: { now: v.number() },
   returns: v.array(v.id('socialEvents')),
   handler: async (ctx, { now }) => {
-    // Small table; published events with a Luma link, from yesterday on.
+    // Small table; events with a Luma link that are not drafts, from
+    // yesterday on. Closing registration doesn't stop the pull: the door
+    // list of a closed event still follows Luma.
     const events = await ctx.db.query('socialEvents').take(500)
     return events
       .filter(
         (e) =>
-          e.status === 'published' &&
+          e.status !== 'draft' &&
           !!e.lumaEventId &&
           (e.endAt ?? e.startAt) > now - 24 * 3600 * 1000,
       )

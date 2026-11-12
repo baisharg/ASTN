@@ -49,6 +49,10 @@ const copy = {
         ? `${n} ${n === 1 ? 'persona confirmada' : 'personas confirmadas'}`
         : null,
     closed: 'La inscripción para este evento está cerrada.',
+    closedSignInTitle: 'La inscripción está cerrada',
+    closedSignInBody:
+      'Si ya te registraste, iniciá sesión para ver tu lugar y entrar a los 1:1.',
+    closedSignInButton: 'Iniciar sesión',
     signInTitle: 'Registrate una sola vez',
     signInBody: (org: string) =>
       `Creá tu cuenta con Google, LinkedIn o tu email y anotate a este y a los próximos eventos de ${org} sin llenar formularios.`,
@@ -136,6 +140,10 @@ const copy = {
         ? `${n} ${n === 1 ? 'person confirmed' : 'people confirmed'}`
         : null,
     closed: 'Registration for this event is closed.',
+    closedSignInTitle: 'Registration is closed',
+    closedSignInBody:
+      'If you already registered, sign in to see your place and join the 1:1s.',
+    closedSignInButton: 'Sign in',
     signInTitle: 'Register once',
     signInBody: (org: string) =>
       `Create your account with Google, LinkedIn or your email and sign up for this and future ${org} events without filling in forms.`,
@@ -223,6 +231,12 @@ function EventRegistrationPage() {
     eventId: event._id,
   })
   const peopleLine = t.people(approvedCount ?? 0)
+  const registrationClosed = event.status === 'closed'
+  const lumaHint = event.lumaUrl && (
+    <p className="text-[13px] font-medium leading-normal text-[var(--baish-strong)]">
+      {t.signInLumaHint}
+    </p>
+  )
 
   return (
     <main className="flex flex-col gap-6 px-5 pb-10 pt-6">
@@ -261,38 +275,38 @@ function EventRegistrationPage() {
         )}
       </section>
 
-      {event.status === 'closed' ? (
-        <Panel>
-          <p className="text-[15px]">{t.closed}</p>
+      <AuthLoading>
+        <Panel raised className="items-center py-10">
+          <Spinner />
         </Panel>
-      ) : (
-        <>
-          <AuthLoading>
-            <Panel raised className="items-center py-10">
-              <Spinner />
-            </Panel>
-          </AuthLoading>
-          <Unauthenticated>
-            <SignInPanel
-              title={t.signInTitle}
-              body={t.signInBody(event.orgName)}
-              buttonLabel={t.signInButton}
-            >
-              {event.lumaUrl && (
-                <p className="text-[13px] font-medium leading-normal text-[var(--baish-strong)]">
-                  {t.signInLumaHint}
-                </p>
-              )}
-              <p className="text-[13px] leading-normal text-muted-foreground">
-                {t.signInHint(event.orgName)}
-              </p>
-            </SignInPanel>
-          </Unauthenticated>
-          <Authenticated>
-            <RegistrationCard />
-          </Authenticated>
-        </>
-      )}
+      </AuthLoading>
+      <Unauthenticated>
+        {registrationClosed ? (
+          // No new registrations, but someone who already registered signs
+          // in here to see their place.
+          <SignInPanel
+            title={t.closedSignInTitle}
+            body={t.closedSignInBody}
+            buttonLabel={t.closedSignInButton}
+          >
+            {lumaHint}
+          </SignInPanel>
+        ) : (
+          <SignInPanel
+            title={t.signInTitle}
+            body={t.signInBody(event.orgName)}
+            buttonLabel={t.signInButton}
+          >
+            {lumaHint}
+            <p className="text-[13px] leading-normal text-muted-foreground">
+              {t.signInHint(event.orgName)}
+            </p>
+          </SignInPanel>
+        )}
+      </Unauthenticated>
+      <Authenticated>
+        <RegistrationCard />
+      </Authenticated>
 
       <section className="flex flex-col gap-4">
         <h2 className="text-[17px] font-semibold text-[var(--baish-strong)]">
@@ -396,6 +410,18 @@ function RegistrationCard() {
   )
 
   if (!guest) {
+    // 'closed' only stops new registrations: someone with a registration
+    // falls through to their status card below, like on a published event.
+    if (event.status === 'closed') {
+      return (
+        <Panel>
+          <p className="text-[15px]">{t.closed}</p>
+          {event.lumaUrl && registration.email && (
+            <OtherEmailHint email={registration.email} />
+          )}
+        </Panel>
+      )
+    }
     if (registration.onAllowlist) {
       return (
         <Panel raised aria-label={t.register}>
