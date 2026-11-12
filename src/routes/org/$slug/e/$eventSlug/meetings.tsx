@@ -24,6 +24,7 @@ import {
 } from '~/components/social/ui'
 import { formatTime, useCopy, useSocialLang } from '~/lib/social-i18n'
 import { withNoteSlots } from '~/lib/social-live'
+import { spotName } from '~/lib/social-spot'
 
 export const Route = createFileRoute('/org/$slug/e/$eventSlug/meetings')({
   component: MeetingsPage,
@@ -45,8 +46,6 @@ const copy = {
     seePeople: 'Ver asistentes',
     startedAt: (time: string) => `Empezó a las ${time}`,
     lasted: (length: string) => `duró ${length}`,
-    spot: (n: number, label: string | null) =>
-      label ? `Lugar ${n} (${label})` : `Lugar ${n}`,
     topics: 'Temas sugeridos',
     noteAbove: (name: string) =>
       `Tu nota sobre ${name} está más arriba, en la reunión más reciente.`,
@@ -65,8 +64,6 @@ const copy = {
     seePeople: 'See attendees',
     startedAt: (time: string) => `Started at ${time}`,
     lasted: (length: string) => `lasted ${length}`,
-    spot: (n: number, label: string | null) =>
-      label ? `Spot ${n} (${label})` : `Spot ${n}`,
     topics: 'Suggested topics',
     noteAbove: (name: string) =>
       `Your note about ${name} is further up, on your most recent meeting.`,
@@ -178,7 +175,7 @@ function MeetingCard({
   const facts = [
     t.startedAt(formatTime(meeting.startedAt, event.timezone, lang)),
     t.lasted(formatDuration(meetingLengthMs(meeting))),
-    meeting.spot ? t.spot(meeting.spot.number, meeting.spot.label) : null,
+    meeting.spot ? spotName(meeting.spot, lang) : null,
   ]
     .filter(Boolean)
     .join(' · ')
