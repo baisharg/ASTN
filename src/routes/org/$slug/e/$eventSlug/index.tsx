@@ -124,13 +124,15 @@ const copy = {
       ],
     ] as Array<[string, string]>,
     meetingsWindow: (from: string, to: string) => `1:1 de ${from} a ${to}`,
+    draftNoRegistration:
+      'Este evento es un borrador, así que todavía nadie se puede anotar. La inscripción se abre cuando lo publiques.',
     registerFailed: 'No pudimos registrarte. Probá de nuevo.',
     registerError: {
       not_authenticated:
         'Se cerró tu sesión. Iniciá sesión de nuevo para registrarte.',
       no_email:
         'Tu cuenta no tiene un email, así que no podemos registrarte. Agregale uno o entrá con otra cuenta.',
-      registration_closed: 'La inscripción para este evento ya cerró.',
+      registration_closed: 'La inscripción para este evento no está abierta.',
     } satisfies Record<RegisterErrorCode, string>,
   },
   en: {
@@ -213,12 +215,14 @@ const copy = {
       ],
     ] as Array<[string, string]>,
     meetingsWindow: (from: string, to: string) => `1:1s from ${from} to ${to}`,
+    draftNoRegistration:
+      'This event is a draft, so nobody can register yet. Registration opens when you publish it.',
     registerFailed: "We couldn't register you. Please try again.",
     registerError: {
       not_authenticated: 'You were signed out. Sign in again to register.',
       no_email:
         "Your account has no email address, so we can't register you. Add one or sign in with a different account.",
-      registration_closed: 'Registration for this event has closed.',
+      registration_closed: 'Registration for this event is not open.',
     } satisfies Record<RegisterErrorCode, string>,
   },
 }
@@ -410,6 +414,14 @@ function RegistrationCard() {
   )
 
   if (!guest) {
+    // A draft takes no registrations; only admins see the page, as a preview.
+    if (event.status === 'draft') {
+      return (
+        <Panel>
+          <p className="text-[15px] leading-normal">{t.draftNoRegistration}</p>
+        </Panel>
+      )
+    }
     // 'closed' only stops new registrations: someone with a registration
     // falls through to their status card below, like on a published event.
     if (event.status === 'closed') {
