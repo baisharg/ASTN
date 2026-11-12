@@ -253,9 +253,10 @@ export function SpotsCard({ event }: { event: AdminEvent }) {
         <CardTitle>Lugares de reunión ({spots.length})</CardTitle>
         <CardDescription>
           Cada pareja que arranca un 1:1 recibe un lugar libre y lo ve marcado
-          en el plano. Tocá el plano para agregar un lugar y arrastralo para
-          moverlo. Con un lugar seleccionado, las flechas lo mueven y Suprimir
-          lo quita.
+          en el plano. Si le ponés nombre a un lugar, los asistentes ven ese
+          nombre en vez del número: usá el mismo texto que el cartel del lugar.
+          Tocá el plano para agregar un lugar y arrastralo para moverlo. Con un
+          lugar seleccionado, las flechas lo mueven y Suprimir lo quita.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -394,7 +395,7 @@ export function SpotsCard({ event }: { event: AdminEvent }) {
                     updateSpot(spot.key, { label: e.target.value })
                   }
                   onFocus={() => setSelected(spot.key)}
-                  placeholder="Nombre opcional (ej. Ventanas, Barra)"
+                  placeholder="Nombre opcional, como en el cartel (ej. A1 · Jardín)"
                   className="flex-1"
                 />
                 <Button

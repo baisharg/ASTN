@@ -19,7 +19,13 @@ import { PersonalLinkSignIn } from '~/components/social/PersonalLinkSignIn'
 import { SocialEventProvider } from '~/components/social/SocialEventContext'
 import { MeetingBanner, useLiveState } from '~/components/social/live'
 import { useHaptic } from '~/hooks/use-haptic'
-import { LangToggle, SocialLangProvider, useCopy } from '~/lib/social-i18n'
+import {
+  LangToggle,
+  SocialLangProvider,
+  useCopy,
+  useSocialLang,
+} from '~/lib/social-i18n'
+import { atSpot } from '~/lib/social-spot'
 import { liveAlerts, titleWithCount } from '~/lib/social-live'
 
 export const Route = createFileRoute('/org/$slug/e/$eventSlug')({
@@ -66,10 +72,10 @@ const copy = {
     draft: 'Borrador: solo lo ven admins',
     newRequest: (name: string) => `${name} quiere reunirse con vos`,
     seeRequest: 'Ver',
-    meetingStarted: (name: string, spot: number | null) =>
-      spot === null
+    meetingStarted: (name: string, at: string | null) =>
+      at === null
         ? `${name} aceptó tu solicitud. Ya pueden reunirse.`
-        : `${name} aceptó tu solicitud. Se reúnen en el lugar ${spot}.`,
+        : `${name} aceptó tu solicitud. Se reúnen ${at}.`,
   },
   en: {
     notFoundTitle: 'Event not found',
@@ -79,10 +85,10 @@ const copy = {
     draft: 'Draft: only admins can see this',
     newRequest: (name: string) => `${name} wants to meet you`,
     seeRequest: 'View',
-    meetingStarted: (name: string, spot: number | null) =>
-      spot === null
+    meetingStarted: (name: string, at: string | null) =>
+      at === null
         ? `${name} accepted your request. You can meet now.`
-        : `${name} accepted your request. Meet at spot ${spot}.`,
+        : `${name} accepted your request. Meet ${at}.`,
   },
 }
 
@@ -190,6 +196,7 @@ function LiveAlerts({
 }) {
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
+  const { lang } = useSocialLang()
   const navigate = useNavigate()
   const pathname = useLocation({ select: (location) => location.pathname })
   const { userId } = useAuth()
@@ -228,7 +235,10 @@ function LiveAlerts({
       // page; the one whose request was accepted needs telling.
       if (!meeting.viewerAccepted) {
         toast.success(
-          t.meetingStarted(meeting.partner.name, meeting.spot?.number ?? null),
+          t.meetingStarted(
+            meeting.partner.name,
+            meeting.spot ? atSpot(meeting.spot, lang) : null,
+          ),
           { duration: 10_000 },
         )
         vibrate([200, 100, 200])
