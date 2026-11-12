@@ -37,7 +37,12 @@ import { Spinner } from '~/components/ui/spinner'
 import { matchesSearch } from '~/lib/search-text'
 import { useBusyAction } from '~/lib/use-busy-action'
 
-const SOURCE_LABELS = { app: 'App', luma: 'Luma', admin: 'Admin' } as const
+const SOURCE_LABELS = {
+  app: 'App',
+  luma: 'Luma',
+  admin: 'Admin',
+  allowlist: 'Preaprobados',
+} as const
 
 const LUMA_SYNC_LABELS = {
   not_linked: '—',

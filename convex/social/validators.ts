@@ -20,6 +20,9 @@ export const guestSourceValidator = v.union(
   v.literal('app'),
   v.literal('luma'),
   v.literal('admin'),
+  // An admin added them from the org's pre-approved list, without the
+  // person registering.
+  v.literal('allowlist'),
 )
 
 export const lumaSyncValidator = v.union(
