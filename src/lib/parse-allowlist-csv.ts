@@ -1,9 +1,9 @@
 /**
  * Parse an allowlist CSV in the browser. Accepts a header row with an email
- * column (email / mail / correo …) and optionally a name column (name /
- * nombre, or first + last name), or no header at all: then the email is the
- * cell containing "@" and the name is the other cell of a two-column row.
- * Handles quoted fields and comma, semicolon or tab delimiters.
+ * column (email / e-mail address / correo …) and optionally a name column
+ * (name / nombre, or first + last name), or no header at all: then the email
+ * is the cell containing "@" and the name is the other cell of a two-column
+ * row. Handles quoted fields and comma, semicolon or tab delimiters.
  */
 
 export type AllowlistRow = { email: string; name?: string }
@@ -16,32 +16,35 @@ export type ParsedAllowlist = {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
+// Headers are compared without accents, case, spaces or punctuation, so
+// "E-mail Address", "email_address" and "Email address" are all one key.
 const EMAIL_HEADERS = new Set([
   'email',
-  'e-mail',
   'mail',
   'correo',
-  'correo electronico',
-  'email address',
-  'direccion de correo',
+  'correoelectronico',
+  'emailaddress',
+  'mailaddress',
+  'direcciondecorreo',
+  'direcciondecorreoelectronico',
+  'direcciondeemail',
 ])
 const NAME_HEADERS = new Set([
   'name',
   'nombre',
-  'full name',
-  'nombre completo',
-  'nombre y apellido',
+  'fullname',
+  'nombrecompleto',
+  'nombreyapellido',
 ])
-const FIRST_NAME_HEADERS = new Set(['first name', 'first_name', 'nombre'])
-const LAST_NAME_HEADERS = new Set(['last name', 'last_name', 'apellido'])
+const FIRST_NAME_HEADERS = new Set(['firstname', 'nombre'])
+const LAST_NAME_HEADERS = new Set(['lastname', 'apellido'])
 
 function normalizeHeader(cell: string): string {
   return cell
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
-    .replace(/[_]+/g, ' ')
-    .trim()
+    .replace(/[^a-z0-9]/g, '')
 }
 
 function detectDelimiter(firstLine: string): string {
@@ -57,39 +60,76 @@ function detectDelimiter(firstLine: string): string {
   return counts[best] > 0 ? best : ','
 }
 
+/**
+ * Read the quoted field whose opening quote is at `start`. A field is only
+ * quoted when its closing quote is followed by a delimiter, a line break or
+ * the end of the text (it may span lines, and `""` is a literal quote).
+ * Returns null for a quote that never closes that way.
+ */
+function readQuotedField(
+  text: string,
+  start: number,
+  delimiter: string,
+): { value: string; next: number } | null {
+  let value = ''
+  let i = start + 1
+  while (i < text.length) {
+    const ch = text[i]
+    if (ch !== '"') {
+      value += ch
+      i++
+      continue
+    }
+    if (text[i + 1] === '"') {
+      value += '"'
+      i += 2
+      continue
+    }
+    let next = i + 1
+    while (text[next] === ' ') next++
+    const after = text[next]
+    const closes =
+      after === undefined ||
+      after === delimiter ||
+      after === '\n' ||
+      after === '\r'
+    return closes ? { value, next } : null
+  }
+  return null
+}
+
 function parseCsv(text: string): Array<Array<string>> {
   const clean = text.replace(/^﻿/, '')
   const delimiter = detectDelimiter(clean.split(/\r?\n/, 1)[0] ?? '')
   const rows: Array<Array<string>> = []
   let row: Array<string> = []
   let cell = ''
-  let inQuotes = false
-  for (let i = 0; i < clean.length; i++) {
+  let i = 0
+  while (i < clean.length) {
     const ch = clean[i]
-    if (inQuotes) {
-      if (ch === '"') {
-        if (clean[i + 1] === '"') {
-          cell += '"'
-          i++
-        } else {
-          inQuotes = false
-        }
+    if (ch === '"' && cell.trim() === '') {
+      const quoted = readQuotedField(clean, i, delimiter)
+      if (quoted) {
+        cell = quoted.value
+        i = quoted.next
       } else {
-        cell += ch
+        // An unbalanced quote: drop it, so it can't swallow the rows below.
+        i++
       }
-    } else if (ch === '"') {
-      inQuotes = true
     } else if (ch === delimiter) {
       row.push(cell)
       cell = ''
+      i++
     } else if (ch === '\n' || ch === '\r') {
       if (ch === '\r' && clean[i + 1] === '\n') i++
       row.push(cell)
       rows.push(row)
       row = []
       cell = ''
+      i++
     } else {
       cell += ch
+      i++
     }
   }
   row.push(cell)
@@ -114,10 +154,11 @@ export function parseAllowlistCsv(text: string): ParsedAllowlist {
   if (hasHeader) {
     nameCol = header.findIndex((h) => NAME_HEADERS.has(h))
     lastCol = header.findIndex((h) => LAST_NAME_HEADERS.has(h))
-    if (lastCol !== -1) {
-      // "nombre" + "apellido" is first + last, not a full name.
-      firstCol = header.findIndex((h) => FIRST_NAME_HEADERS.has(h))
-      if (firstCol !== -1 && firstCol === nameCol) nameCol = -1
+    firstCol = header.findIndex((h) => FIRST_NAME_HEADERS.has(h))
+    if (firstCol !== -1 && firstCol === nameCol) {
+      // "nombre" + "apellido" is first + last; "nombre" alone is a full name.
+      if (lastCol !== -1) nameCol = -1
+      else firstCol = -1
     }
   }
 
@@ -132,10 +173,10 @@ export function parseAllowlistCsv(text: string): ParsedAllowlist {
     let name: string | undefined
     if (hasHeader) {
       email = cells[emailCol]
-      if (nameCol !== -1) name = cells[nameCol]
-      else if (firstCol !== -1 || lastCol !== -1) {
-        name = [cells[firstCol] ?? '', cells[lastCol] ?? ''].join(' ').trim()
-      }
+      // A full-name column wins; when it is empty (or missing), first + last.
+      name =
+        (nameCol !== -1 ? cells[nameCol] : '') ||
+        [cells[firstCol] ?? '', cells[lastCol] ?? ''].join(' ').trim()
     } else {
       const idx = cells.findIndex((c) => c.includes('@'))
       email = idx === -1 ? cells[0] : cells[idx]
