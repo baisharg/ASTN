@@ -65,6 +65,39 @@ async function activeMeetingFor(
     .first()
 }
 
+/**
+ * The meeting `userId` finished most recently. A person's meetings never
+ * overlap, so the newest ended row on each side is the candidate.
+ */
+async function lastEndedMeetingFor(
+  ctx: QueryCtx,
+  eventId: Id<'socialEvents'>,
+  userId: string,
+): Promise<Doc<'socialMeetings'> | null> {
+  const [asA, asB] = await Promise.all([
+    ctx.db
+      .query('socialMeetings')
+      .withIndex('by_eventId_and_userA_and_status', (q) =>
+        q.eq('eventId', eventId).eq('userA', userId).eq('status', 'ended'),
+      )
+      .order('desc')
+      .first(),
+    ctx.db
+      .query('socialMeetings')
+      .withIndex('by_eventId_and_userB_and_status', (q) =>
+        q.eq('eventId', eventId).eq('userB', userId).eq('status', 'ended'),
+      )
+      .order('desc')
+      .first(),
+  ])
+  if (!asA || !asB) return asA ?? asB
+  return endedAtOf(asA) >= endedAtOf(asB) ? asA : asB
+}
+
+function endedAtOf(meeting: Doc<'socialMeetings'>): number {
+  return meeting.endedAt ?? meeting.endsAt
+}
+
 async function statusRow(
   ctx: QueryCtx | MutationCtx,
   eventId: Id<'socialEvents'>,
@@ -181,6 +214,18 @@ export const getLiveState = query({
           topics: v.array(v.string()),
         }),
       ),
+      // The viewer's most recently finished meeting, whenever that was; the
+      // page decides by its own clock whether it is recent enough to show.
+      lastEnded: v.union(
+        v.null(),
+        v.object({
+          _id: v.id('socialMeetings'),
+          partner: cardValidator,
+          endedAt: v.number(),
+          // When its time was due to run out.
+          endsAt: v.number(),
+        }),
+      ),
       incoming: v.array(
         v.object({
           _id: v.id('socialMeetingRequests'),
@@ -221,11 +266,18 @@ export const getLiveState = query({
       availability,
     }
     if (!base.isAttendee) {
-      return { ...base, meeting: null, incoming: [], outgoing: [] }
+      return {
+        ...base,
+        meeting: null,
+        lastEnded: null,
+        incoming: [],
+        outgoing: [],
+      }
     }
 
-    const [active, incomingRows, outgoingRows] = await Promise.all([
+    const [active, ended, incomingRows, outgoingRows] = await Promise.all([
       activeMeetingFor(ctx, eventId, userId),
+      lastEndedMeetingFor(ctx, eventId, userId),
       ctx.db
         .query('socialMeetingRequests')
         .withIndex('by_eventId_and_toUserId_and_status', (q) =>
@@ -265,6 +317,19 @@ export const getLiveState = query({
       }
     }
 
+    const lastEnded = ended
+      ? {
+          _id: ended._id,
+          partner: await attendeeCard(
+            ctx,
+            eventId,
+            ended.userA === userId ? ended.userB : ended.userA,
+          ),
+          endedAt: endedAtOf(ended),
+          endsAt: ended.endsAt,
+        }
+      : null
+
     const incoming = await Promise.all(
       incomingRows.map(async (r) => ({
         _id: r._id,
@@ -299,7 +364,7 @@ export const getLiveState = query({
       }),
     )
 
-    return { ...base, meeting, incoming, outgoing }
+    return { ...base, meeting, lastEnded, incoming, outgoing }
   },
 })
 

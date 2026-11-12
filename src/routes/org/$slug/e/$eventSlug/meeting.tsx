@@ -1,6 +1,6 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation } from 'convex/react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../convex/_generated/api'
 import type { LiveMeeting, LiveState } from '~/components/social/live'
@@ -17,6 +17,7 @@ import {
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
 import { useCopy } from '~/lib/social-i18n'
+import { endedRecently } from '~/lib/social-live'
 import { useBusyAction } from '~/lib/use-busy-action'
 
 export const Route = createFileRoute('/org/$slug/e/$eventSlug/meeting')({
@@ -124,11 +125,12 @@ function MeetingPage() {
 function MeetingContent({ live }: { live: LiveState }) {
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
-  // The meeting that was on screen, so we can say it ended once it's gone.
-  const [lastMeeting, setLastMeeting] = useState<LiveMeeting | null>(null)
-  useEffect(() => {
-    if (live.meeting) setLastMeeting(live.meeting)
-  }, [live.meeting])
+  const now = useNow()
+  // Said once the meeting is over, whether or not this page was open then.
+  const justEnded =
+    live.lastEnded && endedRecently(live.lastEnded.endedAt, now)
+      ? live.lastEnded
+      : null
 
   const header = (
     <div className="-ml-3 flex items-center justify-between">
@@ -158,8 +160,8 @@ function MeetingContent({ live }: { live: LiveState }) {
   return (
     <main className="flex flex-col gap-[22px] px-5 pb-8 pt-2">
       {header}
-      {lastMeeting ? (
-        <EndedCard live={live} partnerName={lastMeeting.partner.name} />
+      {justEnded ? (
+        <EndedCard live={live} partnerName={justEnded.partner.name} />
       ) : (
         <NoMeeting live={live} />
       )}
