@@ -355,6 +355,25 @@ export async function updateGuestAndSync(
   }
 }
 
+// How long after its upload a file can still be attached as a floor plan.
+const FLOOR_PLAN_UPLOAD_WINDOW_MS = 15 * 60 * 1000
+
+/**
+ * Whether a stored file may become an event's floor plan: an image uploaded
+ * in the last few minutes, which is what the admin page sends right after
+ * its upload. Anything else is some other file whose id the caller happens
+ * to know; attaching it would expose it through the plan's URL and delete it
+ * when the plan is replaced.
+ */
+export function isFreshImageUpload(
+  file: { _creationTime: number; contentType?: string } | null,
+  now: number,
+): boolean {
+  if (!file) return false
+  if (!file.contentType?.toLowerCase().startsWith('image/')) return false
+  return now - file._creationTime <= FLOOR_PLAN_UPLOAD_WINDOW_MS
+}
+
 /** Approved guests of an event (with or without an account). */
 export async function approvedGuests(
   ctx: QueryCtx | MutationCtx,

@@ -11,6 +11,7 @@ import {
   findGuestForIdentity,
   focusFromPrompt,
   getProfileByUser,
+  isFreshImageUpload,
   isOnAllowlist,
   isProfileReadyForMatching,
   meetingsWindow,
@@ -850,7 +851,16 @@ export const setFloorPlan = mutation({
   returns: v.null(),
   handler: async (ctx, { eventId, storageId }) => {
     const { event } = await requireEventAdmin(ctx, eventId)
-    if (event.floorPlanStorageId && event.floorPlanStorageId !== storageId) {
+    if (storageId === (event.floorPlanStorageId ?? null)) return null
+    if (storageId !== null) {
+      const file = await ctx.db.system.get('_storage', storageId)
+      if (!isFreshImageUpload(file, Date.now())) {
+        throw new ConvexError(
+          'The floor plan must be an image you just uploaded. Upload it again.',
+        )
+      }
+    }
+    if (event.floorPlanStorageId) {
       await ctx.storage.delete(event.floorPlanStorageId)
     }
     await ctx.db.patch('socialEvents', eventId, {
