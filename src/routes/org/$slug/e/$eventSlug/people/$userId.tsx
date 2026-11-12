@@ -80,7 +80,7 @@ const copy = {
     sentTitle: 'Solicitud enviada',
     sentExpiry: (label: string) => `La solicitud ${label}.`,
     sentAvailable: (name: string) =>
-      `Le avisamos a ${name} en la app. Si acepta, les asignamos un lugar para reunirse.`,
+      `Tu solicitud le aparece a ${name} en la app. Si acepta, les asignamos un lugar para reunirse.`,
     sentInMeeting: (name: string) =>
       `${name} está en una reunión. Tu solicitud queda en su fila.`,
     sentBusy: (name: string) =>
@@ -127,7 +127,7 @@ const copy = {
     sentTitle: 'Request sent',
     sentExpiry: (label: string) => `The request ${label}.`,
     sentAvailable: (name: string) =>
-      `We let ${name} know in the app. If they accept, you both get a spot to meet.`,
+      `Your request shows up for ${name} in the app. If they accept, you both get a spot to meet.`,
     sentInMeeting: (name: string) =>
       `${name} is in a meeting. Your request waits in their queue.`,
     sentBusy: (name: string) =>
