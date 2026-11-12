@@ -31,15 +31,16 @@ import { errorText } from '~/lib/convex-error'
 import { useBusyAction } from '~/lib/use-busy-action'
 
 // Where a new event is created.
-type Place = 'luma_and_astn' | 'astn'
+type Place = 'luma_and_astn' | 'luma' | 'astn'
 
 // A Luma event this dialog created whose ASTN event couldn't be created.
 type LumaOnlyEvent = { lumaEventId: string; name: string; error: string }
 
 /**
  * The one way to create an event. An org connected to Luma chooses between
- * an event on its Luma calendar managed in ASTN, and an event that only
- * exists in ASTN; any other org gets the ASTN form directly.
+ * an event on its Luma calendar managed in ASTN, an event that only exists
+ * on Luma, and an event that only exists in ASTN; any other org gets the
+ * ASTN form directly.
  */
 export function CreateEventDialog({
   open,
@@ -95,6 +96,26 @@ export function CreateEventDialog({
     })
   }
 
+  // A Luma event that couldn't be read back has no page here until the next
+  // calendar sync, so the dialog only closes and says where to find it.
+  const openLumaEvent = (created: {
+    lumaEventId: string
+    url: string | null
+  }) => {
+    close()
+    if (created.url === null) {
+      toast.success('Evento creado en Luma', {
+        description: 'Tocá “Sincronizar” para verlo en la lista.',
+      })
+      return
+    }
+    toast.success('Evento creado en Luma')
+    void navigate({
+      to: '/org/$slug/admin/events/luma/$lumaEventId',
+      params: { slug, lumaEventId: created.lumaEventId },
+    })
+  }
+
   const handleCreateAstn = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!astnForm.canSave || busy) return
@@ -137,7 +158,7 @@ export function CreateEventDialog({
     await run(
       'create',
       async () => {
-        let created: { lumaEventId: string }
+        let created: { lumaEventId: string; url: string | null }
         try {
           created = await createLumaEvent({ orgId, ...args })
         } catch (err) {
@@ -153,6 +174,10 @@ export function CreateEventDialog({
         // The Luma event exists from here on: the form is emptied so it
         // can't be created a second time.
         lumaForm.setValues(EMPTY_LUMA_EVENT)
+        if (place === 'luma') {
+          openLumaEvent(created)
+          return
+        }
         await manage(created.lumaEventId, args.name)
       },
       toastError('No se pudo crear el evento'),
@@ -263,6 +288,11 @@ export function CreateEventDialog({
                 onClick={() => setChosen('luma_and_astn')}
               />
               <PlaceOption
+                title="Solo en Luma"
+                description="Se crea en el calendario de Luma y no se gestiona en ASTN: sin 1:1 ni check-in en la puerta. Lo podés pasar a ASTN más adelante con “Gestionar en ASTN”."
+                onClick={() => setChosen('luma')}
+              />
+              <PlaceOption
                 title="Solo en ASTN"
                 description="No aparece en Luma. Empieza como borrador y lo podés vincular con un evento de Luma más adelante."
                 onClick={() => setChosen('astn')}
@@ -299,10 +329,15 @@ export function CreateEventDialog({
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>Crear evento en Luma y ASTN</DialogTitle>
+              <DialogTitle>
+                {place === 'luma'
+                  ? 'Crear evento solo en Luma'
+                  : 'Crear evento en Luma y ASTN'}
+              </DialogTitle>
               <DialogDescription>
-                En Luma se publica al crearlo, con la visibilidad que elijas. En
-                ASTN empieza como borrador.
+                {place === 'luma'
+                  ? 'En Luma se publica al crearlo, con la visibilidad que elijas.'
+                  : 'En Luma se publica al crearlo, con la visibilidad que elijas. En ASTN empieza como borrador.'}
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleCreateLuma} className="space-y-4">
@@ -318,8 +353,10 @@ export function CreateEventDialog({
                     <p>
                       Puede que el evento igual se haya creado en Luma. Antes de
                       intentar de nuevo, cerrá esta ventana, tocá “Sincronizar”
-                      y fijate si aparece en la lista: si aparece, tocá
-                      “Gestionar en ASTN” en ese evento.
+                      y fijate si aparece en la lista
+                      {place === 'luma'
+                        ? '.'
+                        : ': si aparece, tocá “Gestionar en ASTN” en ese evento.'}
                     </p>
                   </div>
                 </div>
@@ -333,7 +370,7 @@ export function CreateEventDialog({
                   disabled={!lumaForm.canSave || busy !== null}
                 >
                   {busy && <Loader2 className="size-4 mr-2 animate-spin" />}
-                  Crear en Luma y ASTN
+                  {place === 'luma' ? 'Crear en Luma' : 'Crear en Luma y ASTN'}
                 </Button>
               </DialogFooter>
             </form>
