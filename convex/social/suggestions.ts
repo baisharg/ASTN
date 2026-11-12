@@ -15,6 +15,7 @@ import {
   getGuestByUser,
   getProfileByUser,
   isProfileReadyForMatching,
+  meetingsWindow,
   requireEventAdmin,
   sharedProfileParts,
 } from './lib'
@@ -254,9 +255,13 @@ export type RefreshDecision =
  *   waiting; the next run then includes them for everyone else.
  * - An attendee the last run covered but who has no ranking (it failed) is
  *   ranked on their own, never through a whole new run.
+ * - Once the event's 1:1s have closed, nobody is ranked: the suggestions an
+ *   attendee has stay as they are.
  */
 export function decideRefresh(input: {
   now: number
+  /** Whether the event's 1:1 window has closed. */
+  meetingsOver: boolean
   eventRunInProgress: boolean
   /** When the event's last run started (running or finished), if any. */
   lastEventRunStartedAt: number | undefined
@@ -269,6 +274,7 @@ export function decideRefresh(input: {
   /** The language the attendee's page is in. */
   language: SuggestionLanguage
 }): RefreshDecision {
+  if (input.meetingsOver) return { kind: 'none' }
   const needsOwnRank = !input.hasRanking && !input.rankInProgress
   if (input.eventRunInProgress) {
     return needsOwnRank && !input.coveredByLastEventRun
@@ -1101,7 +1107,8 @@ export const refreshMySuggestions = mutation({
     if (!isProfileReadyForMatching(profile)) return 'profile_incomplete'
 
     const now = Date.now()
-    const [storedRow, run, ranking] = await Promise.all([
+    const [event, storedRow, run, ranking] = await Promise.all([
+      ctx.db.get('socialEvents', eventId),
       attendeeStatusRow(ctx, eventId, userId),
       latestRun(ctx, eventId),
       rankingOf(ctx, eventId, userId),
@@ -1109,6 +1116,7 @@ export const refreshMySuggestions = mutation({
     const language = pageLanguage ?? suggestionLanguage(storedRow, profile)
     const decision = decideRefresh({
       now,
+      meetingsOver: event === null || now >= meetingsWindow(event).closeAt,
       eventRunInProgress: isRunning(run, now),
       lastEventRunStartedAt: run?.startedAt,
       coveredByLastEventRun: run?.attendeeUserIds.includes(userId) ?? false,

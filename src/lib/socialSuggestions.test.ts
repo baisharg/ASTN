@@ -28,6 +28,7 @@ const MINUTE = 60 * 1000
 /** An attendee with suggestions in their language, shortly after a run. */
 const SETTLED: Parameters<typeof decideRefresh>[0] = {
   now: NOW,
+  meetingsOver: false,
   eventRunInProgress: false,
   lastEventRunStartedAt: NOW - 5 * MINUTE,
   coveredByLastEventRun: true,
@@ -40,6 +41,22 @@ const SETTLED: Parameters<typeof decideRefresh>[0] = {
 describe('decideRefresh: what opening the people page sets in motion', () => {
   test('nothing, for an attendee with suggestions shortly after a run', () => {
     expect(decideRefresh(SETTLED)).toEqual({ kind: 'none' })
+  })
+
+  test("nothing once the event's 1:1s have closed, even for an attendee with no ranking", () => {
+    expect(
+      decideRefresh({
+        ...SETTLED,
+        meetingsOver: true,
+        lastEventRunStartedAt: undefined,
+        coveredByLastEventRun: false,
+        hasRanking: false,
+        rankingLanguage: undefined,
+      }),
+    ).toEqual({ kind: 'none' })
+    expect(
+      decideRefresh({ ...SETTLED, meetingsOver: true, language: 'en' }),
+    ).toEqual({ kind: 'none' })
   })
 
   test("the first request at an event starts the event's first run", () => {

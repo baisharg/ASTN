@@ -97,6 +97,9 @@ const copy = {
       'Algo falló de nuestro lado. Probá de nuevo; mientras tanto, podés ver a todos los asistentes.',
     updateFailed: 'No pudimos actualizar tus sugerencias.',
     retry: 'Reintentar',
+    overTitle: 'Los 1:1 de este evento ya terminaron',
+    overBody:
+      'Ya no armamos sugerencias nuevas para este evento. Podés ver a todos los asistentes.',
     nobodyTitle: 'Todavía no hay a quién sugerirte',
     nobodyBody:
       'Cuando se sumen más asistentes con el perfil completo, te sugerimos con quién conversar.',
@@ -147,6 +150,9 @@ const copy = {
       'Something went wrong on our side. Try again; meanwhile, you can browse everyone.',
     updateFailed: "We couldn't update your suggestions.",
     retry: 'Try again',
+    overTitle: "This event's 1:1s are over",
+    overBody:
+      "We no longer put together new suggestions for this event. You can still see everyone who's attending.",
     nobodyTitle: 'Nobody to suggest yet',
     nobodyBody:
       "When more attendees with a complete profile join, we'll suggest who to talk to.",
@@ -457,6 +463,8 @@ function SuggestedPanel({
   onSeeEveryone: () => void
 }) {
   const { slug, eventSlug } = Route.useParams()
+  const event = useSocialEvent()
+  const now = useNow()
   const t = useCopy(copy)
   const errorMessage = useSocialErrorMessage()
   const { busy, run } = useBusyAction<'retry'>()
@@ -466,6 +474,8 @@ function SuggestedPanel({
   }
 
   const status = suggestionState.status
+  // Once the 1:1s have closed, asking for suggestions starts nothing.
+  const meetingsOver = now >= event.meetingsCloseAt
   const retry = () =>
     run('retry', onRetry, (error) => toast.error(errorMessage(error)))
   const retryButton = (className: string) => (
@@ -489,6 +499,17 @@ function SuggestedPanel({
   )
 
   if (suggestions.length === 0) {
+    if (meetingsOver && status !== 'generating') {
+      return (
+        <Panel>
+          <h2 className="text-[17px] font-semibold text-[var(--baish-strong)]">
+            {t.overTitle}
+          </h2>
+          <p className="text-[15px] leading-normal">{t.overBody}</p>
+          {seeEveryoneButton}
+        </Panel>
+      )
+    }
     if (!live.profileReady || refreshResult === 'profile_incomplete') {
       return (
         <Panel>
@@ -564,7 +585,7 @@ function SuggestedPanel({
           {t.updating}
         </p>
       )}
-      {status === 'failed' && (
+      {status === 'failed' && !meetingsOver && (
         <div
           role="status"
           className="flex items-center justify-between gap-3 rounded-[14px] bg-muted px-4 py-2.5"
