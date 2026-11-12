@@ -3,8 +3,9 @@ import { internal } from './_generated/api'
 import { internalMutation, mutation, query } from './_generated/server'
 import { getUserId } from './lib/auth'
 import { debouncedSchedule } from './lib/debouncer'
-import { safeLinkedinUrl } from './social/lib'
+import { normalizeEmail, safeLinkedinUrl } from './social/lib'
 import { socialVisibilityValidator } from './social/validators'
+import type { MutationCtx } from './_generated/server'
 
 // Section completeness rules
 const COMPLETENESS_SECTIONS = [
@@ -150,6 +151,35 @@ export const getOrCreateProfile = query({
   },
 })
 
+/**
+ * The LinkedIn URL the person gave when registering for an in-person event,
+ * newest registration first. Registration stores it on the guest row, which
+ * may not be linked to the account yet, so rows are also found by email.
+ */
+async function linkedinFromEventRegistrations(
+  ctx: MutationCtx,
+  userId: string,
+  email: string | undefined,
+): Promise<string | undefined> {
+  const byUser = await ctx.db
+    .query('socialEventGuests')
+    .withIndex('by_userId', (q) => q.eq('userId', userId))
+    .order('desc')
+    .take(20)
+  const byEmail = email
+    ? await ctx.db
+        .query('socialEventGuests')
+        .withIndex('by_email', (q) => q.eq('email', normalizeEmail(email)))
+        .order('desc')
+        .take(20)
+    : []
+  for (const guest of [...byUser, ...byEmail]) {
+    const url = safeLinkedinUrl(guest.linkedinUrl)
+    if (url) return url
+  }
+  return undefined
+}
+
 // Create profile for current user (called on first edit)
 export const create = mutation({
   args: { timezone: v.optional(v.string()) },
@@ -181,6 +211,11 @@ export const create = mutation({
     const profileId = await ctx.db.insert('profiles', {
       userId,
       email: identity?.email ?? undefined,
+      linkedinUrl: await linkedinFromEventRegistrations(
+        ctx,
+        userId,
+        identity?.email,
+      ),
       createdAt: now,
       updatedAt: now,
       notificationPreferences: {
@@ -318,8 +353,19 @@ export const updateField = mutation({
         }),
       ),
     }),
+    // Text fields to empty. A field can't be sent as `undefined` (Convex
+    // drops it from the arguments), so removing one is named here.
+    clear: v.optional(
+      v.array(
+        v.union(
+          v.literal('headline'),
+          v.literal('seeking'),
+          v.literal('canHelpWith'),
+        ),
+      ),
+    ),
   },
-  handler: async (ctx, { profileId, updates: rawUpdates }) => {
+  handler: async (ctx, { profileId, updates: rawUpdates, clear }) => {
     // Only store LinkedIn links that are safe to render as links.
     const updates = { ...rawUpdates }
     if (updates.linkedinUrl !== undefined) {
@@ -362,12 +408,21 @@ export const updateField = mutation({
       'matchPreferences',
     ])
 
-    const affectsMatches = Object.keys(updates).some((f) =>
-      MATCH_AFFECTING_FIELDS.has(f),
+    // A field in both `updates` and `clear` ends up cleared.
+    const cleared: {
+      headline?: undefined
+      seeking?: undefined
+      canHelpWith?: undefined
+    } = {}
+    for (const field of clear ?? []) cleared[field] = undefined
+
+    const affectsMatches = [...Object.keys(updates), ...(clear ?? [])].some(
+      (f) => MATCH_AFFECTING_FIELDS.has(f),
     )
 
     await ctx.db.patch('profiles', profileId, {
       ...updates,
+      ...cleared,
       ...emailBackfill,
       updatedAt: Date.now(),
     })

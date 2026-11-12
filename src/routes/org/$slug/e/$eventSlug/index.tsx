@@ -1,3 +1,4 @@
+import { useClerk } from '@clerk/clerk-react'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import {
   AuthLoading,
@@ -18,6 +19,7 @@ import {
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../convex/_generated/api'
+import type { RegisterErrorCode } from '../../../../../../convex/social/constants'
 import { useSocialEvent } from '~/components/social/SocialEventContext'
 import { SignInPanel } from '~/components/social/live'
 import {
@@ -26,6 +28,7 @@ import {
   secondaryButtonClass,
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
+import { errorCode } from '~/lib/convex-error'
 import { useBusyAction } from '~/lib/use-busy-action'
 import {
   formatEventDate,
@@ -46,21 +49,34 @@ const copy = {
         ? `${n} ${n === 1 ? 'persona confirmada' : 'personas confirmadas'}`
         : null,
     closed: 'La inscripción para este evento está cerrada.',
+    closedSignInTitle: 'La inscripción está cerrada',
+    closedSignInBody:
+      'Si ya te registraste, iniciá sesión para ver tu lugar y entrar a los 1:1.',
+    closedSignInButton: 'Iniciar sesión',
     signInTitle: 'Registrate una sola vez',
-    signInBody:
-      'Creá tu cuenta con Google, LinkedIn o tu email y anotate a este y a los próximos eventos de BAISH sin llenar formularios.',
+    signInBody: (org: string) =>
+      `Creá tu cuenta con Google, LinkedIn o tu email y anotate a este y a los próximos eventos de ${org} sin llenar formularios.`,
     signInButton: 'Continuar',
-    signInHint:
-      'Si ya participaste en programas de BAISH, te reconocemos por tu mail y tu lugar se confirma al instante.',
+    signInHint: (org: string) =>
+      `Si ya participaste en programas de ${org}, te reconocemos por tu mail y tu lugar se confirma al instante.`,
+    signInLumaHint:
+      '¿Ya te registraste en Luma? Entrá con el mismo email que usaste ahí, así encontramos tu lugar.',
+    otherEmailHint: (email: string) =>
+      `Entraste como ${email}. Si ya te registraste en Luma con otro email, entrá con ese: no hace falta pedir lugar de nuevo.`,
+    switchAccount: 'Cerrar sesión y entrar con otro email',
     onList: 'Estás en la lista de invitados',
-    onListBody:
-      'Ya participaste en programas de BAISH, así que tu lugar se confirma al instante.',
+    onListBody: (org: string) =>
+      `Ya participaste en programas de ${org}, así que tu lugar se confirma al instante.`,
     register: 'Registrarme',
     lumaNote:
       'También te sumamos a la lista de invitados de Luma. La entrada y el código QR para la puerta te llegan por mail desde Luma.',
     requestTitle: 'Pedí tu lugar',
-    requestBody:
-      'El equipo de BAISH revisa cada inscripción y te avisa por mail cuando te aprueban.',
+    // byEmail: the event is linked to Luma, which emails the decision.
+    // Otherwise the answer only shows up on this page.
+    requestBody: (org: string, byEmail: boolean) =>
+      byEmail
+        ? `El equipo de ${org} revisa cada inscripción y te avisa por mail cuando te aprueban.`
+        : `El equipo de ${org} revisa cada inscripción. No mandamos mail: vas a ver la respuesta en esta página.`,
     linkedinLabel: 'Tu LinkedIn',
     linkedinHint: 'Opcional. Nos ayuda a aprobarte más rápido.',
     requestButton: 'Pedir mi lugar',
@@ -74,7 +90,10 @@ const copy = {
     seePeople: 'Ver quiénes van',
     editProfile: 'Editar perfil',
     pending: 'Inscripción pendiente',
-    pendingBody: 'Te avisamos por mail cuando el equipo de BAISH la apruebe.',
+    pendingBody: (org: string, byEmail: boolean) =>
+      byEmail
+        ? `Te avisamos por mail cuando el equipo de ${org} la apruebe.`
+        : `El equipo de ${org} la está revisando. No mandamos mail: volvé a esta página para ver la respuesta.`,
     pendingProfile: 'Mientras tanto, armá tu perfil',
     pendingProfileBody:
       'Lo usamos para sugerirte personas para conocer si te aprueban.',
@@ -82,7 +101,10 @@ const copy = {
     declinedBody:
       'Esta vez no tenemos lugar para vos. Te avisamos de los próximos eventos.',
     waitlist: 'Estás en la lista de espera',
-    waitlistBody: 'Si se libera un lugar te avisamos por mail.',
+    waitlistBody: (byEmail: boolean): string =>
+      byEmail
+        ? 'Si se libera un lugar te avisamos por mail.'
+        : 'Si se libera un lugar, lo vas a ver en esta página.',
     invited: 'Te invitaron a este evento',
     invitedBody: 'Confirmá tu lugar desde la invitación de Luma.',
     openLuma: 'Abrir en Luma',
@@ -103,6 +125,13 @@ const copy = {
     ] as Array<[string, string]>,
     meetingsWindow: (from: string, to: string) => `1:1 de ${from} a ${to}`,
     registerFailed: 'No pudimos registrarte. Probá de nuevo.',
+    registerError: {
+      not_authenticated:
+        'Se cerró tu sesión. Iniciá sesión de nuevo para registrarte.',
+      no_email:
+        'Tu cuenta no tiene un email, así que no podemos registrarte. Agregale uno o entrá con otra cuenta.',
+      registration_closed: 'La inscripción para este evento ya cerró.',
+    } satisfies Record<RegisterErrorCode, string>,
   },
   en: {
     eyebrow: 'Community social',
@@ -111,21 +140,32 @@ const copy = {
         ? `${n} ${n === 1 ? 'person confirmed' : 'people confirmed'}`
         : null,
     closed: 'Registration for this event is closed.',
+    closedSignInTitle: 'Registration is closed',
+    closedSignInBody:
+      'If you already registered, sign in to see your place and join the 1:1s.',
+    closedSignInButton: 'Sign in',
     signInTitle: 'Register once',
-    signInBody:
-      'Create your account with Google, LinkedIn or your email and sign up for this and future BAISH events without filling in forms.',
+    signInBody: (org: string) =>
+      `Create your account with Google, LinkedIn or your email and sign up for this and future ${org} events without filling in forms.`,
     signInButton: 'Continue',
-    signInHint:
-      "If you've taken part in BAISH programs before, we recognize your email and confirm your place straight away.",
+    signInHint: (org: string) =>
+      `If you've taken part in ${org} programs before, we recognize your email and confirm your place straight away.`,
+    signInLumaHint:
+      'Already registered on Luma? Sign in with the same email you used there so we can find your place.',
+    otherEmailHint: (email: string) =>
+      `You're signed in as ${email}. If you already registered on Luma with a different email, sign in with that one: you don't need to ask for a place again.`,
+    switchAccount: 'Sign out and use another email',
     onList: "You're on the guest list",
-    onListBody:
-      "You've taken part in BAISH programs before, so your place is confirmed straight away.",
+    onListBody: (org: string) =>
+      `You've taken part in ${org} programs before, so your place is confirmed straight away.`,
     register: 'Register',
     lumaNote:
       "We'll also add you to the Luma guest list. Your ticket and QR code for the door come from Luma by email.",
     requestTitle: 'Ask for a place',
-    requestBody:
-      'The BAISH team reviews every registration and emails you once you are approved.',
+    requestBody: (org: string, byEmail: boolean) =>
+      byEmail
+        ? `The ${org} team reviews every registration and emails you once you are approved.`
+        : `The ${org} team reviews every registration. We don't send an email: you'll see the answer on this page.`,
     linkedinLabel: 'Your LinkedIn',
     linkedinHint: 'Optional. It helps us approve you faster.',
     requestButton: 'Ask for a place',
@@ -139,7 +179,10 @@ const copy = {
     seePeople: "See who's coming",
     editProfile: 'Edit profile',
     pending: 'Registration pending',
-    pendingBody: "We'll email you once the BAISH team approves it.",
+    pendingBody: (org: string, byEmail: boolean) =>
+      byEmail
+        ? `We'll email you once the ${org} team approves it.`
+        : `The ${org} team is reviewing it. We don't send an email: come back to this page to see the answer.`,
     pendingProfile: 'Meanwhile, set up your profile',
     pendingProfileBody:
       "We'll use it to suggest people for you to meet if you're approved.",
@@ -147,7 +190,10 @@ const copy = {
     declinedBody:
       "We don't have room for you this time. We'll let you know about future events.",
     waitlist: "You're on the waitlist",
-    waitlistBody: "We'll email you if a place opens up.",
+    waitlistBody: (byEmail: boolean): string =>
+      byEmail
+        ? "We'll email you if a place opens up."
+        : "If a place opens up, you'll see it on this page.",
     invited: "You've been invited to this event",
     invitedBody: 'Confirm your place from the Luma invitation.',
     openLuma: 'Open in Luma',
@@ -168,6 +214,12 @@ const copy = {
     ] as Array<[string, string]>,
     meetingsWindow: (from: string, to: string) => `1:1s from ${from} to ${to}`,
     registerFailed: "We couldn't register you. Please try again.",
+    registerError: {
+      not_authenticated: 'You were signed out. Sign in again to register.',
+      no_email:
+        "Your account has no email address, so we can't register you. Add one or sign in with a different account.",
+      registration_closed: 'Registration for this event has closed.',
+    } satisfies Record<RegisterErrorCode, string>,
   },
 }
 
@@ -179,6 +231,12 @@ function EventRegistrationPage() {
     eventId: event._id,
   })
   const peopleLine = t.people(approvedCount ?? 0)
+  const registrationClosed = event.status === 'closed'
+  const lumaHint = event.lumaUrl && (
+    <p className="text-[13px] font-medium leading-normal text-[var(--baish-strong)]">
+      {t.signInLumaHint}
+    </p>
+  )
 
   return (
     <main className="flex flex-col gap-6 px-5 pb-10 pt-6">
@@ -217,33 +275,38 @@ function EventRegistrationPage() {
         )}
       </section>
 
-      {event.status === 'closed' ? (
-        <Panel>
-          <p className="text-[15px]">{t.closed}</p>
+      <AuthLoading>
+        <Panel raised className="items-center py-10">
+          <Spinner />
         </Panel>
-      ) : (
-        <>
-          <AuthLoading>
-            <Panel raised className="items-center py-10">
-              <Spinner />
-            </Panel>
-          </AuthLoading>
-          <Unauthenticated>
-            <SignInPanel
-              title={t.signInTitle}
-              body={t.signInBody}
-              buttonLabel={t.signInButton}
-            >
-              <p className="text-[13px] leading-normal text-muted-foreground">
-                {t.signInHint}
-              </p>
-            </SignInPanel>
-          </Unauthenticated>
-          <Authenticated>
-            <RegistrationCard />
-          </Authenticated>
-        </>
-      )}
+      </AuthLoading>
+      <Unauthenticated>
+        {registrationClosed ? (
+          // No new registrations, but someone who already registered signs
+          // in here to see their place.
+          <SignInPanel
+            title={t.closedSignInTitle}
+            body={t.closedSignInBody}
+            buttonLabel={t.closedSignInButton}
+          >
+            {lumaHint}
+          </SignInPanel>
+        ) : (
+          <SignInPanel
+            title={t.signInTitle}
+            body={t.signInBody(event.orgName)}
+            buttonLabel={t.signInButton}
+          >
+            {lumaHint}
+            <p className="text-[13px] leading-normal text-muted-foreground">
+              {t.signInHint(event.orgName)}
+            </p>
+          </SignInPanel>
+        )}
+      </Unauthenticated>
+      <Authenticated>
+        <RegistrationCard />
+      </Authenticated>
 
       <section className="flex flex-col gap-4">
         <h2 className="text-[17px] font-semibold text-[var(--baish-strong)]">
@@ -318,10 +381,21 @@ function RegistrationCard() {
           eventId: event._id,
           linkedinUrl: linkedin.trim() || undefined,
         }),
-      () => toast.error(t.registerFailed),
+      (error) => {
+        // Retrying only helps when the backend didn't give a reason.
+        const code = errorCode<RegisterErrorCode>(error)
+        toast.error(
+          code && code in t.registerError
+            ? t.registerError[code]
+            : t.registerFailed,
+        )
+      },
     )
 
   const guest = registration.guest
+  // Only Luma emails people about their registration, and only for events
+  // linked to it; otherwise the answer is shown on this page alone.
+  const decisionByEmail = event.lumaUrl !== null
   const profileReady = registration.profileMissing.length === 0
   // "Set up profile" is the main action once approved; otherwise secondary.
   const profileLink = (prominent: boolean) => (
@@ -336,11 +410,25 @@ function RegistrationCard() {
   )
 
   if (!guest) {
+    // 'closed' only stops new registrations: someone with a registration
+    // falls through to their status card below, like on a published event.
+    if (event.status === 'closed') {
+      return (
+        <Panel>
+          <p className="text-[15px]">{t.closed}</p>
+          {event.lumaUrl && registration.email && (
+            <OtherEmailHint email={registration.email} />
+          )}
+        </Panel>
+      )
+    }
     if (registration.onAllowlist) {
       return (
         <Panel raised aria-label={t.register}>
           <StatusLine tone="ok">{t.onList}</StatusLine>
-          <p className="text-[15px] leading-normal">{t.onListBody}</p>
+          <p className="text-[15px] leading-normal">
+            {t.onListBody(event.orgName)}
+          </p>
           <button
             type="button"
             onClick={onRegister}
@@ -363,7 +451,9 @@ function RegistrationCard() {
           <h2 className="text-[19px] font-semibold text-[var(--baish-strong)]">
             {t.requestTitle}
           </h2>
-          <p className="text-[15px] leading-normal">{t.requestBody}</p>
+          <p className="text-[15px] leading-normal">
+            {t.requestBody(event.orgName, decisionByEmail)}
+          </p>
         </div>
         <div className="flex flex-col gap-1.5">
           <label
@@ -394,6 +484,9 @@ function RegistrationCard() {
         >
           {submitting ? <Spinner className="size-5" /> : t.requestButton}
         </button>
+        {event.lumaUrl && registration.email && (
+          <OtherEmailHint email={registration.email} />
+        )}
       </Panel>
     )
   }
@@ -440,7 +533,9 @@ function RegistrationCard() {
       <Panel raised aria-label={t.pending}>
         <div className="flex flex-col gap-1.5">
           <StatusLine tone="warn">{t.pending}</StatusLine>
-          <p className="text-[15px] leading-normal">{t.pendingBody}</p>
+          <p className="text-[15px] leading-normal">
+            {t.pendingBody(event.orgName, decisionByEmail)}
+          </p>
         </div>
         <div className="h-px bg-border" />
         <div className="flex flex-col gap-1.5">
@@ -458,7 +553,7 @@ function RegistrationCard() {
     guest.status === 'declined'
       ? [t.declined, t.declinedBody]
       : guest.status === 'waitlist'
-        ? [t.waitlist, t.waitlistBody]
+        ? [t.waitlist, t.waitlistBody(decisionByEmail)]
         : [t.invited, t.invitedBody]
   return (
     <Panel raised aria-label={title}>
@@ -478,6 +573,30 @@ function RegistrationCard() {
         </a>
       )}
     </Panel>
+  )
+}
+
+/**
+ * For events linked to Luma, shown to someone signed in with an email that
+ * has no registration: which email that is, and a way to sign out and come
+ * back with the one they used on Luma. Signing out stays on this page.
+ */
+function OtherEmailHint({ email }: { email: string }) {
+  const t = useCopy(copy)
+  const { signOut } = useClerk()
+  return (
+    <div className="flex flex-col items-start">
+      <p className="text-[13px] leading-normal text-muted-foreground">
+        {t.otherEmailHint(email)}
+      </p>
+      <button
+        type="button"
+        onClick={() => void signOut({ redirectUrl: window.location.href })}
+        className="flex min-h-11 items-center text-sm font-semibold text-[var(--baish-brand-text)] underline-offset-2 hover:underline"
+      >
+        {t.switchAccount}
+      </button>
+    </div>
   )
 }
 

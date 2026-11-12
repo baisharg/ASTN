@@ -58,3 +58,29 @@ export const suggestionLanguageValidator = v.union(
   v.literal('es'),
   v.literal('en'),
 )
+
+/**
+ * How an attendee's last suggestion run ended, or that one is running:
+ * - generating: a run is in progress
+ * - ready: the run saved suggestions
+ * - nobody: the run found no one to suggest
+ * - failed: the run could not finish
+ */
+export const suggestionsStatusValidator = v.union(
+  v.literal('generating'),
+  v.literal('ready'),
+  v.literal('nobody'),
+  v.literal('failed'),
+)
+
+/**
+ * What started an event-wide suggestion run:
+ * - admin: the admin's button
+ * - attendee: the first attendee to open the people page
+ * - attendance: attendees with a ready profile joined since the last run
+ */
+export const suggestionRunTriggerValidator = v.union(
+  v.literal('admin'),
+  v.literal('attendee'),
+  v.literal('attendance'),
+)
