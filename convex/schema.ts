@@ -2344,6 +2344,9 @@ export default defineSchema({
     accountCreated: v.boolean(),
     // False when the account was created but Clerk then refused the link.
     linkMade: v.boolean(),
+    // Clerk's id of the link's sign-in token ("sit_..."), which can revoke
+    // the link while it is unused. Not the token: it signs nobody in.
+    signInTokenId: v.optional(v.string()),
     // The admin who made the link.
     createdBy: v.string(),
     createdAt: v.number(),

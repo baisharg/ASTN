@@ -1350,6 +1350,7 @@ export const recordPersonalLinks = internalMutation({
         accountUserId: v.string(),
         accountCreated: v.boolean(),
         linkMade: v.boolean(),
+        signInTokenId: v.optional(v.string()),
       }),
     ),
   },
@@ -1518,25 +1519,26 @@ async function createClerkAccount(
 }
 
 /**
- * A single-use sign-in token for an account, valid for `lifetimeSeconds`.
- * It completes the first factor only: an account with a second factor still
- * has to give it.
+ * A single-use sign-in token for an account, valid for `lifetimeSeconds`,
+ * with Clerk's id for it (which can revoke it, and signs nobody in). The
+ * token completes the first factor only: an account with a second factor
+ * still has to give it.
  */
 async function createClerkSignInToken(
   secretKey: string,
   userId: string,
   lifetimeSeconds: number,
-): Promise<string> {
+): Promise<{ id: string; token: string }> {
   const operation = 'sign-in token creation'
   const created = await clerkRequest(secretKey, operation, '/sign_in_tokens', {
     user_id: userId,
     expires_in_seconds: lifetimeSeconds,
   })
-  const token = (created as { token?: unknown } | null)?.token
-  if (typeof token !== 'string' || !token) {
+  const { id, token } = (created ?? {}) as { id?: unknown; token?: unknown }
+  if (typeof id !== 'string' || typeof token !== 'string' || !token) {
     throw unexpectedClerkResponse(operation)
   }
-  return token
+  return { id, token }
 }
 
 /**
@@ -1547,7 +1549,9 @@ async function createClerkSignInToken(
  *
  * Each link works once and until `expiresAt` (see
  * `personalLinkLifetimeSeconds`). Making a new link does not cancel earlier
- * ones. Nothing is emailed: the admin passes the links on.
+ * ones: an unused link keeps working until it expires, even after the guest
+ * has signed in with another. `socialPersonalLinkLog` keeps each token's id,
+ * which Clerk can revoke. Nothing is emailed: the admin passes the links on.
  */
 export const createPersonalLinks = action({
   args: {
@@ -1588,6 +1592,7 @@ export const createPersonalLinks = action({
       accountUserId: string
       accountCreated: boolean
       linkMade: boolean
+      signInTokenId?: string
     }> = []
 
     for (const guest of context.guests) {
@@ -1646,7 +1651,7 @@ export const createPersonalLinks = action({
           )
           accountUserId = createdAccountId
         }
-        const token = await createClerkSignInToken(
+        const signInToken = await createClerkSignInToken(
           secretKey,
           accountUserId,
           lifetimeSeconds,
@@ -1657,11 +1662,12 @@ export const createPersonalLinks = action({
           accountUserId,
           accountCreated: createdAccountId !== null,
           linkMade: true,
+          signInTokenId: signInToken.id,
         })
         results.push({
           guestId: guest.guestId,
           email: guest.email,
-          link: personalEventLink(eventUrl, token),
+          link: personalEventLink(eventUrl, signInToken.token),
           accountCreated: createdAccountId !== null,
           noLinkReason: null,
           clerkErrorCode: null,
