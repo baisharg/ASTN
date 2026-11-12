@@ -54,6 +54,10 @@ const copy = {
     signInButton: 'Continuar',
     signInHint: (org: string) =>
       `Si ya participaste en programas de ${org}, te reconocemos por tu mail y tu lugar se confirma al instante.`,
+    signInLumaHint:
+      '¿Ya te registraste en Luma? Entrá con el mismo email que usaste ahí, así encontramos tu lugar.',
+    otherEmailHint: (email: string) =>
+      `Entraste como ${email}. Si ya te registraste en Luma con otro email, cerrá sesión y entrá con ese: no hace falta pedir lugar de nuevo.`,
     onList: 'Estás en la lista de invitados',
     onListBody: (org: string) =>
       `Ya participaste en programas de ${org}, así que tu lugar se confirma al instante.`,
@@ -136,6 +140,10 @@ const copy = {
     signInButton: 'Continue',
     signInHint: (org: string) =>
       `If you've taken part in ${org} programs before, we recognize your email and confirm your place straight away.`,
+    signInLumaHint:
+      'Already registered on Luma? Sign in with the same email you used there so we can find your place.',
+    otherEmailHint: (email: string) =>
+      `You're signed in as ${email}. If you already registered on Luma with a different email, sign out and sign in with that one: you don't need to ask for a place again.`,
     onList: "You're on the guest list",
     onListBody: (org: string) =>
       `You've taken part in ${org} programs before, so your place is confirmed straight away.`,
@@ -267,6 +275,11 @@ function EventRegistrationPage() {
               body={t.signInBody(event.orgName)}
               buttonLabel={t.signInButton}
             >
+              {event.lumaUrl && (
+                <p className="text-[13px] font-medium leading-normal text-[var(--baish-strong)]">
+                  {t.signInLumaHint}
+                </p>
+              )}
               <p className="text-[13px] leading-normal text-muted-foreground">
                 {t.signInHint(event.orgName)}
               </p>
@@ -442,6 +455,11 @@ function RegistrationCard() {
         >
           {submitting ? <Spinner className="size-5" /> : t.requestButton}
         </button>
+        {event.lumaUrl && registration.email && (
+          <p className="text-[13px] leading-normal text-muted-foreground">
+            {t.otherEmailHint(registration.email)}
+          </p>
+        )}
       </Panel>
     )
   }
