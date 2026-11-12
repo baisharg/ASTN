@@ -1512,9 +1512,10 @@ async function scheduleRevokingTokens(
 
 /**
  * End attempts without a link, each for its reason, and have their tokens
- * revoked. An attempt that has already ended keeps how it ended: one whose
- * link was released is left alone; one that ended without a link still has
- * any token on it that may work revoked.
+ * revoked. An attempt that ended without a link keeps its reason, and still
+ * has any token on it that may work revoked. An attempt whose link was
+ * released is left alone, unless `withdrawReleased` says the link never
+ * reached the admin: then it is recorded as not released and revoked too.
  */
 async function endPersonalLinkAttempts(
   ctx: MutationCtx,
@@ -1522,12 +1523,17 @@ async function endPersonalLinkAttempts(
     row: Doc<'socialPersonalLinkLog'>
     reason: PersonalLinkLogReason
   }>,
+  withdrawReleased = false,
 ): Promise<void> {
   const now = Date.now()
   const withoutLink: Array<Doc<'socialPersonalLinkLog'>> = []
   for (const { row, reason } of attempts) {
-    if (personalLinkWasReleased(row)) continue
-    if (row.finishedAt === undefined) {
+    if (personalLinkWasReleased(row)) {
+      if (!withdrawReleased) continue
+      await ctx.db.patch('socialPersonalLinkLog', row._id, {
+        noLinkReason: reason,
+      })
+    } else if (row.finishedAt === undefined) {
       await ctx.db.patch('socialPersonalLinkLog', row._id, {
         finishedAt: now,
         noLinkReason: reason,
@@ -1630,20 +1636,25 @@ export const recordPersonalLinkProgress = internalMutation({
   },
 })
 
-/** End attempts without a link (see `endPersonalLinkAttempts`). */
+/**
+ * End attempts without a link (see `endPersonalLinkAttempts`).
+ * `withdrawReleased` is for a call that fails after its links were released:
+ * the admin gets none of them.
+ */
 export const endPersonalLinks = internalMutation({
   args: {
     logIds: v.array(v.id('socialPersonalLinkLog')),
     noLinkReason: personalLinkLogReasonValidator,
+    withdrawReleased: v.optional(v.boolean()),
   },
   returns: v.null(),
-  handler: async (ctx, { logIds, noLinkReason }) => {
+  handler: async (ctx, { logIds, noLinkReason, withdrawReleased }) => {
     const attempts = []
     for (const logId of logIds) {
       const row = await ctx.db.get('socialPersonalLinkLog', logId)
       if (row) attempts.push({ row, reason: noLinkReason })
     }
-    await endPersonalLinkAttempts(ctx, attempts)
+    await endPersonalLinkAttempts(ctx, attempts, withdrawReleased)
     return null
   },
 })
@@ -1658,7 +1669,11 @@ export const endPersonalLinks = internalMutation({
  * - the guest is still on the event, with the same email, and approved;
  * - the email still has no data outside the org, and the site still holds
  *   nothing for the account (`personalLinkRefusal`);
- * - the attempt is still open and its token has not been revoked.
+ * - the attempt is still open and its token has not been revoked;
+ * - no other attempt has a token that may work for the same account (the
+ *   email an account is known by can change between two requests). If one
+ *   does, it is revoked and this link is not released either: the next
+ *   request makes the account's one link.
  * An attempt that passes ends with its link; the others end without, and
  * their tokens are revoked.
  */
@@ -1698,6 +1713,8 @@ export const releasePersonalLinks = internalMutation({
           }
         : null
 
+    // Tokens of other attempts for the accounts being released.
+    const otherTokens: Array<OpenToken> = []
     const releaseRefusal = async (
       row: Doc<'socialPersonalLinkLog'>,
     ): Promise<NoPersonalLinkReason | null> => {
@@ -1715,8 +1732,26 @@ export const releasePersonalLinks = internalMutation({
         return 'changed_meanwhile'
       }
       if (guest.status !== 'approved') return 'not_approved'
-      if (row.accountUserId === undefined || row.signInTokenId === undefined) {
+      const { accountUserId } = row
+      if (accountUserId === undefined || row.signInTokenId === undefined) {
         throw new Error('The attempt has no link to release')
+      }
+      const accountAttempts = await ctx.db
+        .query('socialPersonalLinkLog')
+        .withIndex('by_accountUserId_and_createdAt', (q) =>
+          q
+            .eq('accountUserId', accountUserId)
+            .gte('createdAt', now - PERSONAL_LINK_LOG_WINDOW_MS),
+        )
+        .order('desc')
+        .take(PERSONAL_LINK_ATTEMPTS_BOUND)
+      const others = openPersonalLinkTokens(
+        accountAttempts.filter((attempt) => attempt._id !== row._id),
+        now,
+      )
+      if (others.length > 0) {
+        otherTokens.push(...others)
+        return 'link_in_progress'
       }
       return personalLinkRefusal({
         // Clerk's side of this (verified primary email, never used) was
@@ -1725,7 +1760,7 @@ export const releasePersonalLinks = internalMutation({
           kind: 'existing',
           emailIsVerifiedPrimary: true,
           hasSignedIn: false,
-          ...(await readAccountFacts(ctx, row.accountUserId)),
+          ...(await readAccountFacts(ctx, accountUserId)),
         },
         emailHasOtherData: await emailHasDataOutsideOrg(
           ctx,
@@ -1752,6 +1787,7 @@ export const releasePersonalLinks = internalMutation({
       }
     }
     await endPersonalLinkAttempts(ctx, ended)
+    await scheduleRevokingTokens(ctx, otherTokens)
     return released
   },
 })
@@ -1759,9 +1795,10 @@ export const releasePersonalLinks = internalMutation({
 /**
  * Settle an attempt once the call that started it is over
  * (`personalLinkSettlement`). Scheduled by `beginPersonalLink` for every
- * attempt, so it does not depend on that call having ended well: a link
- * that was not released has its token revoked, and an account whose creation
- * was never confirmed is looked for.
+ * attempt, so it does not depend on that call having ended, or ended well:
+ * a link that was not released has its token revoked, and an account whose
+ * creation was never confirmed is looked for. A call still running by then
+ * finds its attempt ended and releases no link for it.
  */
 export const settlePersonalLink = internalMutation({
   args: { logId: v.id('socialPersonalLinkLog') },
@@ -1800,10 +1837,12 @@ export const markPersonalLinkTokensClosed = internalMutation({
 })
 
 /**
- * Have the unused personal links of an account revoked. Called for whoever
- * is signed in: once the account's owner is in, by a link or with their
- * email, no link made earlier opens the account again. For an account no
- * link was made for, it reads one empty index range and does nothing.
+ * Have the unused personal links of an account revoked, and end the
+ * attempts still open for it, so a link being made at this moment is not
+ * released. Called for whoever is signed in: once the account's owner is in,
+ * by a link or with their email, no link made earlier opens the account
+ * again. For an account no link was made for, it reads one empty index range
+ * and does nothing.
  *
  * The account's attempts are read newest first. An email has at most
  * PERSONAL_LINK_ATTEMPTS_BOUND of them within the window, and each one
@@ -1823,6 +1862,14 @@ async function scheduleClosingUnusedPersonalLinks(
     )
     .order('desc')
     .take(PERSONAL_LINK_ATTEMPTS_BOUND)
+  for (const row of recent) {
+    if (row.finishedAt === undefined) {
+      await ctx.db.patch('socialPersonalLinkLog', row._id, {
+        finishedAt: now,
+        noLinkReason: 'account_in_use',
+      })
+    }
+  }
   await scheduleRevokingTokens(ctx, openPersonalLinkTokens(recent, now))
 }
 
@@ -2276,11 +2323,13 @@ export const createPersonalLinks = action({
     const endAttempts = async (
       logIds: Array<Id<'socialPersonalLinkLog'>>,
       noLinkReason: PersonalLinkLogReason,
+      withdrawReleased = false,
     ) => {
       if (logIds.length === 0) return
       await ctx.runMutation(internal.social.events.endPersonalLinks, {
         logIds,
         noLinkReason,
+        withdrawReleased,
       })
     }
 
@@ -2531,11 +2580,13 @@ export const createPersonalLinks = action({
       }
       return { eventUrl, expiresAt, results }
     } catch (error) {
-      // The call fails, so the admin gets no link: the attempts still open
-      // end here. If this fails too, `settlePersonalLink` ends them.
+      // The call fails, so the admin gets no link: the attempts end here,
+      // released or not. If this fails too, `settlePersonalLink` ends the
+      // ones still open.
       await endAttempts(
         made.map((attempt) => attempt.logId),
         'unexpected_error',
+        true,
       ).catch(() => {})
       throw error
     }

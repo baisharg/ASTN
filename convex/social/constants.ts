@@ -408,16 +408,14 @@ export const PERSONAL_LINK_IN_FLIGHT_MS = 2 * 60 * 1000
 /** How many attempts one email may have within PERSONAL_LINK_MAX_SECONDS. */
 export const PERSONAL_LINK_ATTEMPTS_BOUND = 200
 
-// Convex stops an action after this long (docs.convex.dev/functions/actions).
-const CONVEX_ACTION_LIMIT_MS = 10 * 60 * 1000
-
 /**
  * How long after an attempt starts it is settled (see
- * `personalLinkSettlement`): late enough that the call which started it has
- * returned or been stopped.
+ * `personalLinkSettlement`). A call makes links for at most
+ * PERSONAL_LINKS_PER_CALL guests and normally ends within seconds. An
+ * attempt whose link has not been released by this time is ended, so a call
+ * still running then does not get to release it.
  */
-export const PERSONAL_LINK_SETTLE_AFTER_MS =
-  CONVEX_ACTION_LIMIT_MS + 2 * 60 * 1000
+export const PERSONAL_LINK_SETTLE_AFTER_MS = 12 * 60 * 1000
 
 /**
  * Why a new attempt for an email does not start, or null when it does:
