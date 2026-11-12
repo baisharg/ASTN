@@ -25,6 +25,7 @@ import { MobileShell } from '~/components/layout/mobile-shell'
 import { ErrorDisplay } from '~/components/ErrorDisplay'
 import { isTauri } from '~/lib/platform'
 import { LazyPostHogProvider } from '~/components/analytics/LazyPostHogProvider'
+import { redactSignInTicketDeep } from '~/lib/signInTicket'
 
 // Lazy-loaded: identifies the Clerk user in PostHog once they are loaded
 const PostHogUserIdentifier = React.lazy(() =>
@@ -227,6 +228,9 @@ function RootDocument({ children }: { children: React.ReactNode }) {
             defaults: '2025-05-24',
             capture_exceptions: true,
             debug: import.meta.env.DEV,
+            // A personal event link's sign-in token never reaches PostHog,
+            // even if it were still in an address ($current_url and the like).
+            before_send: (event: unknown) => redactSignInTicketDeep(event),
           }}
         >
           <React.Suspense>
