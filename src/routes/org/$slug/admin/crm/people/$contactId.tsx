@@ -189,6 +189,7 @@ const SOURCE_META: Record<
 const STATUS_LABELS: Record<string, string> = {
   ...GUEST_STATUS_LABELS,
   checked_in: 'Hizo check-in',
+  canceled: 'Evento cancelado',
   submitted: 'Enviada',
   under_review: 'En revisión',
   accepted: 'Aceptada',
