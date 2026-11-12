@@ -78,6 +78,8 @@ const CREATES_ACCOUNTS =
   'A quien no tenga cuenta en ASTN se le crea una con el email con el que está invitado.'
 const LINK_IS_A_KEY =
   'Quien tenga el link entra como esa persona: mandalo solo a su email. Funciona una sola vez y vence cuando terminan los 1:1 del evento (como mucho, a los 7 días). ASTN no manda ningún email.'
+const NO_SECOND_LINK =
+  'Solo hay link personal para cuentas que nadie usó todavía. Una vez que la persona entró, no se le puede hacer otro: después entra con su email, como siempre. No abras el link de un invitado para probarlo, porque queda usado.'
 
 /**
  * The dialog behind "Copiar link personal": says what will happen, makes the
@@ -152,7 +154,7 @@ export function CopyPersonalLinkDialog({
           <AlertDialogTitle>Link personal de {who}</AlertDialogTitle>
           <AlertDialogDescription>
             {current === null
-              ? `${WHAT_A_LINK_IS} ${CREATES_ACCOUNTS} ${LINK_IS_A_KEY}`
+              ? `${WHAT_A_LINK_IS} ${CREATES_ACCOUNTS} ${LINK_IS_A_KEY} ${NO_SECOND_LINK}`
               : current.result.link
                 ? `El link para ${guest?.email} está listo${
                     current.result.accountCreated
@@ -210,8 +212,11 @@ function downloadCsv(csv: string) {
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = `links-personales-${new Date().toISOString().slice(0, 10)}.csv`
+  document.body.appendChild(anchor)
   anchor.click()
-  URL.revokeObjectURL(url)
+  document.body.removeChild(anchor)
+  // Released after the browser has had time to start the download.
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
 /** The card that exports a CSV of personal links for the approved guests. */
@@ -299,7 +304,7 @@ export function PersonalLinksCard({
           {WHAT_A_LINK_IS} Podés copiar el de una persona desde la lista de
           abajo, o exportar un CSV con nombre, email y link de los aprobados
           para mandar los mails con una combinación de correspondencia.{' '}
-          {CREATES_ACCOUNTS} {LINK_IS_A_KEY}
+          {CREATES_ACCOUNTS} {LINK_IS_A_KEY} {NO_SECOND_LINK}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

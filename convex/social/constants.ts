@@ -212,8 +212,9 @@ export function personalEventLink(eventUrl: string, ticket: string): string {
 
 /**
  * Why a guest gets no personal link:
- * - `account_in_use`: someone has signed in to the account with their email.
- *   It is theirs; nobody else is given a way in.
+ * - `account_in_use`: someone has signed in to the account with their email,
+ *   or the site holds data for it. It is theirs; nobody else is given a way
+ *   in. This includes an account a personal link was already used on.
  * - `email_not_primary`: an account has their email, but not as its verified
  *   primary address, which is the one the site knows an account by.
  * - `account_has_role`: the account administers an organization or the
@@ -237,8 +238,10 @@ export type PersonalLinkAccount =
       kind: 'existing'
       // The guest's email is the account's primary address and is verified.
       emailIsVerifiedPrimary: boolean
-      // Someone has signed in to the account at least once.
+      // Clerk has seen a sign-in to the account.
       hasSignedIn: boolean
+      // The site holds a profile, a membership or an event place for it.
+      hasAstnData: boolean
       // The account is an admin of any organization or of the platform.
       hasAdminRole: boolean
     }
@@ -257,8 +260,8 @@ export function personalLinkRefusal(input: {
   const { account } = input
   if (account.kind === 'existing') {
     if (!account.emailIsVerifiedPrimary) return 'email_not_primary'
-    if (account.hasSignedIn) return 'account_in_use'
     if (account.hasAdminRole) return 'account_has_role'
+    if (account.hasSignedIn || account.hasAstnData) return 'account_in_use'
   }
   if (input.emailHasOtherData) return 'email_has_other_data'
   return null

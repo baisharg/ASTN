@@ -1156,6 +1156,10 @@ export const getPersonalLinkContext = internalQuery({
   returns: personalLinkContextValidator,
   handler: async (ctx, { eventId, guestIds }) => {
     const { event, userId } = await requireEventAdmin(ctx, eventId)
+    if (event.status === 'draft') {
+      // Guests can't open a draft's page, so a link to it is of no use.
+      throw new ConvexError('Publish the event before making personal links')
+    }
     if (guestIds.length === 0 || guestIds.length > PERSONAL_LINKS_PER_CALL) {
       throw new ConvexError(
         `Make links for 1 to ${PERSONAL_LINKS_PER_CALL} guests at a time`,
@@ -1197,25 +1201,42 @@ export const getPersonalLinkContext = internalQuery({
   },
 })
 
-/** Whether an account administers any organization or the platform. */
-export const accountHasAdminRole = internalQuery({
+/**
+ * What the site holds for an account: whether it administers any
+ * organization or the platform, and whether it has a profile, a membership
+ * or a place on an event (which every account that opened an event page
+ * signed in has).
+ */
+export const getAccountFacts = internalQuery({
   args: { userId: v.string() },
-  returns: v.boolean(),
+  returns: v.object({ hasAdminRole: v.boolean(), hasAstnData: v.boolean() }),
   handler: async (ctx, { userId }) => {
     const platformAdmin = await ctx.db
       .query('platformAdmins')
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .first()
-    if (platformAdmin) return true
     const memberships = await ctx.db
       .query('orgMemberships')
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .take(200)
-    return memberships.some((m) => m.role === 'admin')
+    const profile = await getProfileByUser(ctx, userId)
+    const eventPlace = await ctx.db
+      .query('socialEventGuests')
+      .withIndex('by_userId', (q) => q.eq('userId', userId))
+      .first()
+    return {
+      hasAdminRole:
+        platformAdmin !== null || memberships.some((m) => m.role === 'admin'),
+      hasAstnData:
+        profile !== null || memberships.length > 0 || eventPlace !== null,
+    }
   },
 })
 
-/** Record who made personal links for whom. Never the links themselves. */
+/**
+ * Record who made personal links for whom, and the accounts created on the
+ * way. Never the links themselves.
+ */
 export const recordPersonalLinks = internalMutation({
   args: {
     eventId: v.id('socialEvents'),
@@ -1229,6 +1250,7 @@ export const recordPersonalLinks = internalMutation({
         email: v.string(),
         accountUserId: v.string(),
         accountCreated: v.boolean(),
+        linkMade: v.boolean(),
       }),
     ),
   },
@@ -1461,11 +1483,12 @@ export const createPersonalLinks = action({
     const expiresAt = now + lifetimeSeconds * 1000
 
     const results: Array<PersonalLinkResult> = []
-    const made: Array<{
+    const log: Array<{
       guestId: Id<'socialEventGuests'>
       email: string
       accountUserId: string
       accountCreated: boolean
+      linkMade: boolean
     }> = []
 
     for (const guest of context.guests) {
@@ -1485,24 +1508,25 @@ export const createPersonalLinks = action({
         noLink('not_approved')
         continue
       }
-      let accountCreated = false
+      // Set once this call has created the guest's account.
+      let createdAccountId: string | null = null
       try {
         const found = await findClerkAccount(secretKey, guest.email)
         let account: PersonalLinkAccount = { kind: 'none' }
         if (found) {
-          // Only an unused account can still get a link, so only then does
-          // its role matter.
-          const hasAdminRole: boolean =
+          // Only an account Clerk has seen no sign-in to can still get a
+          // link, so only then is what the site holds for it looked up.
+          const facts: { hasAdminRole: boolean; hasAstnData: boolean } =
             found.userId !== null && !found.hasSignedIn
-              ? await ctx.runQuery(internal.social.events.accountHasAdminRole, {
+              ? await ctx.runQuery(internal.social.events.getAccountFacts, {
                   userId: found.userId,
                 })
-              : false
+              : { hasAdminRole: false, hasAstnData: false }
           account = {
             kind: 'existing',
             emailIsVerifiedPrimary: found.emailIsVerifiedPrimary,
             hasSignedIn: found.hasSignedIn,
-            hasAdminRole,
+            ...facts,
           }
         }
         const refusal = personalLinkRefusal({
@@ -1516,53 +1540,63 @@ export const createPersonalLinks = action({
 
         let accountUserId = found?.userId ?? null
         if (!accountUserId) {
-          accountUserId = await createClerkAccount(
+          createdAccountId = await createClerkAccount(
             secretKey,
             guest.email,
             guest.name,
           )
-          accountCreated = true
+          accountUserId = createdAccountId
         }
         const token = await createClerkSignInToken(
           secretKey,
           accountUserId,
           lifetimeSeconds,
         )
-        made.push({
+        log.push({
           guestId: guest.guestId,
           email: guest.email,
           accountUserId,
-          accountCreated,
+          accountCreated: createdAccountId !== null,
+          linkMade: true,
         })
         results.push({
           guestId: guest.guestId,
           email: guest.email,
           link: personalEventLink(eventUrl, token),
-          accountCreated,
+          accountCreated: createdAccountId !== null,
           noLinkReason: null,
           clerkErrorCode: null,
         })
       } catch (error) {
         if (!(error instanceof ClerkRequestError)) throw error
+        if (createdAccountId !== null) {
+          log.push({
+            guestId: guest.guestId,
+            email: guest.email,
+            accountUserId: createdAccountId,
+            accountCreated: true,
+            linkMade: false,
+          })
+        }
         results.push({
           guestId: guest.guestId,
           email: guest.email,
           link: null,
-          accountCreated,
+          accountCreated: createdAccountId !== null,
           noLinkReason: 'clerk_error',
           clerkErrorCode: error.code,
         })
       }
     }
 
-    if (made.length > 0) {
+    if (log.length > 0) {
       await ctx.runMutation(internal.social.events.recordPersonalLinks, {
         eventId,
         orgId: context.orgId,
         createdBy: context.adminUserId,
         createdAt: now,
         expiresAt,
-        links: made,
+        links: log,
       })
     }
     return { eventUrl, expiresAt, results }

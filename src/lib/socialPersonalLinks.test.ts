@@ -29,6 +29,7 @@ describe('personalLinkRefusal', () => {
     kind: 'existing' as const,
     emailIsVerifiedPrimary: true,
     hasSignedIn: false,
+    hasAstnData: false,
     hasAdminRole: false,
   }
 
@@ -51,6 +52,15 @@ describe('personalLinkRefusal', () => {
     expect(
       personalLinkRefusal({
         account: { ...unusedAccount, hasSignedIn: true },
+        emailHasOtherData: false,
+      }),
+    ).toBe('account_in_use')
+  })
+
+  test('an account the site holds data for never gets a link, whatever Clerk says about sign-ins', () => {
+    expect(
+      personalLinkRefusal({
+        account: { ...unusedAccount, hasAstnData: true },
         emailHasOtherData: false,
       }),
     ).toBe('account_in_use')
