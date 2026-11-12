@@ -1,5 +1,6 @@
 import {
   guestReadFailure,
+  hasOtherEmail,
   mirrorChanges,
   mirrorFromLuma,
   newMirrorFields,
@@ -243,5 +244,20 @@ describe('newMirrorFields', () => {
     expect(fields.coverUrl).toBe(undefined)
     expect(fields.location).toBe(undefined)
     expect(fields.maxCapacity).toBe(undefined)
+  })
+})
+
+describe('hasOtherEmail: whether a guest belongs to a contact found by other email', () => {
+  test('matches one of the other emails, whatever its case or spacing', () => {
+    const contact = { otherEmails: ['Ana@Example.org ', 'ana@work.org'] }
+    expect(hasOtherEmail(contact, 'ana@example.org')).toBe(true)
+    expect(hasOtherEmail(contact, 'ana@work.org')).toBe(true)
+  })
+
+  test('does not match once the address was removed from the contact', () => {
+    expect(
+      hasOtherEmail({ otherEmails: ['ana@work.org'] }, 'ana@old.org'),
+    ).toBe(false)
+    expect(hasOtherEmail({}, 'ana@old.org')).toBe(false)
   })
 })
