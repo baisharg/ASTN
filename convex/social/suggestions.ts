@@ -15,16 +15,35 @@ import {
   isProfileReadyForMatching,
   requireEventAdmin,
 } from './lib'
-import { suggestionLanguageValidator } from './validators'
+import {
+  suggestionLanguageValidator,
+  suggestionsStatusValidator,
+} from './validators'
 import type { Doc, Id } from '../_generated/dataModel'
-import type { MutationCtx } from '../_generated/server'
+import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Infer } from 'convex/values'
 
 // Don't regenerate a person's suggestions more often than this.
-const REFRESH_INTERVAL_MS = 10 * 60 * 1000
+export const REFRESH_INTERVAL_MS = 10 * 60 * 1000
+// A run still marked as generating after this long counts as failed: the
+// action that was meant to report back never did.
+const RUN_TIMEOUT_MS = 15 * 60 * 1000
 const MAX_CANDIDATES = 150
 
 type SuggestionLanguage = Infer<typeof suggestionLanguageValidator>
+
+async function attendeeStatusRow(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+  userId: string,
+): Promise<Doc<'socialAttendeeStatus'> | null> {
+  return await ctx.db
+    .query('socialAttendeeStatus')
+    .withIndex('by_eventId_and_userId', (q) =>
+      q.eq('eventId', eventId).eq('userId', userId),
+    )
+    .first()
+}
 
 function summarizeProfile(
   profile: Doc<'profiles'> | null,
@@ -77,12 +96,7 @@ export const getSuggestionContext = internalQuery({
     if (myGuest?.status !== 'approved') return null
     const myProfile = await getProfileByUser(ctx, userId)
     // The page's language, recorded when the attendee asked for suggestions.
-    const status = await ctx.db
-      .query('socialAttendeeStatus')
-      .withIndex('by_eventId_and_userId', (q) =>
-        q.eq('eventId', eventId).eq('userId', userId),
-      )
-      .first()
+    const status = await attendeeStatusRow(ctx, eventId, userId)
     if (!isProfileReadyForMatching(myProfile)) return null
 
     const guests = await approvedGuests(ctx, eventId)
@@ -152,17 +166,152 @@ export const saveSuggestions = internalMutation({
         generatedAt: now,
       })
     }
+    const status = await attendeeStatusRow(ctx, eventId, userId)
+    if (status) {
+      await ctx.db.patch('socialAttendeeStatus', status._id, {
+        suggestionsStatus: suggestions.length > 0 ? 'ready' : 'nobody',
+        suggestionsStatusAt: now,
+      })
+    }
     return null
   },
 })
 
 /**
- * Record a request for suggestions and decide when to generate them. At most
- * one generation per REFRESH_INTERVAL_MS per person, whatever the language:
- * a language switch inside the window saves the language and books one run
- * for when the window ends (which reads the latest language then).
- * Kept on the attendee status row so it doesn't touch the guest rows every
- * attendee's queries read.
+ * Record that an attendee's run ended without suggestions to save.
+ * - failed: the model call could not be completed. The throttle is released
+ *   so the attendee can ask again straight away.
+ * - skipped: there was nothing to run (no longer an approved attendee with a
+ *   ready profile), so no run stays on record.
+ */
+export const recordSuggestionsOutcome = internalMutation({
+  args: {
+    eventId: v.id('socialEvents'),
+    userId: v.string(),
+    outcome: v.union(v.literal('failed'), v.literal('skipped')),
+  },
+  returns: v.null(),
+  handler: async (ctx, { eventId, userId, outcome }) => {
+    const row = await attendeeStatusRow(ctx, eventId, userId)
+    if (!row) return null
+    await ctx.db.patch('socialAttendeeStatus', row._id, {
+      suggestionsStatus: outcome === 'failed' ? 'failed' : undefined,
+      suggestionsStatusAt: outcome === 'failed' ? Date.now() : undefined,
+      suggestionsRequestedAt: undefined,
+    })
+    return null
+  },
+})
+
+/**
+ * Booked when a run starts. If that same run is still marked as generating
+ * (its action timed out or crashed before reporting), mark it failed.
+ */
+export const expireSuggestionsRun = internalMutation({
+  args: {
+    eventId: v.id('socialEvents'),
+    userId: v.string(),
+    statusAt: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, { eventId, userId, statusAt }) => {
+    const row = await attendeeStatusRow(ctx, eventId, userId)
+    if (
+      row?.suggestionsStatus !== 'generating' ||
+      row.suggestionsStatusAt !== statusAt
+    ) {
+      return null
+    }
+    await ctx.db.patch('socialAttendeeStatus', row._id, {
+      suggestionsStatus: 'failed',
+      suggestionsStatusAt: Date.now(),
+      suggestionsRequestedAt: undefined,
+    })
+    return null
+  },
+})
+
+export type SuggestionRequestDecision =
+  // Generate right away.
+  | { kind: 'now' }
+  // Save the new language and book one run for `runAt`.
+  | { kind: 'later'; runAt: number }
+  // Nothing to generate. `saveLanguage`: a run is already booked and will
+  // use the new language once it is stored.
+  | { kind: 'recent'; saveLanguage: boolean }
+
+/**
+ * What to do with a request for suggestions. At most one generation per
+ * REFRESH_INTERVAL_MS per person, whatever the language: a language switch
+ * inside the window books one run for when the window ends (which reads the
+ * latest language then). A failed run clears `lastRequestedAt`, so the next
+ * request runs straight away.
+ */
+export function decideSuggestionRequest(input: {
+  now: number
+  lastRequestedAt: number | undefined
+  storedLanguage: SuggestionLanguage | undefined
+  language: SuggestionLanguage | undefined
+}): SuggestionRequestDecision {
+  const { now, lastRequestedAt: last, storedLanguage, language } = input
+  if (last === undefined || now - last >= REFRESH_INTERVAL_MS) {
+    return { kind: 'now' }
+  }
+  if (language === storedLanguage) {
+    return { kind: 'recent', saveLanguage: false }
+  }
+  // `last` in the future means a run is already booked.
+  if (last > now) return { kind: 'recent', saveLanguage: true }
+  return { kind: 'later', runAt: last + REFRESH_INTERVAL_MS }
+}
+
+/**
+ * Mark an attendee's run as generating and book the check that fails it if
+ * it never reports back. `startsInMs` is how long until the run's action
+ * starts. The request time and language live on the attendee status row so
+ * they don't touch the guest rows every attendee's queries read.
+ */
+async function markSuggestionsGenerating(
+  ctx: MutationCtx,
+  args: {
+    eventId: Id<'socialEvents'>
+    userId: string
+    row: Doc<'socialAttendeeStatus'> | null
+    now: number
+    language: SuggestionLanguage | undefined
+    startsInMs: number
+  },
+): Promise<void> {
+  const { eventId, userId, row, now, language, startsInMs } = args
+  const fields = {
+    // A later time here is a run already booked for then; keep it.
+    suggestionsRequestedAt: Math.max(now, row?.suggestionsRequestedAt ?? 0),
+    suggestionsLanguage: language,
+    suggestionsStatus: 'generating' as const,
+    suggestionsStatusAt: now,
+  }
+  if (row) {
+    await ctx.db.patch('socialAttendeeStatus', row._id, fields)
+  } else {
+    await ctx.db.insert('socialAttendeeStatus', {
+      eventId,
+      userId,
+      availability: 'available',
+      ...fields,
+      updatedAt: now,
+    })
+  }
+  await ctx.scheduler.runAfter(
+    startsInMs + RUN_TIMEOUT_MS,
+    internal.social.suggestions.expireSuggestionsRun,
+    { eventId, userId, statusAt: now },
+  )
+}
+
+/**
+ * Record a request for suggestions and act on the decision (see
+ * decideSuggestionRequest). Returns what was decided; the caller schedules
+ * the run for 'now'.
  */
 async function markSuggestionsRequested(
   ctx: MutationCtx,
@@ -171,48 +320,42 @@ async function markSuggestionsRequested(
   now: number,
   language: SuggestionLanguage | undefined,
 ): Promise<'now' | 'later' | 'recent'> {
-  const row = await ctx.db
-    .query('socialAttendeeStatus')
-    .withIndex('by_eventId_and_userId', (q) =>
-      q.eq('eventId', eventId).eq('userId', userId),
-    )
-    .first()
+  const row = await attendeeStatusRow(ctx, eventId, userId)
   const lang = language ?? row?.suggestionsLanguage
-  const last = row?.suggestionsRequestedAt
+  const decision = decideSuggestionRequest({
+    now,
+    lastRequestedAt: row?.suggestionsRequestedAt,
+    storedLanguage: row?.suggestionsLanguage,
+    language: lang,
+  })
 
-  if (last === undefined || now - last >= REFRESH_INTERVAL_MS) {
-    const fields = { suggestionsRequestedAt: now, suggestionsLanguage: lang }
-    if (row) {
-      await ctx.db.patch('socialAttendeeStatus', row._id, fields)
-    } else {
-      await ctx.db.insert('socialAttendeeStatus', {
-        eventId,
-        userId,
-        availability: 'available',
-        ...fields,
-        updatedAt: now,
-      })
-    }
+  if (decision.kind === 'now') {
+    await markSuggestionsGenerating(ctx, {
+      eventId,
+      userId,
+      row,
+      now,
+      language: lang,
+      startsInMs: 0,
+    })
     return 'now'
   }
-
-  // Inside the window (row exists here). Same language: nothing to do.
-  if (!row || lang === row.suggestionsLanguage) return 'recent'
-  // `last` in the future means a run is already booked; it will pick up the
-  // new language, so only store it.
-  if (last > now) {
-    await ctx.db.patch('socialAttendeeStatus', row._id, {
-      suggestionsLanguage: lang,
-    })
+  // Inside the window, so the row exists.
+  if (!row) return 'recent'
+  if (decision.kind === 'recent') {
+    if (decision.saveLanguage) {
+      await ctx.db.patch('socialAttendeeStatus', row._id, {
+        suggestionsLanguage: lang,
+      })
+    }
     return 'recent'
   }
-  const runAt = last + REFRESH_INTERVAL_MS
   await ctx.db.patch('socialAttendeeStatus', row._id, {
     suggestionsLanguage: lang,
-    suggestionsRequestedAt: runAt,
+    suggestionsRequestedAt: decision.runAt,
   })
   await ctx.scheduler.runAt(
-    runAt,
+    decision.runAt,
     internal.social.suggestionsAction.generateForUser,
     { eventId, userId },
   )
@@ -270,12 +413,21 @@ export const generateAllSuggestions = mutation({
       if (!g.userId) continue
       const profile = await getProfileByUser(ctx, g.userId)
       if (!isProfileReadyForMatching(profile)) continue
-      // Admin-triggered: always runs, but still records the request time so
-      // attendees' own refreshes stay throttled.
-      await markSuggestionsRequested(ctx, eventId, g.userId, now, undefined)
       // Spread the calls out a little to stay clear of rate limits.
+      const startsInMs = scheduled * 1500
+      // Admin-triggered: always runs, and records the request time so
+      // attendees' own refreshes stay throttled.
+      const row = await attendeeStatusRow(ctx, eventId, g.userId)
+      await markSuggestionsGenerating(ctx, {
+        eventId,
+        userId: g.userId,
+        row,
+        now,
+        language: row?.suggestionsLanguage,
+        startsInMs,
+      })
       await ctx.scheduler.runAfter(
-        scheduled * 1500,
+        startsInMs,
         internal.social.suggestionsAction.generateForUser,
         { eventId, userId: g.userId },
       )
@@ -321,3 +473,60 @@ export const getMySuggestions = query({
     return cards.filter((c) => c !== null)
   },
 })
+
+/**
+ * Where the caller's suggestions stand: `idle` until a run was ever started
+ * for them, then the state of their current or last run and when it got
+ * there.
+ */
+export const getMySuggestionState = query({
+  args: { eventId: v.id('socialEvents') },
+  returns: v.object({
+    status: v.union(v.literal('idle'), suggestionsStatusValidator),
+    at: v.union(v.number(), v.null()),
+  }),
+  handler: async (ctx, { eventId }) => {
+    const userId = await getUserId(ctx)
+    const row = userId ? await attendeeStatusRow(ctx, eventId, userId) : null
+    return {
+      status: row?.suggestionsStatus ?? ('idle' as const),
+      at: row?.suggestionsStatusAt ?? null,
+    }
+  },
+})
+
+/**
+ * Turn the model's picks into suggestions to save: known candidates only,
+ * never the attendee themselves, no repeats, each with a reason, trimmed to
+ * the lengths the pages are laid out for, at most `max`.
+ */
+export function cleanSuggestionPicks(
+  picks: Array<{ person: string; reason: string; topics: Array<string> }>,
+  args: { userIdByKey: Map<string, string>; selfId: string; max: number },
+): Array<{ suggestedUserId: string; reason: string; topics: Array<string> }> {
+  const seen = new Set<string>()
+  const suggestions = []
+  for (const pick of picks) {
+    if (suggestions.length >= args.max) break
+    const suggestedUserId = args.userIdByKey.get(pick.person.trim())
+    const reason = pick.reason.trim().slice(0, 600)
+    if (
+      !suggestedUserId ||
+      suggestedUserId === args.selfId ||
+      seen.has(suggestedUserId) ||
+      !reason
+    ) {
+      continue
+    }
+    seen.add(suggestedUserId)
+    suggestions.push({
+      suggestedUserId,
+      reason,
+      topics: pick.topics
+        .map((topic) => topic.trim().slice(0, 160))
+        .filter(Boolean)
+        .slice(0, 3),
+    })
+  }
+  return suggestions
+}

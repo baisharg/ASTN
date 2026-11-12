@@ -22,6 +22,7 @@ import {
   secondaryButtonClass,
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
+import { useUnsavedChangesWarning } from '~/hooks/use-unsaved-changes'
 import { useCopy } from '~/lib/social-i18n'
 import { useBusyAction } from '~/lib/use-busy-action'
 
@@ -32,7 +33,8 @@ export const Route = createFileRoute('/org/$slug/e/$eventSlug/profile')({
 type Visibility = NonNullable<Doc<'profiles'>['socialVisibility']>
 
 /** The free-text fields edited on this page. */
-type DraftField = 'headline' | 'seeking' | 'canHelpWith'
+const DRAFT_FIELDS = ['headline', 'seeking', 'canHelpWith'] as const
+type DraftField = (typeof DRAFT_FIELDS)[number]
 
 const copy = {
   es: {
@@ -42,6 +44,7 @@ const copy = {
     goToEvent: 'Ir al evento',
     ready: 'Listo para el matching',
     notReady: 'Completá tu perfil',
+    checklistLoading: 'Revisando tu perfil…',
     progress: (done: number) => `${done} de 3`,
     items: {
       background: 'Trayectoria',
@@ -74,6 +77,8 @@ const copy = {
     save: 'Guardar',
     saved: 'Guardado',
     saveFailed: 'No pudimos guardar. Probá de nuevo.',
+    unsavedNote: 'Tenés cambios sin guardar.',
+    unsavedWarning: 'Tenés cambios sin guardar. ¿Salir sin guardarlos?',
     visibility: 'Quién puede ver tu perfil',
     visibilityOptions: {
       event_attendees: 'Asistentes de los eventos a los que vas',
@@ -91,6 +96,7 @@ const copy = {
     goToEvent: 'Go to the event',
     ready: 'Ready for matching',
     notReady: 'Finish your profile',
+    checklistLoading: 'Checking your profile…',
     progress: (done: number) => `${done} of 3`,
     items: {
       background: 'Background',
@@ -123,6 +129,8 @@ const copy = {
     save: 'Save',
     saved: 'Saved',
     saveFailed: "We couldn't save. Please try again.",
+    unsavedNote: 'You have unsaved changes.',
+    unsavedWarning: 'You have unsaved changes. Leave without saving them?',
     visibility: 'Who can see your profile',
     visibilityOptions: {
       event_attendees: "Attendees of events you're going to",
@@ -221,12 +229,21 @@ function ProfileForm({ profile }: { profile: Doc<'profiles'> }) {
   const edit = (field: DraftField) => (next: string) =>
     setDraft((d) => ({ ...d, [field]: next }))
 
+  // What's missing is unknown until the registration loads.
+  const checklistLoading = registration === undefined
   const missing = registration?.profileMissing ?? []
   const done = 3 - missing.length
-  const ready = registration !== undefined && missing.length === 0
+  const ready = !checklistLoading && missing.length === 0
   const isAttendee = registration?.guest?.status === 'approved'
 
-  const dirty = Object.keys(draft).length > 0
+  // Edited and different from what is saved.
+  const dirty = DRAFT_FIELDS.some((field) => {
+    const edited = draft[field]
+    return (
+      edited !== undefined && edited.trim() !== (profile[field] ?? '').trim()
+    )
+  })
+  useUnsavedChangesWarning(dirty && busy === null, t.unsavedWarning)
 
   const onImport = async () => {
     const url = linkedin.trim()
@@ -279,14 +296,18 @@ function ProfileForm({ profile }: { profile: Doc<'profiles'> }) {
     run(
       'save',
       async () => {
-        await updateField({
-          profileId: profile._id,
-          updates: {
-            headline: value('headline').trim() || undefined,
-            seeking: value('seeking').trim() || undefined,
-            canHelpWith: value('canHelpWith').trim() || undefined,
-          },
-        })
+        // Only what the person edited: text to store, and emptied fields
+        // to remove.
+        const updates: Partial<Record<DraftField, string>> = {}
+        const clear: Array<DraftField> = []
+        for (const field of DRAFT_FIELDS) {
+          const edited = draft[field]
+          if (edited === undefined) continue
+          const text = edited.trim()
+          if (text) updates[field] = text
+          else clear.push(field)
+        }
+        await updateField({ profileId: profile._id, updates, clear })
         setDraft({})
         toast.success(t.saved)
       },
@@ -313,60 +334,69 @@ function ProfileForm({ profile }: { profile: Doc<'profiles'> }) {
 
   return (
     <div className="flex flex-col gap-5">
-      <Panel aria-label={ready ? t.ready : t.notReady}>
-        <div className="flex items-center justify-between">
-          <h2
-            className={
-              ready
-                ? 'text-[17px] font-semibold text-[var(--baish-ok)]'
-                : 'text-[17px] font-semibold text-[var(--baish-strong)]'
-            }
-          >
-            {ready ? t.ready : t.notReady}
-          </h2>
-          <span className="text-[13px] text-muted-foreground">
-            {t.progress(done)}
-          </span>
-        </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-border">
-          <div
-            className="h-1.5 bg-primary transition-[width]"
-            style={{ width: `${(done / 3) * 100}%` }}
-          />
-        </div>
-        <ul className="flex flex-col gap-2.5 text-sm">
-          {checklist.map((item) => (
-            <li key={item.key} className="flex items-center gap-2.5">
-              {item.ok ? (
+      {checklistLoading ? (
+        <Panel aria-label={t.checklistLoading} aria-busy="true">
+          <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
+            <Spinner size="sm" />
+            {t.checklistLoading}
+          </div>
+        </Panel>
+      ) : (
+        <Panel aria-label={ready ? t.ready : t.notReady}>
+          <div className="flex items-center justify-between">
+            <h2
+              className={
+                ready
+                  ? 'text-[17px] font-semibold text-[var(--baish-ok)]'
+                  : 'text-[17px] font-semibold text-[var(--baish-strong)]'
+              }
+            >
+              {ready ? t.ready : t.notReady}
+            </h2>
+            <span className="text-[13px] text-muted-foreground">
+              {t.progress(done)}
+            </span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-border">
+            <div
+              className="h-1.5 bg-primary transition-[width]"
+              style={{ width: `${(done / 3) * 100}%` }}
+            />
+          </div>
+          <ul className="flex flex-col gap-2.5 text-sm">
+            {checklist.map((item) => (
+              <li key={item.key} className="flex items-center gap-2.5">
+                {item.ok ? (
+                  <Check
+                    className="size-[18px] text-[var(--baish-ok)]"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <Circle
+                    className="size-[18px] text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                )}
+                <span className={item.ok ? '' : 'text-muted-foreground'}>
+                  {t.items[item.key]}
+                </span>
+              </li>
+            ))}
+            <li className="flex items-center gap-2.5 text-muted-foreground">
+              {profile.aiSafetyInterests?.length ? (
                 <Check
                   className="size-[18px] text-[var(--baish-ok)]"
                   aria-hidden="true"
                 />
               ) : (
-                <Circle
-                  className="size-[18px] text-muted-foreground"
-                  aria-hidden="true"
-                />
+                <Circle className="size-[18px]" aria-hidden="true" />
               )}
-              <span className={item.ok ? '' : 'text-muted-foreground'}>
-                {t.items[item.key]}
-              </span>
+              <span className="grow">{t.interests}</span>
+              <span>{t.optional}</span>
             </li>
-          ))}
-          <li className="flex items-center gap-2.5 text-muted-foreground">
-            {profile.aiSafetyInterests?.length ? (
-              <Check
-                className="size-[18px] text-[var(--baish-ok)]"
-                aria-hidden="true"
-              />
-            ) : (
-              <Circle className="size-[18px]" aria-hidden="true" />
-            )}
-            <span className="grow">{t.interests}</span>
-            <span>{t.optional}</span>
-          </li>
-        </ul>
-      </Panel>
+          </ul>
+        </Panel>
+      )}
 
       <section className="flex flex-col gap-2">
         <label
@@ -454,10 +484,16 @@ function ProfileForm({ profile }: { profile: Doc<'profiles'> }) {
           type="button"
           onClick={() => void onSave()}
           disabled={!dirty || busy !== null}
-          className={secondaryButtonClass}
+          className={dirty ? primaryButtonClass : secondaryButtonClass}
         >
           {busy ? <Spinner className="size-5" /> : t.save}
         </button>
+        <p
+          aria-live="polite"
+          className="min-h-5 text-center text-[13px] text-muted-foreground"
+        >
+          {dirty ? t.unsavedNote : ''}
+        </p>
       </section>
 
       <section className="flex flex-col gap-2">
@@ -485,7 +521,7 @@ function ProfileForm({ profile }: { profile: Doc<'profiles'> }) {
         <Link
           to="/org/$slug/e/$eventSlug/people"
           params={{ slug, eventSlug }}
-          className={primaryButtonClass}
+          className={dirty ? secondaryButtonClass : primaryButtonClass}
         >
           {t.seePeople}
         </Link>

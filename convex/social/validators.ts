@@ -58,3 +58,17 @@ export const suggestionLanguageValidator = v.union(
   v.literal('es'),
   v.literal('en'),
 )
+
+/**
+ * How an attendee's last suggestion run ended, or that one is running:
+ * - generating: a run is in progress
+ * - ready: the run saved suggestions
+ * - nobody: the run found no one to suggest
+ * - failed: the run could not finish
+ */
+export const suggestionsStatusValidator = v.union(
+  v.literal('generating'),
+  v.literal('ready'),
+  v.literal('nobody'),
+  v.literal('failed'),
+)

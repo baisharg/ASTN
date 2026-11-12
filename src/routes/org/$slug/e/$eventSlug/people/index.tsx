@@ -1,7 +1,7 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import { CheckCircle2, Sparkles } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../../convex/_generated/api'
 import type { FunctionReturnType } from 'convex/server'
@@ -48,6 +48,9 @@ type Attendee = FunctionReturnType<
 type RefreshResult = FunctionReturnType<
   typeof api.social.suggestions.refreshMySuggestions
 >
+type SuggestionState = FunctionReturnType<
+  typeof api.social.suggestions.getMySuggestionState
+>
 
 const copy = {
   es: {
@@ -83,7 +86,16 @@ const copy = {
     incompleteButton: 'Completar perfil',
     generatingTitle: 'Estamos armando tus sugerencias',
     generatingBody:
-      'Aparecen acá en un minuto. Mientras tanto, podés ver a todos los asistentes.',
+      'Puede tardar unos minutos. Aparecen acá solas cuando estén listas; mientras tanto, podés ver a todos los asistentes.',
+    updating: 'Estamos actualizando tus sugerencias.',
+    failedTitle: 'No pudimos armar tus sugerencias',
+    failedBody:
+      'Algo falló de nuestro lado. Probá de nuevo; mientras tanto, podés ver a todos los asistentes.',
+    updateFailed: 'No pudimos actualizar tus sugerencias.',
+    retry: 'Reintentar',
+    nobodyTitle: 'Todavía no hay a quién sugerirte',
+    nobodyBody:
+      'Cuando se sumen más asistentes con el perfil completo, te sugerimos con quién conversar.',
     seeEveryone: 'Ver a todos',
     nobody: 'Todavía no hay otros asistentes confirmados.',
   },
@@ -120,7 +132,16 @@ const copy = {
     incompleteButton: 'Complete profile',
     generatingTitle: "We're putting your suggestions together",
     generatingBody:
-      'They show up here in a minute. Meanwhile, you can browse everyone.',
+      'This can take a few minutes. They show up here on their own when ready; meanwhile, you can browse everyone.',
+    updating: "We're updating your suggestions.",
+    failedTitle: "We couldn't put your suggestions together",
+    failedBody:
+      'Something went wrong on our side. Try again; meanwhile, you can browse everyone.',
+    updateFailed: "We couldn't update your suggestions.",
+    retry: 'Try again',
+    nobodyTitle: 'Nobody to suggest yet',
+    nobodyBody:
+      "When more attendees with a complete profile join, we'll suggest who to talk to.",
     seeEveryone: 'See everyone',
     nobody: 'No other confirmed attendees yet.',
   },
@@ -142,7 +163,13 @@ function PeopleContent({ live }: { live: LiveState }) {
   const attendees = useQuery(api.social.meetings.listAttendees, {
     eventId: event._id,
   })
-  const refreshResult = useRefreshSuggestions()
+  const suggestionState = useQuery(
+    api.social.suggestions.getMySuggestionState,
+    {
+      eventId: event._id,
+    },
+  )
+  const refresh = useRefreshSuggestions()
   const meetingsOpen = useMeetingsOpen()
 
   const tabs: Array<{ id: Tab; label: string }> = [
@@ -229,9 +256,11 @@ function PeopleContent({ live }: { live: LiveState }) {
             live={live}
             meetingsOpen={meetingsOpen}
             suggestions={suggestions}
+            suggestionState={suggestionState}
             stateById={stateById}
             hereById={hereById}
-            refreshResult={refreshResult}
+            refreshResult={refresh.result}
+            onRetry={refresh.request}
             onSeeEveryone={() => setTab('everyone')}
           />
         ) : (
@@ -244,20 +273,25 @@ function PeopleContent({ live }: { live: LiveState }) {
 
 /**
  * Asks for fresh suggestions when the page opens, in the page's language. The
- * backend throttles this per person.
+ * backend throttles this per person. `request` asks again (the retry after a
+ * failed run); it rejects when the request itself doesn't go through.
  */
-function useRefreshSuggestions(): RefreshResult | null {
+function useRefreshSuggestions(): {
+  result: RefreshResult | null
+  request: () => Promise<void>
+} {
   const event = useSocialEvent()
   const { lang } = useSocialLang()
   const refresh = useMutation(api.social.suggestions.refreshMySuggestions)
   const [result, setResult] = useState<RefreshResult | null>(null)
+  const request = useCallback(async () => {
+    setResult(await refresh({ eventId: event._id, language: lang }))
+  }, [event._id, lang, refresh])
   // Also re-runs on a language switch, which regenerates in that language.
   useEffect(() => {
-    refresh({ eventId: event._id, language: lang })
-      .then(setResult)
-      .catch((error: unknown) => console.error(error))
-  }, [event._id, lang, refresh])
-  return result
+    request().catch((error: unknown) => console.error(error))
+  }, [request])
+  return { result, request }
 }
 
 function MeetingsWindowLine({ open }: { open: boolean }) {
@@ -353,23 +387,54 @@ function SuggestedPanel({
   live,
   meetingsOpen,
   suggestions,
+  suggestionState,
   stateById,
   hereById,
   refreshResult,
+  onRetry,
   onSeeEveryone,
 }: {
   live: LiveState
   meetingsOpen: boolean
   suggestions: Array<Suggestion> | undefined
+  suggestionState: SuggestionState | undefined
   stateById: Map<string, AttendeeState>
   hereById: Map<string, boolean>
   refreshResult: RefreshResult | null
+  onRetry: () => Promise<void>
   onSeeEveryone: () => void
 }) {
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
+  const errorMessage = useSocialErrorMessage()
+  const { busy, run } = useBusyAction<'retry'>()
 
-  if (suggestions === undefined) return <PageSpinner />
+  if (suggestions === undefined || suggestionState === undefined) {
+    return <PageSpinner />
+  }
+
+  const status = suggestionState.status
+  const retry = () =>
+    run('retry', onRetry, (error) => toast.error(errorMessage(error)))
+  const retryButton = (className: string) => (
+    <button
+      type="button"
+      onClick={() => void retry()}
+      disabled={busy !== null}
+      className={className}
+    >
+      {busy ? <Spinner size="sm" /> : t.retry}
+    </button>
+  )
+  const seeEveryoneButton = (
+    <button
+      type="button"
+      onClick={onSeeEveryone}
+      className={secondaryButtonClass}
+    >
+      {t.seeEveryone}
+    </button>
+  )
 
   if (suggestions.length === 0) {
     if (!live.profileReady || refreshResult === 'profile_incomplete') {
@@ -389,10 +454,36 @@ function SuggestedPanel({
         </Panel>
       )
     }
+    if (status === 'failed') {
+      return (
+        <Panel>
+          <h2 className="text-[17px] font-semibold text-[var(--baish-strong)]">
+            {t.failedTitle}
+          </h2>
+          <p className="text-[15px] leading-normal">{t.failedBody}</p>
+          {retryButton(primaryButtonClass)}
+          {seeEveryoneButton}
+        </Panel>
+      )
+    }
+    // A finished run that left nothing to show: nobody was suggested, or
+    // everyone suggested has since dropped out.
+    if (status === 'nobody' || status === 'ready') {
+      return (
+        <Panel>
+          <h2 className="text-[17px] font-semibold text-[var(--baish-strong)]">
+            {t.nobodyTitle}
+          </h2>
+          <p className="text-[15px] leading-normal">{t.nobodyBody}</p>
+          {seeEveryoneButton}
+        </Panel>
+      )
+    }
+    // Generating, or (idle) a request that is on its way.
     return (
       <Panel>
         <div className="flex items-center gap-2.5">
-          {refreshResult === 'scheduled' ? (
+          {status === 'generating' || refreshResult === 'scheduled' ? (
             <Spinner size="sm" />
           ) : (
             <Sparkles
@@ -405,19 +496,33 @@ function SuggestedPanel({
           </h2>
         </div>
         <p className="text-[15px] leading-normal">{t.generatingBody}</p>
-        <button
-          type="button"
-          onClick={onSeeEveryone}
-          className={secondaryButtonClass}
-        >
-          {t.seeEveryone}
-        </button>
+        {seeEveryoneButton}
       </Panel>
     )
   }
 
   return (
     <div className="flex flex-col gap-3.5">
+      {status === 'generating' && (
+        <p
+          role="status"
+          className="flex items-center gap-2 text-sm text-muted-foreground"
+        >
+          <Spinner size="sm" />
+          {t.updating}
+        </p>
+      )}
+      {status === 'failed' && (
+        <div
+          role="status"
+          className="flex items-center justify-between gap-3 rounded-[14px] bg-muted px-4 py-2.5"
+        >
+          <p className="text-sm">{t.updateFailed}</p>
+          {retryButton(
+            'flex h-11 shrink-0 items-center justify-center px-2 text-sm font-semibold text-[var(--baish-brand-text)] underline-offset-2 hover:underline disabled:opacity-60',
+          )}
+        </div>
+      )}
       {suggestions.map((s) => (
         <SuggestionCard
           key={s.userId}
