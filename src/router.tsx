@@ -3,14 +3,18 @@ import { createRouter } from '@tanstack/react-router'
 import { QueryClient } from '@tanstack/react-query'
 import { setupRouterSsrQueryIntegration } from '@tanstack/react-router-ssr-query'
 import { ConvexQueryClient } from '@convex-dev/react-query'
-import { ClerkProvider, useAuth } from '@clerk/clerk-react'
-import { ConvexProviderWithClerk } from 'convex/react-clerk'
+import { ClerkProvider } from '@clerk/clerk-react'
 import { useEffect, useRef } from 'react'
-import { Authenticated, useMutation } from 'convex/react'
+import {
+  Authenticated,
+  ConvexProviderWithAuth,
+  useMutation,
+} from 'convex/react'
 import { api } from '../convex/_generated/api'
 import { routeTree } from './routeTree.gen'
 import type { ErrorComponentProps } from '@tanstack/react-router'
 import { ErrorDisplay } from '~/components/ErrorDisplay'
+import { useConvexAuthFromClerk } from '~/lib/convex-clerk-auth'
 
 function UserMigration() {
   const migrateUser = useMutation(api.userMigration.migrateUserIfNeeded)
@@ -69,15 +73,15 @@ export function getRouter() {
       <ClerkProvider
         publishableKey={import.meta.env.VITE_CLERK_PUBLISHABLE_KEY}
       >
-        <ConvexProviderWithClerk
+        <ConvexProviderWithAuth
           client={convexQueryClient.convexClient}
-          useAuth={useAuth}
+          useAuth={useConvexAuthFromClerk}
         >
           <Authenticated>
             <UserMigration />
           </Authenticated>
           {children}
-        </ConvexProviderWithClerk>
+        </ConvexProviderWithAuth>
       </ClerkProvider>
     ),
   })
