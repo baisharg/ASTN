@@ -2261,6 +2261,9 @@ export default defineSchema({
     // attendees as the focus of the event.
     matchingPrompt: v.optional(v.string()),
     floorPlanStorageId: v.optional(v.id('_storage')),
+    // Whether attendees see "Mis reuniones" (the 1:1s they had, with a
+    // private note per person). Unset means no.
+    myMeetingsEnabled: v.optional(v.boolean()),
 
     createdBy: v.string(),
     createdAt: v.number(),
@@ -2405,6 +2408,22 @@ export default defineSchema({
     .index('by_eventId_and_status', ['eventId', 'status'])
     .index('by_eventId_and_userA_and_status', ['eventId', 'userA', 'status'])
     .index('by_eventId_and_userB_and_status', ['eventId', 'userB', 'status']),
+
+  // A private note an attendee keeps about another person at an event. Only
+  // its author (userId) reads or writes it: no query returns it to the
+  // person it is about or to admins. One row per author and person, so it is
+  // the same note before and after they meet, however many times they do.
+  socialMeetingNotes: defineTable({
+    eventId: v.id('socialEvents'),
+    userId: v.string(),
+    aboutUserId: v.string(),
+    text: v.string(),
+    updatedAt: v.number(),
+  }).index('by_eventId_and_userId_and_aboutUserId', [
+    'eventId',
+    'userId',
+    'aboutUserId',
+  ]),
 
   // Who an attendee is suggested to meet: the picks the event-wide assignment
   // made from each attendee's ranked candidates (socialSuggestionCandidates).
