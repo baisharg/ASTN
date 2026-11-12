@@ -74,6 +74,16 @@ export async function uniqueEventSlug(
   throw new ConvexError('Could not generate a unique event slug')
 }
 
+/** An event with an end must end after it starts. */
+function assertEndsAfterStart(startAt: number, endAt: number | undefined) {
+  if (
+    !Number.isFinite(startAt) ||
+    (endAt !== undefined && !(endAt > startAt))
+  ) {
+    throw new ConvexError('The event must end after it starts')
+  }
+}
+
 async function isOrgAdmin(
   ctx: QueryCtx | MutationCtx,
   userId: string | null,
@@ -427,6 +437,7 @@ export const createEvent = mutation({
     const userId = await requireOrgAdmin(ctx, args.orgId)
     const title = args.title.trim()
     if (!title) throw new ConvexError('Title is required')
+    assertEndsAfterStart(args.startAt, args.endAt)
     const slug = await uniqueEventSlug(
       ctx,
       args.orgId,
@@ -483,6 +494,13 @@ export const updateEvent = mutation({
     }
     if (fields.startAt !== undefined) patch.startAt = fields.startAt
     if (fields.endAt !== undefined) patch.endAt = fields.endAt ?? undefined
+    if (fields.startAt !== undefined || fields.endAt !== undefined) {
+      // Checked against the stored value of whichever one this call omits.
+      assertEndsAfterStart(
+        patch.startAt ?? event.startAt,
+        'endAt' in patch ? patch.endAt : event.endAt,
+      )
+    }
     if (fields.timezone !== undefined) patch.timezone = fields.timezone
     if (fields.venueName !== undefined) {
       patch.venueName = fields.venueName.trim() || undefined

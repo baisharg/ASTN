@@ -15,11 +15,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
 import { DEFAULT_EVENT_HOURS } from '../../../convex/social/constants'
-import {
-  EventDetailsFields,
-  detailsFromEvent,
-  useEventDetailsForm,
-} from './EventDetailsFields'
+import { EventDetailsFields, useEventDetailsForm } from './EventDetailsFields'
 import { SpotsCard } from './SpotsCard'
 import { EVENT_STATUS_LABELS, EventStatusBadge, toastError } from './shared'
 import type { AdminEvent, EventStatus } from './shared'
@@ -42,6 +38,7 @@ import {
   SelectValue,
 } from '~/components/ui/select'
 import { Textarea } from '~/components/ui/textarea'
+import { detailsFromEvent } from '~/lib/event-details'
 import { useBusyAction } from '~/lib/use-busy-action'
 import {
   epochToZoned,
