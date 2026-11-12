@@ -8,17 +8,21 @@ import {
 } from '../_generated/server'
 import { getUserId, requireAuth } from '../lib/auth'
 import {
+  PROFILE_SECTIONS,
   approvedGuests,
   attendeeCard,
+  attendeeVisibleProfile,
   getGuestByUser,
   getProfileByUser,
   isProfileReadyForMatching,
   requireEventAdmin,
+  sharedProfileParts,
 } from './lib'
 import {
   suggestionLanguageValidator,
   suggestionsStatusValidator,
 } from './validators'
+import type { AttendeeVisibleProfile } from './lib'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Infer } from 'convex/values'
@@ -45,32 +49,38 @@ async function attendeeStatusRow(
     .first()
 }
 
-function summarizeProfile(
-  profile: Doc<'profiles'> | null,
+/**
+ * A profile as the suggestions model reads it. Takes what
+ * attendeeVisibleProfile shares, so sections the person keeps private never
+ * reach the model.
+ */
+export function summarizeProfile(
+  visible: AttendeeVisibleProfile,
   fallbackName: string | undefined,
 ): string {
   const lines: Array<string> = []
-  lines.push(`Nombre: ${profile?.name ?? fallbackName ?? 'Sin nombre'}`)
-  if (profile?.headline) lines.push(`Titular: ${profile.headline}`)
-  const jobs = (profile?.workHistory ?? [])
+  lines.push(`Nombre: ${visible.name ?? fallbackName ?? 'Sin nombre'}`)
+  if (visible.headline) lines.push(`Titular: ${visible.headline}`)
+  const jobs = visible.workHistory
     .slice(0, 3)
     .map(
       (w) => `${w.title} en ${w.organization}${w.current ? ' (actual)' : ''}`,
     )
   if (jobs.length) lines.push(`Trayectoria: ${jobs.join('; ')}`)
-  const schools = (profile?.education ?? [])
+  const schools = visible.education
     .slice(0, 2)
     .map((e) => [e.degree, e.field, e.institution].filter(Boolean).join(', '))
   if (schools.length) lines.push(`Formación: ${schools.join('; ')}`)
-  if (profile?.seeking) lines.push(`Busca: ${profile.seeking}`)
-  if (profile?.canHelpWith)
-    lines.push(`Puede ayudar con: ${profile.canHelpWith}`)
-  if (profile?.careerGoals) lines.push(`Objetivos: ${profile.careerGoals}`)
-  if (profile?.aiSafetyInterests?.length) {
-    lines.push(`Intereses: ${profile.aiSafetyInterests.join(', ')}`)
+  if (visible.seeking) lines.push(`Busca: ${visible.seeking}`)
+  if (visible.canHelpWith) {
+    lines.push(`Puede ayudar con: ${visible.canHelpWith}`)
   }
-  if (profile?.skills?.length) {
-    lines.push(`Habilidades: ${profile.skills.slice(0, 8).join(', ')}`)
+  if (visible.careerGoals) lines.push(`Objetivos: ${visible.careerGoals}`)
+  if (visible.interests.length) {
+    lines.push(`Intereses: ${visible.interests.join(', ')}`)
+  }
+  if (visible.skills.length) {
+    lines.push(`Habilidades: ${visible.skills.slice(0, 8).join(', ')}`)
   }
   return lines.join('\n')
 }
@@ -105,19 +115,21 @@ export const getSuggestionContext = internalQuery({
     // request so the model provider can cache it.
     for (const g of guests) {
       if (!g.userId) continue
-      const profile = await getProfileByUser(ctx, g.userId)
-      // People with no profile to speak of make for vague suggestions.
+      const visible = attendeeVisibleProfile(
+        await getProfileByUser(ctx, g.userId),
+      )
+      // People who share no profile to speak of make for vague suggestions.
       if (
         g.userId !== userId &&
-        !profile?.headline &&
-        !profile?.seeking &&
-        !profile?.workHistory?.length
+        !visible.headline &&
+        !visible.seeking &&
+        !visible.workHistory.length
       ) {
         continue
       }
       candidates.push({
         userId: g.userId,
-        summary: summarizeProfile(profile, g.name),
+        summary: summarizeProfile(visible, g.name),
       })
       if (candidates.length >= MAX_CANDIDATES) break
     }
@@ -127,7 +139,7 @@ export const getSuggestionContext = internalQuery({
       language:
         status?.suggestionsLanguage ??
         (myProfile?.preferredLanguage === 'en' ? 'en' : 'es'),
-      me: summarizeProfile(myProfile, myGuest.name),
+      me: summarizeProfile(attendeeVisibleProfile(myProfile), myGuest.name),
       candidates,
     }
   },
@@ -530,3 +542,44 @@ export function cleanSuggestionPicks(
   }
   return suggestions
 }
+
+const sharedProfilePartValidator = v.union(
+  v.literal('name'),
+  v.literal('headline'),
+  v.literal('seeking'),
+  v.literal('canHelpWith'),
+  v.literal('location'),
+  v.literal('linkedin'),
+  v.literal('workHistory'),
+  v.literal('skills'),
+  v.literal('careerGoals'),
+  v.literal('interests'),
+  v.literal('education'),
+)
+
+/**
+ * What the caller's profile shares at in-person events, for the event
+ * profile page to list: the parts other attendees see, the parts only the
+ * suggestions model reads, and the sections left out because the person
+ * keeps them private.
+ */
+export const getMySharedProfileParts = query({
+  args: {},
+  returns: v.object({
+    attendees: v.array(sharedProfilePartValidator),
+    suggestionsOnly: v.array(sharedProfilePartValidator),
+    hiddenSections: v.array(
+      v.union(...PROFILE_SECTIONS.map((section) => v.literal(section))),
+    ),
+  }),
+  handler: async (ctx) => {
+    const userId = await getUserId(ctx)
+    const visible = attendeeVisibleProfile(
+      userId ? await getProfileByUser(ctx, userId) : null,
+    )
+    return {
+      ...sharedProfileParts(visible),
+      hiddenSections: visible.hiddenSections,
+    }
+  },
+})
