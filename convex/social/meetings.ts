@@ -7,6 +7,7 @@ import {
   MAX_NOTE_LENGTH,
   MAX_OUTGOING_PENDING,
   extensionMinutesGranted,
+  meetingsOpenNow,
 } from './constants'
 import {
   approvedGuests,
@@ -142,9 +143,7 @@ async function pendingRequestsFrom(
 }
 
 function requireMeetingsOpen(event: Doc<'socialEvents'>): void {
-  const { openAt, closeAt } = meetingsWindow(event)
-  const now = Date.now()
-  if (event.status !== 'published' || now < openAt || now > closeAt) {
+  if (!meetingsOpenNow(event.status, meetingsWindow(event), Date.now())) {
     refuse('closed', '1:1s are not open right now')
   }
 }

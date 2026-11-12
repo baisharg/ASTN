@@ -12,6 +12,21 @@ export const MAX_MEETING_EXTENSION_MINUTES = 15
 // (or until the event's end, when it has one).
 export const DEFAULT_EVENT_HOURS = 6
 
+export type SocialEventStatus = 'draft' | 'published' | 'closed'
+
+/**
+ * Whether 1:1s are running at `now`: inside the 1:1 window of an event that
+ * is not a draft. A 'closed' event only stopped taking new registrations, so
+ * its 1:1s run like a published event's.
+ */
+export function meetingsOpenNow(
+  status: SocialEventStatus,
+  window: { openAt: number; closeAt: number },
+  now: number,
+): boolean {
+  return status !== 'draft' && now >= window.openAt && now <= window.closeAt
+}
+
 /** Why a 1:1 action was refused. Sent as ConvexError data `{ code }`. */
 export type MeetingErrorCode =
   | 'closed'

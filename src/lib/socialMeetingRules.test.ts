@@ -1,6 +1,7 @@
 import {
   MAX_MEETING_EXTENSION_MINUTES,
   extensionMinutesGranted,
+  meetingsOpenNow,
 } from '../../convex/social/constants'
 
 // The 1:1 rules in convex/social/constants.ts that the backend enforces and
@@ -40,5 +41,27 @@ describe('extensionMinutesGranted', () => {
     expect(extensionMinutesGranted(0, 0)).toBe(1)
     expect(extensionMinutesGranted(0, -3)).toBe(1)
     expect(extensionMinutesGranted(0, 4.6)).toBe(5)
+  })
+})
+
+describe('meetingsOpenNow', () => {
+  const window = { openAt: 1_000, closeAt: 2_000 }
+
+  test('a published event has 1:1s inside its window only', () => {
+    expect(meetingsOpenNow('published', window, 999)).toBe(false)
+    expect(meetingsOpenNow('published', window, 1_000)).toBe(true)
+    expect(meetingsOpenNow('published', window, 1_500)).toBe(true)
+    expect(meetingsOpenNow('published', window, 2_000)).toBe(true)
+    expect(meetingsOpenNow('published', window, 2_001)).toBe(false)
+  })
+
+  test('closing registration leaves 1:1s running as on a published event', () => {
+    expect(meetingsOpenNow('closed', window, 999)).toBe(false)
+    expect(meetingsOpenNow('closed', window, 1_500)).toBe(true)
+    expect(meetingsOpenNow('closed', window, 2_001)).toBe(false)
+  })
+
+  test('a draft never has 1:1s', () => {
+    expect(meetingsOpenNow('draft', window, 1_500)).toBe(false)
   })
 })
