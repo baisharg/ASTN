@@ -9,6 +9,7 @@ import {
   normalizeValue,
 } from '../contacts/fields'
 import { contactsByEmail } from '../contacts/people'
+import { assertOrgOwnsApiCalendar } from '../luma/binding'
 import { addToAllowlist, normalizeEmail } from './lib'
 import type { FieldValue } from '../contacts/fields'
 import { hasLumaApiKey, listAllLumaContacts } from './luma'
@@ -160,6 +161,8 @@ export const importLumaContacts = action({
     if (!hasLumaApiKey()) {
       throw new ConvexError('Luma is not connected (LUMA_API_KEY is not set)')
     }
+    // Only the org whose calendar the key belongs to may read its contacts.
+    await assertOrgOwnsApiCalendar(ctx, orgId)
     const contacts = (await listAllLumaContacts())
       .filter((c) => c.email)
       .map((c) => ({
