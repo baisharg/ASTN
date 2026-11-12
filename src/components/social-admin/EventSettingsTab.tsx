@@ -5,7 +5,6 @@ import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
 import { EventDetailsFields, useEventDetailsForm } from './EventDetailsFields'
 import { AutoApproveCard, StatusCard } from './EventStatusCards'
-import { LumaLinkCard } from './LumaLinkCard'
 import { OneOnOneCard } from './OneOnOneCard'
 import { SpotsCard } from './SpotsCard'
 import { toastError } from './shared'
@@ -30,7 +29,6 @@ export function EventSettingsTab({ event }: { event: AdminEvent }) {
       <StatusCard event={event} />
       <AutoApproveCard event={event} />
       <DetailsCard key={`details-${event._id}`} event={event} />
-      <LumaLinkCard event={event} />
       <OneOnOneCard key={`meetings-${event._id}`} event={event} />
       <SpotsCard key={`spots-${event._id}`} event={event} />
     </div>

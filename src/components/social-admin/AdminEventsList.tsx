@@ -311,7 +311,8 @@ function EventCard({
               </a>
             </Button>
           )}
-          {luma && lumaManageable && (
+          {/* A managed event has these on its ASTN page (Luma and Emails tabs). */}
+          {luma && lumaManageable && !astnEventId && (
             <>
               <Button
                 variant="outline"

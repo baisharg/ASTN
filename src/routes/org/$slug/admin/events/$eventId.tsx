@@ -4,7 +4,9 @@ import {
   Activity,
   CalendarDays,
   ExternalLink,
+  Link2,
   ListChecks,
+  Mail,
   ScanLine,
   Settings,
   Users,
@@ -12,6 +14,10 @@ import {
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
 import { AllowlistTab } from '~/components/social-admin/AllowlistTab'
+import {
+  EventEmailsTab,
+  EventLumaTab,
+} from '~/components/social-admin/EventLumaTab'
 import { EventSettingsTab } from '~/components/social-admin/EventSettingsTab'
 import { GuestsTab } from '~/components/social-admin/GuestsTab'
 import {
@@ -58,10 +64,10 @@ function AdminEventPage({
   eventId: Id<'socialEvents'>
 }) {
   const event = useQuery(api.social.events.getEventAdmin, { eventId })
-  // Panels stay mounted once opened: unsaved spots or details survive a look
-  // at another tab.
+  // Panels stay mounted once opened: unsaved spots, details or a half-written
+  // email survive a look at another tab.
   const { tab, openTab, visited } = useKeptTabs<
-    'settings' | 'guests' | 'allowlist' | 'live'
+    'settings' | 'guests' | 'allowlist' | 'live' | 'luma' | 'emails'
   >('settings')
 
   if (event === undefined) {
@@ -91,6 +97,11 @@ function AdminEventPage({
   }
 
   const publicPath = `/org/${event.orgSlug ?? slug}/e/${event.slug}`
+  const lumaLinked = !!event.lumaEventId
+  const lumaNeedsAttention = event.lumaErrors > 0 || !!event.lumaLastSyncError
+  // The Emails tab (Luma's emails to guests) only exists while the event is
+  // linked to Luma: if the link goes away under it, show Configuración.
+  const shownTab = tab === 'emails' && !lumaLinked ? 'settings' : tab
 
   return (
     <PageShell>
@@ -148,7 +159,7 @@ function AdminEventPage({
           </div>
         </div>
 
-        <Tabs value={tab} onValueChange={openTab}>
+        <Tabs value={shownTab} onValueChange={openTab}>
           <div className="overflow-x-auto">
             <TabsList>
               <TabsTrigger value="settings" className="gap-2">
@@ -175,6 +186,26 @@ function AdminEventPage({
                 <Activity className="size-4" />
                 En vivo
               </TabsTrigger>
+              <TabsTrigger value="luma" className="gap-2">
+                <Link2 className="size-4" />
+                Luma
+                {lumaNeedsAttention && (
+                  <span
+                    className="ml-1 size-2 rounded-full bg-red-500"
+                    title="Hay errores de sincronización con Luma"
+                  >
+                    <span className="sr-only">
+                      Hay errores de sincronización con Luma
+                    </span>
+                  </span>
+                )}
+              </TabsTrigger>
+              {lumaLinked && (
+                <TabsTrigger value="emails" className="gap-2">
+                  <Mail className="size-4" />
+                  Emails
+                </TabsTrigger>
+              )}
             </TabsList>
           </div>
 
@@ -190,6 +221,14 @@ function AdminEventPage({
           <KeptTabsContent value="live" visited={visited} className="mt-6">
             <LiveTab eventId={event._id} />
           </KeptTabsContent>
+          <KeptTabsContent value="luma" visited={visited} className="mt-6">
+            <EventLumaTab event={event} />
+          </KeptTabsContent>
+          {lumaLinked && (
+            <KeptTabsContent value="emails" visited={visited} className="mt-6">
+              <EventEmailsTab event={event} />
+            </KeptTabsContent>
+          )}
         </Tabs>
       </div>
     </PageShell>
