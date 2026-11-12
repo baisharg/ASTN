@@ -5,10 +5,12 @@ import {
   useEffect,
   useState,
 } from 'react'
+import { useClerkLanguage } from '~/lib/clerk-language'
 
 /**
  * Spanish/English copy for the in-person event pages. Each page keeps its own
  * `{ es, en }` dictionary and reads it with `useCopy`; Spanish is the default.
+ * Clerk's sign-in screens follow the same language while these pages are open.
  */
 export type SocialLang = 'es' | 'en'
 
@@ -25,6 +27,7 @@ export function SocialLangProvider({
   children: React.ReactNode
 }) {
   const [lang, setLangState] = useState<SocialLang>('es')
+  useClerkLanguage(lang)
 
   useEffect(() => {
     try {
