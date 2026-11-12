@@ -57,8 +57,24 @@ export const EVENT_RUN_INTERVAL_MS = 15 * 60 * 1000
 // often.
 export const RERANK_INTERVAL_MS = 10 * 60 * 1000
 // A ranking that hasn't reported back this long after it was due counts as
-// failed: its action timed out or crashed.
-const RANK_TIMEOUT_MS = 15 * 60 * 1000
+// failed: its action crashed. An action that runs to the end reports well
+// inside this (two model calls of at most MODEL_TIMEOUT_MS each).
+const RANK_TIMEOUT_MS = 10 * 60 * 1000
+// How long one model call for a ranking may take before it is aborted.
+export const MODEL_TIMEOUT_MS = 4 * 60 * 1000
+// A "generating" state older than this is no longer believed: whatever was
+// meant to settle it did not.
+export const GENERATING_STALE_MS = RANK_TIMEOUT_MS + 5 * 60 * 1000
+// The most an assignment may use of a transaction, as a nested mutation.
+// Kept under the transaction's own limits so that when an assignment is too
+// big it fails on its own and the caller can still record that it did.
+const ASSIGNMENT_LIMITS = {
+  bytesRead: 12 * 1024 * 1024,
+  documentsRead: 24_000,
+  databaseQueries: 3_000,
+  bytesWritten: 12 * 1024 * 1024,
+  documentsWritten: 12_000,
+}
 // Rankings of one run start this far apart, to stay clear of rate limits.
 const RANK_STAGGER_MS = 1500
 const MAX_ROSTER = 150
@@ -276,6 +292,23 @@ export function decideRefresh(input: {
     return { kind: 'ownRank', reason: 'language' }
   }
   return runDue ? { kind: 'checkAttendance' } : { kind: 'none' }
+}
+
+/**
+ * Whether a ranking for an attendee is under way, going by their status row:
+ * marked as generating, and recently enough to still be believed.
+ */
+export function isRankInProgress(
+  status: {
+    suggestionsStatus?: 'generating' | 'ready' | 'nobody' | 'failed'
+    suggestionsStatusAt?: number
+  } | null,
+  now: number,
+): boolean {
+  return (
+    status?.suggestionsStatus === 'generating' &&
+    now - (status.suggestionsStatusAt ?? 0) < GENERATING_STALE_MS
+  )
 }
 
 export type RerankTiming =
@@ -552,11 +585,17 @@ async function startOwnRank(
  */
 async function startEventRun(
   ctx: MutationCtx,
-  eventId: Id<'socialEvents'>,
-  trigger: RunTrigger,
-  now: number,
+  args: {
+    eventId: Id<'socialEvents'>
+    trigger: RunTrigger
+    now: number
+    /** From readyAttendeeIds, when the caller already has it. */
+    attendeeUserIds?: Array<string>
+  },
 ): Promise<number> {
-  const attendeeUserIds = await readyAttendeeIds(ctx, eventId)
+  const { eventId, trigger, now } = args
+  const attendeeUserIds =
+    args.attendeeUserIds ?? (await readyAttendeeIds(ctx, eventId))
   if (attendeeUserIds.length === 0) return 0
   const timeoutAt =
     now + attendeeUserIds.length * RANK_STAGGER_MS + RANK_TIMEOUT_MS
@@ -701,9 +740,33 @@ async function assignEventSuggestions(
 }
 
 /**
- * Close a run: record its totals, assign for the whole event, and mark as
- * failed the attendees whose ranking failed and who have no earlier ranking
- * to be assigned from. `run` carries the final totals.
+ * Assign for the whole event as a nested mutation: if it fails, only the
+ * assignment's own writes roll back, and the caller goes on to record what
+ * happened. Returns whether it succeeded.
+ */
+async function tryAssignEventSuggestions(
+  ctx: MutationCtx,
+  eventId: Id<'socialEvents'>,
+): Promise<boolean> {
+  try {
+    const done: null = await ctx.runMutation(
+      internal.social.suggestions.reassignEventSuggestions,
+      { eventId },
+      { transactionLimits: ASSIGNMENT_LIMITS },
+    )
+    return done === null
+  } catch (error) {
+    console.error('Suggestion assignment failed', eventId, error)
+    return false
+  }
+}
+
+/**
+ * Close a run: record its totals and assign for the whole event. Then mark
+ * as failed whoever is still "generating": the attendees whose ranking
+ * failed and who had no earlier ranking to be assigned from, or, when the
+ * assignment itself failed, everyone the run ranked. They can ask again
+ * (refreshMySuggestions). `run` carries the final totals.
  */
 async function finishRun(
   ctx: MutationCtx,
@@ -718,8 +781,9 @@ async function finishRun(
     failedUserIds: run.failedUserIds,
     skipped: run.skipped,
   })
-  await assignEventSuggestions(ctx, run.eventId, now)
-  for (const userId of run.failedUserIds) {
+  const assigned = await tryAssignEventSuggestions(ctx, run.eventId)
+  const unsettled = assigned ? run.failedUserIds : run.attendeeUserIds
+  for (const userId of unsettled) {
     await markFailedIfGenerating(ctx, run.eventId, userId, now)
   }
 }
@@ -794,7 +858,7 @@ export const getSuggestionContext = internalQuery({
  * With `runId`, the outcome also counts towards that event run, and the last
  * one in closes it, which assigns for the whole event. A ranking on its own
  * (or one that reports after its run was closed) is assigned straight away,
- * unless an event run is under way, whose assignment will include it.
+ * unless an event run is still to rank the same attendee.
  */
 export const recordRankOutcome = internalMutation({
   args: {
@@ -860,19 +924,16 @@ export const recordRankOutcome = internalMutation({
       return null
     }
 
-    // On its own. An event run under way assigns for everyone when it ends.
+    // On its own. When an event run is still to rank this attendee, that
+    // ranking decides their state.
     const eventRun = await latestRun(ctx, eventId)
-    if (isRunning(eventRun, now)) {
-      // The run's own ranking of this attendee decides their state.
-      if (eventRun.pendingUserIds.includes(userId)) return null
-      if (outcome.kind === 'failed') {
-        await markFailedIfGenerating(ctx, eventId, userId, now)
-      }
+    if (isRunning(eventRun, now) && eventRun.pendingUserIds.includes(userId)) {
       return null
     }
-    if (outcome.kind === 'ranked') {
-      await assignEventSuggestions(ctx, eventId, now)
-    } else if (outcome.kind === 'failed') {
+    const settled =
+      outcome.kind === 'ranked' &&
+      (await tryAssignEventSuggestions(ctx, eventId))
+    if (!settled && outcome.kind !== 'skipped') {
       await markFailedIfGenerating(ctx, eventId, userId, now)
     }
     return null
@@ -1051,7 +1112,7 @@ export const refreshMySuggestions = mutation({
       eventRunInProgress: isRunning(run, now),
       lastEventRunStartedAt: run?.startedAt,
       coveredByLastEventRun: run?.attendeeUserIds.includes(userId) ?? false,
-      rankInProgress: storedRow?.suggestionsStatus === 'generating',
+      rankInProgress: isRankInProgress(storedRow, now),
       hasRanking: ranking !== null,
       rankingLanguage: ranking?.language,
       language,
@@ -1071,7 +1132,7 @@ export const refreshMySuggestions = mutation({
       case 'wait':
         return 'scheduled'
       case 'eventRun':
-        await startEventRun(ctx, eventId, decision.trigger, now)
+        await startEventRun(ctx, { eventId, trigger: decision.trigger, now })
         return 'scheduled'
       case 'ownRank': {
         if (decision.reason === 'missing') {
@@ -1102,7 +1163,12 @@ export const refreshMySuggestions = mutation({
         const covered = new Set(run?.attendeeUserIds)
         const ready = await readyAttendeeIds(ctx, eventId)
         if (ready.some((id) => !covered.has(id))) {
-          await startEventRun(ctx, eventId, 'attendance', now)
+          await startEventRun(ctx, {
+            eventId,
+            trigger: 'attendance',
+            now,
+            attendeeUserIds: ready,
+          })
           return 'scheduled'
         }
         break
@@ -1111,7 +1177,15 @@ export const refreshMySuggestions = mutation({
         break
     }
 
-    if (await isSuggestedSomeoneMet(ctx, eventId, userId)) {
+    // Nothing to rank. Assign again when the attendee has a ranking that
+    // no assignment settled (a failed or stale one), or is still suggested
+    // someone they have met since.
+    const unsettled =
+      ranking !== null &&
+      !isRankInProgress(row, now) &&
+      row?.suggestionsStatus !== 'ready' &&
+      row?.suggestionsStatus !== 'nobody'
+    if (unsettled || (await isSuggestedSomeoneMet(ctx, eventId, userId))) {
       await ctx.scheduler.runAfter(
         0,
         internal.social.suggestions.reassignEventSuggestions,
@@ -1134,7 +1208,7 @@ export const generateAllSuggestions = mutation({
     const now = Date.now()
     const run = await latestRun(ctx, eventId)
     if (isRunning(run, now)) return run.attendeeUserIds.length
-    return await startEventRun(ctx, eventId, 'admin', now)
+    return await startEventRun(ctx, { eventId, trigger: 'admin', now })
   },
 })
 

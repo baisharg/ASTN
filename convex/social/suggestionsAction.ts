@@ -6,7 +6,11 @@ import { z } from 'zod'
 import { internal } from '../_generated/api'
 import { internalAction } from '../_generated/server'
 import { MODEL_SOCIAL_SUGGESTIONS } from '../lib/models'
-import { MAX_RANKED, cleanSuggestionPicks } from './suggestions'
+import {
+  MAX_RANKED,
+  MODEL_TIMEOUT_MS,
+  cleanSuggestionPicks,
+} from './suggestions'
 import type { FunctionArgs } from 'convex/server'
 
 // A ranking whose model call fails is tried once more, as a new action so
@@ -94,11 +98,13 @@ export const generateForUser = internalAction({
     ctx,
     { eventId, userId, attempt = 1, runId },
   ): Promise<null> => {
+    // Present only for a ranking that is part of an event run.
+    const run = runId ? { runId } : {}
     const report = async (outcome: RankOutcome): Promise<void> => {
       await ctx.runMutation(internal.social.suggestions.recordRankOutcome, {
         eventId,
         userId,
-        runId,
+        ...run,
         outcome,
       })
     }
@@ -155,6 +161,8 @@ export const generateForUser = internalAction({
         ],
         output: Output.object({ schema: outputSchema }),
         providerOptions: { openai: { reasoningEffort: 'medium' } },
+        // A call that hangs is aborted and handled like any other failure.
+        timeout: MODEL_TIMEOUT_MS,
       })
       usage = result.usage
       // Reading the output throws when the model's reply doesn't parse.
@@ -174,7 +182,7 @@ export const generateForUser = internalAction({
         await ctx.scheduler.runAfter(
           RETRY_DELAY_MS,
           internal.social.suggestionsAction.generateForUser,
-          { eventId, userId, attempt: attempt + 1, runId },
+          { eventId, userId, attempt: attempt + 1, ...run },
         )
       } else {
         await report({ kind: 'failed' })

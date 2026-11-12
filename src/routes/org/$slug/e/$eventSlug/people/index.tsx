@@ -160,7 +160,9 @@ function PeopleContent({ live }: { live: LiveState }) {
       eventId: event._id,
     },
   )
-  const refresh = useRefreshSuggestions()
+  // After a failure, asking again is the person's call ("Reintentar"), not
+  // something the page does on a timer.
+  const refresh = useRefreshSuggestions(suggestionState?.status !== 'failed')
   const newSuggestions = useNewSuggestions(suggestions)
   const meetingsOpen = useMeetingsOpen()
 
@@ -264,12 +266,13 @@ function PeopleContent({ live }: { live: LiveState }) {
 const RECHECK_MS = 5 * 60 * 1000
 
 /**
- * Asks for suggestions when the page opens, when its language changes and
- * every few minutes while it stays open and visible. The backend decides
- * what, if anything, that starts. `request` asks again (the retry after a
- * failure); it rejects when the request itself doesn't go through.
+ * Asks for suggestions when the page opens and when its language changes,
+ * and, while `recheck` is on, every few minutes as long as the page stays
+ * open and visible. The backend decides what, if anything, that starts.
+ * `request` asks again (the retry after a failure); it rejects when the
+ * request itself doesn't go through.
  */
-function useRefreshSuggestions(): {
+function useRefreshSuggestions(recheck: boolean): {
   result: RefreshResult | null
   request: () => Promise<void>
 } {
@@ -281,15 +284,16 @@ function useRefreshSuggestions(): {
     setResult(await refresh({ eventId: event._id, language: lang }))
   }, [event._id, lang, refresh])
   useEffect(() => {
-    const ask = () => {
-      request().catch((error: unknown) => console.error(error))
-    }
-    ask()
+    request().catch((error: unknown) => console.error(error))
+  }, [request])
+  useEffect(() => {
+    if (!recheck) return
     const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') ask()
+      if (document.visibilityState !== 'visible') return
+      request().catch((error: unknown) => console.error(error))
     }, RECHECK_MS)
     return () => window.clearInterval(timer)
-  }, [request])
+  }, [request, recheck])
   return { result, request }
 }
 

@@ -1,9 +1,11 @@
 import {
   EVENT_RUN_INTERVAL_MS,
+  GENERATING_STALE_MS,
   RERANK_INTERVAL_MS,
   cleanSuggestionPicks,
   decideRefresh,
   decideRerankTiming,
+  isRankInProgress,
 } from '../../convex/social/suggestions'
 
 // The pure rules behind when event suggestions are generated
@@ -176,6 +178,42 @@ describe('decideRerankTiming: redoing a ranking for a language switch', () => {
     expect(
       decideRerankTiming({ now: NOW, lastRequestedAt: NOW + 5 * MINUTE }),
     ).toEqual({ kind: 'booked' })
+  })
+})
+
+describe('isRankInProgress: whether a "generating" state is still believed', () => {
+  test('a recent one is', () => {
+    expect(
+      isRankInProgress(
+        { suggestionsStatus: 'generating', suggestionsStatusAt: NOW - MINUTE },
+        NOW,
+      ),
+    ).toBe(true)
+  })
+
+  test('one that nothing settled in time is not, so the attendee can be ranked again', () => {
+    expect(
+      isRankInProgress(
+        {
+          suggestionsStatus: 'generating',
+          suggestionsStatusAt: NOW - GENERATING_STALE_MS,
+        },
+        NOW,
+      ),
+    ).toBe(false)
+    expect(isRankInProgress({ suggestionsStatus: 'generating' }, NOW)).toBe(
+      false,
+    )
+  })
+
+  test('any other state, or none, is not', () => {
+    for (const suggestionsStatus of ['ready', 'nobody', 'failed'] as const) {
+      expect(
+        isRankInProgress({ suggestionsStatus, suggestionsStatusAt: NOW }, NOW),
+      ).toBe(false)
+    }
+    expect(isRankInProgress({}, NOW)).toBe(false)
+    expect(isRankInProgress(null, NOW)).toBe(false)
   })
 })
 
