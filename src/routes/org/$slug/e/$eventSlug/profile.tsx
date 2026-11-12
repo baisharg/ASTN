@@ -588,7 +588,13 @@ function ProfileForm({ profile }: { profile: Doc<'profiles'> }) {
         </select>
       </section>
 
-      <SharedWithAttendees ownUserId={isAttendee ? profile.userId : null} />
+      <SharedWithAttendees
+        ownUserId={
+          isAttendee && registration.guest?.linkedToAccount
+            ? profile.userId
+            : null
+        }
+      />
 
       {isAttendee && (
         <Link
