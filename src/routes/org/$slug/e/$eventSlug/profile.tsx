@@ -22,6 +22,7 @@ import {
   secondaryButtonClass,
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
+import { useUnsavedChangesWarning } from '~/hooks/use-unsaved-changes'
 import { useCopy } from '~/lib/social-i18n'
 import { useBusyAction } from '~/lib/use-busy-action'
 
@@ -76,6 +77,8 @@ const copy = {
     save: 'Guardar',
     saved: 'Guardado',
     saveFailed: 'No pudimos guardar. Probá de nuevo.',
+    unsavedNote: 'Tenés cambios sin guardar.',
+    unsavedWarning: 'Tenés cambios sin guardar. ¿Salir sin guardarlos?',
     visibility: 'Quién puede ver tu perfil',
     visibilityOptions: {
       event_attendees: 'Asistentes de los eventos a los que vas',
@@ -126,6 +129,8 @@ const copy = {
     save: 'Save',
     saved: 'Saved',
     saveFailed: "We couldn't save. Please try again.",
+    unsavedNote: 'You have unsaved changes.',
+    unsavedWarning: 'You have unsaved changes. Leave without saving them?',
     visibility: 'Who can see your profile',
     visibilityOptions: {
       event_attendees: "Attendees of events you're going to",
@@ -231,7 +236,14 @@ function ProfileForm({ profile }: { profile: Doc<'profiles'> }) {
   const ready = !checklistLoading && missing.length === 0
   const isAttendee = registration?.guest?.status === 'approved'
 
-  const dirty = Object.keys(draft).length > 0
+  // Edited and different from what is saved.
+  const dirty = DRAFT_FIELDS.some((field) => {
+    const edited = draft[field]
+    return (
+      edited !== undefined && edited.trim() !== (profile[field] ?? '').trim()
+    )
+  })
+  useUnsavedChangesWarning(dirty && busy === null, t.unsavedWarning)
 
   const onImport = async () => {
     const url = linkedin.trim()
@@ -472,10 +484,16 @@ function ProfileForm({ profile }: { profile: Doc<'profiles'> }) {
           type="button"
           onClick={() => void onSave()}
           disabled={!dirty || busy !== null}
-          className={secondaryButtonClass}
+          className={dirty ? primaryButtonClass : secondaryButtonClass}
         >
           {busy ? <Spinner className="size-5" /> : t.save}
         </button>
+        <p
+          aria-live="polite"
+          className="min-h-5 text-center text-[13px] text-muted-foreground"
+        >
+          {dirty ? t.unsavedNote : ''}
+        </p>
       </section>
 
       <section className="flex flex-col gap-2">
@@ -503,7 +521,7 @@ function ProfileForm({ profile }: { profile: Doc<'profiles'> }) {
         <Link
           to="/org/$slug/e/$eventSlug/people"
           params={{ slug, eventSlug }}
-          className={primaryButtonClass}
+          className={dirty ? secondaryButtonClass : primaryButtonClass}
         >
           {t.seePeople}
         </Link>
