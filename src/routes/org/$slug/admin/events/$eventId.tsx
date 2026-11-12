@@ -182,7 +182,7 @@ function AdminEventPage({
             <EventSettingsTab event={event} />
           </KeptTabsContent>
           <KeptTabsContent value="guests" visited={visited} className="mt-6">
-            <GuestsTab eventId={event._id} />
+            <GuestsTab eventId={event._id} lumaLinked={!!event.lumaEventId} />
           </KeptTabsContent>
           <KeptTabsContent value="allowlist" visited={visited} className="mt-6">
             <AllowlistTab orgId={event.orgId} />

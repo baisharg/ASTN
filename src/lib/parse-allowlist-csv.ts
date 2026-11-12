@@ -4,6 +4,9 @@
  * (name / nombre, or first + last name), or no header at all: then the email
  * is the cell containing "@" and the name is the other cell of a two-column
  * row. Handles quoted fields and comma, semicolon or tab delimiters.
+ *
+ * A Luma guest export has an `approval_status` column: rows Luma declined
+ * are left out, since importing them would pre-approve them.
  */
 
 export type AllowlistRow = { email: string; name?: string }
@@ -12,6 +15,11 @@ export type ParsedAllowlist = {
   rows: Array<AllowlistRow>
   invalid: number
   duplicates: number
+  // Rows left out because their approval_status is "declined".
+  declined: number
+  // Rows in `rows` whose approval_status is neither approved nor declined
+  // (pending, waitlist, invited): imported, but Luma never approved them.
+  notApproved: number
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -38,11 +46,14 @@ const NAME_HEADERS = new Set([
 ])
 const FIRST_NAME_HEADERS = new Set(['firstname', 'nombre'])
 const LAST_NAME_HEADERS = new Set(['lastname', 'apellido'])
+const APPROVAL_STATUS_HEADER = 'approvalstatus'
+// Luma's approval_status values that mean the guest is going.
+const APPROVED_STATUSES = new Set(['approved', 'session'])
 
 function normalizeHeader(cell: string): string {
   return cell
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '')
 }
@@ -99,7 +110,7 @@ function readQuotedField(
 }
 
 function parseCsv(text: string): Array<Array<string>> {
-  const clean = text.replace(/^﻿/, '')
+  const clean = text.replace(/^\uFEFF/, '')
   const delimiter = detectDelimiter(clean.split(/\r?\n/, 1)[0] ?? '')
   const rows: Array<Array<string>> = []
   let row: Array<string> = []
@@ -142,7 +153,7 @@ function parseCsv(text: string): Array<Array<string>> {
 export function parseAllowlistCsv(text: string): ParsedAllowlist {
   const table = parseCsv(text)
   if (table.length === 0) {
-    return { rows: [], invalid: 0, duplicates: 0 }
+    return { rows: [], invalid: 0, duplicates: 0, declined: 0, notApproved: 0 }
   }
 
   const header = table[0].map(normalizeHeader)
@@ -161,14 +172,24 @@ export function parseAllowlistCsv(text: string): ParsedAllowlist {
       else firstCol = -1
     }
   }
+  const approvalCol = hasHeader ? header.indexOf(APPROVAL_STATUS_HEADER) : -1
 
   const body = hasHeader ? table.slice(1) : table
   const seen = new Set<string>()
   const rows: Array<AllowlistRow> = []
   let invalid = 0
   let duplicates = 0
+  let declined = 0
+  let notApproved = 0
 
   for (const cells of body) {
+    const approvalStatus =
+      approvalCol === -1 ? '' : normalizeHeader(cells[approvalCol] ?? '')
+    if (approvalStatus === 'declined') {
+      declined++
+      continue
+    }
+
     let email: string | undefined
     let name: string | undefined
     if (hasHeader) {
@@ -195,7 +216,8 @@ export function parseAllowlistCsv(text: string): ParsedAllowlist {
     }
     seen.add(normalized)
     rows.push({ email: normalized, name: name?.trim() || undefined })
+    if (approvalStatus && !APPROVED_STATUSES.has(approvalStatus)) notApproved++
   }
 
-  return { rows, invalid, duplicates }
+  return { rows, invalid, duplicates, declined, notApproved }
 }

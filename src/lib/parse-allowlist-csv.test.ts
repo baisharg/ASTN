@@ -21,6 +21,8 @@ describe('parseAllowlistCsv', () => {
       ],
       invalid: 0,
       duplicates: 0,
+      declined: 0,
+      notApproved: 0,
     })
   })
 
@@ -119,12 +121,55 @@ describe('parseAllowlistCsv', () => {
         rows: [{ email: 'ana@example.com', name: 'Ana' }],
         invalid: 0,
         duplicates: 0,
+        declined: 0,
+        notApproved: 0,
       })
     }
   })
 
+  test('rows Luma declined are left out and counted', () => {
+    const parsed = parseAllowlistCsv(
+      [
+        'name,email,approval_status',
+        'Ana,ana@example.com,approved',
+        'Juan,juan@example.com,declined',
+        'Luz,luz@example.com,Declined',
+        'Mara,mara@example.com,session',
+      ].join('\n'),
+    )
+    expect(parsed.rows).toEqual([
+      { email: 'ana@example.com', name: 'Ana' },
+      { email: 'mara@example.com', name: 'Mara' },
+    ])
+    expect(parsed.declined).toBe(2)
+    expect(parsed.notApproved).toBe(0)
+    expect(parsed.invalid).toBe(0)
+  })
+
+  test('rows Luma never approved are imported and counted', () => {
+    const parsed = parseAllowlistCsv(
+      [
+        'email,approval_status',
+        'ana@example.com,approved',
+        'juan@example.com,pending_approval',
+        'luz@example.com,waitlist',
+        'mara@example.com,invited',
+        'sol@example.com,',
+      ].join('\n'),
+    )
+    expect(parsed.rows.length).toBe(5)
+    expect(parsed.notApproved).toBe(3)
+    expect(parsed.declined).toBe(0)
+  })
+
+  test('a file without an approval_status column leaves nobody out', () => {
+    const parsed = parseAllowlistCsv('email,status\nana@example.com,declined')
+    expect(parsed.rows).toEqual([{ email: 'ana@example.com' }])
+    expect(parsed.declined).toBe(0)
+  })
+
   test('strips a byte order mark and reads tab-separated files', () => {
-    const parsed = parseAllowlistCsv('﻿email\tname\nana@example.com\tAna')
+    const parsed = parseAllowlistCsv('\uFEFFemail\tname\nana@example.com\tAna')
     expect(parsed.rows).toEqual([{ email: 'ana@example.com', name: 'Ana' }])
   })
 })

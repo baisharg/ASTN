@@ -491,9 +491,12 @@ export const updateEvent = mutation({
     meetingsCloseAt: v.optional(v.union(v.number(), v.null())),
     meetingMinutes: v.optional(v.number()),
     matchingPrompt: v.optional(v.string()),
+    // For an event linked to Luma: let Luma email the guests about a new
+    // name, time or place. Left out, Luma is told not to.
+    notifyGuests: v.optional(v.boolean()),
   },
   returns: v.null(),
-  handler: async (ctx, { eventId, ...fields }) => {
+  handler: async (ctx, { eventId, notifyGuests, ...fields }) => {
     const { event } = await requireEventAdmin(ctx, eventId)
     const patch: Partial<Doc<'socialEvents'>> = { updatedAt: Date.now() }
     if (fields.title !== undefined) {
@@ -557,7 +560,7 @@ export const updateEvent = mutation({
         await ctx.scheduler.runAfter(
           0,
           internal.luma.api.pushSocialEventToLuma,
-          { eventId, fields: lumaFields },
+          { eventId, fields: lumaFields, notifyGuests: notifyGuests === true },
         )
       }
     }

@@ -234,8 +234,31 @@ export function AllowlistTab({ orgId }: { orgId: Id<'organizations'> }) {
                     ` · ${parsed.invalid} fila${parsed.invalid !== 1 ? 's' : ''} sin email válido`}
                   {parsed.duplicates > 0 &&
                     ` · ${parsed.duplicates} repetido${parsed.duplicates !== 1 ? 's' : ''}`}
+                  {parsed.declined > 0 &&
+                    ` · ${parsed.declined} rechazado${parsed.declined !== 1 ? 's' : ''} en Luma, que no se importa${parsed.declined !== 1 ? 'n' : ''}`}
                 </p>
               </div>
+              {parsed.rows.length > 0 && (
+                <div
+                  className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 space-y-1"
+                  role="note"
+                >
+                  <p>
+                    Importar preaprueba a estas personas. Si alguna tiene una
+                    inscripción pendiente en un evento publicado que todavía no
+                    pasó, queda aprobada en el momento; en los eventos
+                    vinculados con Luma también se aprueba allá, y Luma puede
+                    mandarle un email.
+                  </p>
+                  {parsed.notApproved > 0 && (
+                    <p>
+                      {parsed.notApproved === 1
+                        ? '1 fila no figura como aprobada en Luma (pendiente, en lista de espera o invitada): se importa igual.'
+                        : `${parsed.notApproved} filas no figuran como aprobadas en Luma (pendientes, en lista de espera o invitadas): se importan igual.`}
+                    </p>
+                  )}
+                </div>
+              )}
               {parsed.rows.length > 0 && (
                 <ul className="text-sm text-muted-foreground space-y-0.5">
                   {parsed.rows.slice(0, 5).map((r) => (
