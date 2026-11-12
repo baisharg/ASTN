@@ -17,6 +17,7 @@ import {
   keepsStatusOverLuma,
   lumaStatusToPush,
   normalizeEmail,
+  shouldAutoApprove,
   updateGuestAndSync,
 } from './lib'
 import { guestSourceValidator, guestStatusValidator } from './validators'
@@ -184,11 +185,15 @@ async function applyLumaGuest(
   const existing = await getGuestByEmail(ctx, event._id, email)
 
   if (!existing) {
-    // People the org already knows skip Luma's approval queue too.
+    // People the org already knows skip Luma's approval queue too, on
+    // events that auto-approve (see shouldAutoApprove; never on a draft).
     let needsPush = false
     if (
       status === 'pending_approval' &&
-      (await isOnAllowlist(ctx, event.orgId, email))
+      shouldAutoApprove(event, {
+        status,
+        onAllowlist: await isOnAllowlist(ctx, event.orgId, email),
+      })
     ) {
       status = 'approved'
       needsPush = true

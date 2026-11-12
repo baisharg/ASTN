@@ -48,6 +48,34 @@ export function keepsStatusOverLuma(
 }
 
 /**
+ * Whether the event approves people on the org's allowlist without an admin.
+ * The setting is on unless it was switched off, and it never applies to a
+ * draft: a draft's guests wait until the event is published.
+ */
+export function autoApprovesKnownGuests(
+  event: Pick<Doc<'socialEvents'>, 'status' | 'autoApproveKnown'>,
+): boolean {
+  return event.status !== 'draft' && event.autoApproveKnown !== false
+}
+
+/**
+ * Whether a guest is approved without an admin: they are waiting for
+ * approval, on the org's allowlist, and the event auto-approves. Every
+ * automatic approval (registering, arriving from Luma, an allowlist import,
+ * publishing the event) goes through this.
+ */
+export function shouldAutoApprove(
+  event: Pick<Doc<'socialEvents'>, 'status' | 'autoApproveKnown'>,
+  guest: { status: GuestStatus; onAllowlist: boolean },
+): boolean {
+  return (
+    guest.status === 'pending_approval' &&
+    guest.onAllowlist &&
+    autoApprovesKnownGuests(event)
+  )
+}
+
+/**
  * The status a push sets for the guest in Luma, or null when ASTN has none
  * to send. ASTN sends only what it decided: an approval or a decline, and
  * the pending registration of a row ASTN created (the person registered in

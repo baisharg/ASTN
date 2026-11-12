@@ -2232,6 +2232,10 @@ export default defineSchema({
     venueName: v.optional(v.string()),
     venueAddress: v.optional(v.string()),
     status: eventStatusValidator,
+    // Whether people on the org's allowlist are approved as soon as they
+    // register. Unset means yes; false is for events where an admin picks
+    // every guest. Never applies while the event is a draft.
+    autoApproveKnown: v.optional(v.boolean()),
 
     // Luma link. Guests sync both ways once lumaEventId is set.
     lumaEventId: v.optional(v.string()), // "evt-..."
