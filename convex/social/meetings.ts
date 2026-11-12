@@ -5,10 +5,12 @@ import { getUserId, requireAuth } from '../lib/auth'
 import {
   DECLINE_COOLDOWN_MS,
   MAX_MEETING_EXTENSION_MINUTES,
+  MAX_MY_MEETINGS,
   MAX_NOTE_LENGTH,
   MAX_OUTGOING_PENDING,
   compareAttendees,
   extensionMinutesGranted,
+  latestMeetingsFirst,
   meetingNoteToStore,
   meetingsOpenNow,
   requestExpiryTime,
@@ -1073,6 +1075,96 @@ export const endIfDue = internalMutation({
       endedAt: now,
     })
     return null
+  },
+})
+
+// ── "Mis reuniones" ─────────────────────────────────────────────────────
+
+/**
+ * The 1:1s the caller finished at the event, most recent first, for the
+ * "Mis reuniones" page. Empty for anyone who isn't an approved attendee.
+ * The caller's notes are not in here: getMyNoteAbout returns each one.
+ */
+export const listMyMeetings = query({
+  args: { eventId: v.id('socialEvents') },
+  returns: v.array(
+    v.object({
+      _id: v.id('socialMeetings'),
+      partner: cardValidator,
+      startedAt: v.number(),
+      endedAt: v.number(),
+      // Where they met; null when no spot was free or it no longer exists.
+      spot: v.union(
+        v.null(),
+        v.object({
+          number: v.number(),
+          label: v.union(v.string(), v.null()),
+        }),
+      ),
+      // From the suggestion that links the two, when one is still stored.
+      topics: v.array(v.string()),
+    }),
+  ),
+  handler: async (ctx, { eventId }) => {
+    const userId = await getUserId(ctx)
+    if (!userId) return []
+    const guest = await getGuestByUser(ctx, eventId, userId)
+    if (guest?.status !== 'approved') return []
+
+    const [asked, accepted] = await Promise.all([
+      ctx.db
+        .query('socialMeetings')
+        .withIndex('by_eventId_and_userA_and_status', (q) =>
+          q.eq('eventId', eventId).eq('userA', userId).eq('status', 'ended'),
+        )
+        .order('desc')
+        .take(MAX_MY_MEETINGS),
+      ctx.db
+        .query('socialMeetings')
+        .withIndex('by_eventId_and_userB_and_status', (q) =>
+          q.eq('eventId', eventId).eq('userB', userId).eq('status', 'ended'),
+        )
+        .order('desc')
+        .take(MAX_MY_MEETINGS),
+    ])
+    const meetings = latestMeetingsFirst(asked, accepted)
+
+    // A person met twice is looked up once.
+    const partnerIdOf = (meeting: Doc<'socialMeetings'>) =>
+      meeting.userA === userId ? meeting.userB : meeting.userA
+    const partners = new Map(
+      await Promise.all(
+        [...new Set(meetings.map(partnerIdOf))].map(
+          async (partnerId) =>
+            [
+              partnerId,
+              {
+                card: await attendeeCard(ctx, eventId, partnerId),
+                topics: await meetingTopics(ctx, eventId, userId, partnerId),
+              },
+            ] as const,
+        ),
+      ),
+    )
+
+    return await Promise.all(
+      meetings.map(async (meeting) => {
+        const partner = partners.get(partnerIdOf(meeting))!
+        const spot = meeting.spotId
+          ? await ctx.db.get('socialEventSpots', meeting.spotId)
+          : null
+        return {
+          _id: meeting._id,
+          partner: partner.card,
+          startedAt: meeting.startedAt,
+          endedAt: endedAtOf(meeting),
+          spot: spot
+            ? { number: spot.number, label: spot.label ?? null }
+            : null,
+          topics: partner.topics,
+        }
+      }),
+    )
   },
 })
 

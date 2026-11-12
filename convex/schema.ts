@@ -2261,6 +2261,9 @@ export default defineSchema({
     // attendees as the focus of the event.
     matchingPrompt: v.optional(v.string()),
     floorPlanStorageId: v.optional(v.id('_storage')),
+    // Whether attendees see "Mis reuniones" (the 1:1s they had, with a
+    // private note per person). Unset means no.
+    myMeetingsEnabled: v.optional(v.boolean()),
 
     createdBy: v.string(),
     createdAt: v.number(),

@@ -5,7 +5,7 @@ import { getUserId, requireOrgAdmin } from '../lib/auth'
 import { slugifyTitle } from '../orgOpportunities'
 import schema from '../schema'
 import { requireOrgOwnsApiCalendar } from '../luma/binding'
-import { DEFAULT_MEETING_MINUTES } from './constants'
+import { DEFAULT_MEETING_MINUTES, showsMyMeetings } from './constants'
 import {
   addToAllowlist,
   autoApprovesKnownGuests,
@@ -57,6 +57,8 @@ const eventPublicValidator = v.object({
   meetingsCloseAt: v.number(),
   meetingMinutes: v.number(),
   focus: v.union(v.string(), v.null()),
+  // Whether attendees see "Mis reuniones" (see showsMyMeetings).
+  myMeetingsEnabled: v.boolean(),
   viewerIsAdmin: v.boolean(),
 })
 
@@ -193,6 +195,7 @@ export const getEventPage = query({
       meetingsCloseAt: meetingsWindow(event).closeAt,
       meetingMinutes: event.meetingMinutes,
       focus: focusFromPrompt(event.matchingPrompt),
+      myMeetingsEnabled: showsMyMeetings(event),
       viewerIsAdmin,
     }
   },
@@ -547,6 +550,7 @@ export const updateEvent = mutation({
     // name, time or place. Left out, Luma is told not to.
     notifyGuests: v.optional(v.boolean()),
     autoApproveKnown: v.optional(v.boolean()),
+    myMeetingsEnabled: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, { eventId, notifyGuests, ...fields }) => {
@@ -596,6 +600,9 @@ export const updateEvent = mutation({
     }
     if (fields.autoApproveKnown !== undefined) {
       patch.autoApproveKnown = fields.autoApproveKnown
+    }
+    if (fields.myMeetingsEnabled !== undefined) {
+      patch.myMeetingsEnabled = fields.myMeetingsEnabled
     }
     await ctx.db.patch('socialEvents', eventId, patch)
 
