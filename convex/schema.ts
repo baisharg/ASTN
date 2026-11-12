@@ -9,6 +9,7 @@ import {
   lumaSyncValidator,
   socialVisibilityValidator,
   suggestionLanguageValidator,
+  suggestionRunTriggerValidator,
   suggestionsStatusValidator,
 } from './social/validators'
 import {
@@ -2385,7 +2386,8 @@ export default defineSchema({
     .index('by_eventId_and_userA_and_status', ['eventId', 'userA', 'status'])
     .index('by_eventId_and_userB_and_status', ['eventId', 'userB', 'status']),
 
-  // AI suggestions of who an attendee should meet, regenerated as people join.
+  // Who an attendee is suggested to meet: the picks the event-wide assignment
+  // made from each attendee's ranked candidates (socialSuggestionCandidates).
   socialSuggestions: defineTable({
     eventId: v.id('socialEvents'),
     userId: v.string(),
@@ -2395,6 +2397,46 @@ export default defineSchema({
     topics: v.array(v.string()),
     generatedAt: v.number(),
   }).index('by_eventId_and_userId_and_rank', ['eventId', 'userId', 'rank']),
+
+  // The suggestions model's ranking for one attendee: up to 10 people, best
+  // first, each with the reason and topics shown if they become a
+  // suggestion. One row per attendee, replaced on every ranking.
+  socialSuggestionCandidates: defineTable({
+    eventId: v.id('socialEvents'),
+    userId: v.string(),
+    // The language the reasons and topics are written in.
+    language: suggestionLanguageValidator,
+    candidates: v.array(
+      v.object({
+        userId: v.string(),
+        reason: v.string(),
+        topics: v.array(v.string()),
+      }),
+    ),
+    rankedAt: v.number(),
+  }).index('by_eventId_and_userId', ['eventId', 'userId']),
+
+  // One row per event-wide suggestion run: every approved attendee with a
+  // ready profile is ranked, then one assignment picks everyone's
+  // suggestions. The newest row is the event's current or last run.
+  socialSuggestionRuns: defineTable({
+    eventId: v.id('socialEvents'),
+    trigger: suggestionRunTriggerValidator,
+    status: v.union(v.literal('running'), v.literal('finished')),
+    startedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+    // A run still running after this time is finished by its timeout check.
+    timeoutAt: v.number(),
+    // Everyone the run ranks (at most the 500 approved guests an event
+    // reads), and those whose ranking hasn't reported back yet.
+    attendeeUserIds: v.array(v.string()),
+    pendingUserIds: v.array(v.string()),
+    succeeded: v.number(),
+    // Attendees whose ranking failed, and how many had nothing to rank
+    // (no longer approved, or their profile stopped being ready).
+    failedUserIds: v.array(v.string()),
+    skipped: v.number(),
+  }).index('by_eventId', ['eventId']),
 
   // ── Luma: official API mirror state, one row per org (convex/luma/) ──
   lumaSyncState: defineTable({
