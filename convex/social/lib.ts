@@ -48,6 +48,26 @@ export function keepsStatusOverLuma(
 }
 
 /**
+ * The status a push sets for the guest in Luma, or null when ASTN has none
+ * to send. ASTN sends only what it decided: an approval or a decline, and
+ * the pending registration of a row ASTN created (the person registered in
+ * the app, or an admin added them). A waitlist or invited row, and a pending
+ * row that came from Luma, hold Luma's own status, so a push leaves the
+ * guest in Luma as they are.
+ */
+export function lumaStatusToPush(
+  guest: Pick<Doc<'socialEventGuests'>, 'status' | 'source'>,
+): 'approved' | 'declined' | 'pending_approval' | null {
+  if (guest.status === 'approved' || guest.status === 'declined') {
+    return guest.status
+  }
+  if (guest.status === 'pending_approval' && guest.source !== 'luma') {
+    return 'pending_approval'
+  }
+  return null
+}
+
+/**
  * The details of the linked Luma event to copy into the ASTN event: only
  * the ones the ASTN event has empty, so nothing an admin wrote is replaced.
  * The description matters because saving the ASTN one sends it to Luma
