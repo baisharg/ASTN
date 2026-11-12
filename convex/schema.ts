@@ -2317,6 +2317,10 @@ export default defineSchema({
     eventId: v.id('socialEvents'),
     userId: v.string(),
     availability: availabilityValidator,
+    // When the attendee said in the app that they are at the event ("Ya
+    // llegué"), or first sent or accepted a 1:1 request. The door check-in
+    // (socialEventGuests.checkedInAt) counts as being there too.
+    arrivedAt: v.optional(v.number()),
     // When suggestions were last requested for this attendee (throttle).
     suggestionsRequestedAt: v.optional(v.number()),
     // Language the attendee's suggestions are written in (the page's).
@@ -2334,10 +2338,19 @@ export default defineSchema({
       v.literal('accepted'),
       v.literal('declined'),
       v.literal('cancelled'),
+      // Nobody answered before expiresAt.
+      v.literal('expired'),
     ),
     meetingId: v.optional(v.id('socialMeetings')),
     createdAt: v.number(),
+    // When a pending request stops being answerable (REQUEST_EXPIRY_MS after
+    // it was sent). Requests from before expiry existed have none.
+    expiresAt: v.optional(v.number()),
+    // When the request left 'pending', whatever the outcome.
     respondedAt: v.optional(v.number()),
+    // When the requester dismissed the notice that it was declined or
+    // expired, or asked or met the same person again.
+    acknowledgedAt: v.optional(v.number()),
   })
     .index('by_eventId_and_status', ['eventId', 'status'])
     .index('by_eventId_and_toUserId_and_status', [
@@ -2353,6 +2366,7 @@ export default defineSchema({
 
   socialMeetings: defineTable({
     eventId: v.id('socialEvents'),
+    // userA asked for the 1:1 and userB accepted it.
     userA: v.string(),
     userB: v.string(),
     spotId: v.optional(v.id('socialEventSpots')),

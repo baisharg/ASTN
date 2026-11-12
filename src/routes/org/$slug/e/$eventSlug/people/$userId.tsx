@@ -5,16 +5,19 @@ import { CheckCircle2, ExternalLink } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../../convex/_generated/api'
-import { MAX_NOTE_LENGTH } from '../../../../../../../convex/social/constants'
+import {
+  MAX_NOTE_LENGTH,
+  REQUEST_EXPIRY_MS,
+} from '../../../../../../../convex/social/constants'
 import type { socialProfileView } from '../../../../../../../convex/social/lib'
 import type { LiveState } from '~/components/social/live'
 import type { AttendeeState } from '~/components/social/ui'
 import type { Id } from '../../../../../../../convex/_generated/dataModel'
-import { useSocialEvent } from '~/components/social/SocialEventContext'
+import { useNow, useSocialEvent } from '~/components/social/SocialEventContext'
 import {
-  MeetingBanner,
   PageSpinner,
-  requestBlock,
+  RequestOutcomes,
+  expiresIn,
   requestBlockCopy,
   SignedInGate,
   useLiveState,
@@ -33,7 +36,8 @@ import {
   secondaryButtonClass,
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
-import { useCopy } from '~/lib/social-i18n'
+import { useCopy, useSocialLang } from '~/lib/social-i18n'
+import { requestBlock } from '~/lib/social-live'
 import { useBusyAction } from '~/lib/use-busy-action'
 
 export const Route = createFileRoute('/org/$slug/e/$eventSlug/people/$userId')({
@@ -41,6 +45,8 @@ export const Route = createFileRoute('/org/$slug/e/$eventSlug/people/$userId')({
 })
 
 type ProfileView = ReturnType<typeof socialProfileView>
+
+const EXPIRY_MINUTES = REQUEST_EXPIRY_MS / 60_000
 
 const copy = {
   es: {
@@ -70,14 +76,17 @@ const copy = {
     notePlaceholder: 'Contale de qué te gustaría hablar',
     meetNow: 'Reunirse ahora',
     theyInMeetingHint: (name: string) =>
-      `${name} está en una reunión. Tu solicitud queda en su fila y la ve cuando termine.`,
+      `${name} está en una reunión. Tu solicitud queda en su fila y vence a los ${EXPIRY_MINUTES} minutos si no la responde.`,
     sentTitle: 'Solicitud enviada',
+    sentExpiry: (label: string) => `La solicitud ${label}.`,
     sentAvailable: (name: string) =>
-      `${name} está disponible, así que la ve ahora. Si acepta, les asignamos un lugar para reunirse.`,
+      `Tu solicitud le aparece a ${name} en la app. Si acepta, les asignamos un lugar para reunirse.`,
     sentInMeeting: (name: string) =>
-      `${name} está en una reunión. Ve tu solicitud cuando termine.`,
+      `${name} está en una reunión. Tu solicitud queda en su fila.`,
     sentBusy: (name: string) =>
-      `${name} no está tomando solicitudes ahora. La ve cuando vuelva a estar disponible.`,
+      `${name} no está tomando solicitudes ahora. Tu solicitud queda en su fila.`,
+    sentNotHere: (name: string) =>
+      `${name} todavía no llegó al evento. Tu solicitud queda en su fila.`,
     cancel: 'Cancelar solicitud',
     backShort: 'Volver',
     theyAskedTitle: (name: string) => `${name} quiere reunirse con vos`,
@@ -114,14 +123,17 @@ const copy = {
     notePlaceholder: "Tell them what you'd like to talk about",
     meetNow: 'Meet now',
     theyInMeetingHint: (name: string) =>
-      `${name} is in a meeting. Your request waits in their queue and they'll see it when it ends.`,
+      `${name} is in a meeting. Your request waits in their queue and expires after ${EXPIRY_MINUTES} minutes if they don't answer.`,
     sentTitle: 'Request sent',
+    sentExpiry: (label: string) => `The request ${label}.`,
     sentAvailable: (name: string) =>
-      `${name} is available, so they'll see it now. If they accept, you both get a spot to meet.`,
+      `Your request shows up for ${name} in the app. If they accept, you both get a spot to meet.`,
     sentInMeeting: (name: string) =>
-      `${name} is in a meeting. They'll see your request when it ends.`,
+      `${name} is in a meeting. Your request waits in their queue.`,
     sentBusy: (name: string) =>
-      `${name} isn't taking requests right now. They'll see it when they're available again.`,
+      `${name} isn't taking requests right now. Your request waits in their queue.`,
+    sentNotHere: (name: string) =>
+      `${name} hasn't arrived at the event yet. Your request waits in their queue.`,
     cancel: 'Cancel request',
     backShort: 'Back',
     theyAskedTitle: (name: string) => `${name} wants to meet you`,
@@ -221,7 +233,9 @@ function PersonContent() {
           )}
         </div>
         <div className="flex items-center gap-4">
-          {person.viewerIsAttendee && <StateLabel state={person.state} />}
+          {person.viewerIsAttendee && (
+            <StateLabel state={person.state} here={person.here} />
+          )}
           {profile.linkedinUrl && (
             <a
               href={profile.linkedinUrl}
@@ -302,14 +316,13 @@ function PersonContent() {
           userId={userId}
           firstName={firstName}
           state={person.state}
+          here={person.here}
           pendingRequestId={person.pendingRequestId}
           theyRequestedMe={person.theyRequestedMe}
         />
       ) : live === undefined ? (
         <PageSpinner />
       ) : null}
-
-      <MeetingBanner meeting={attendeeLive?.meeting ?? null} />
     </main>
   )
 }
@@ -395,6 +408,7 @@ function RequestCard({
   userId,
   firstName,
   state,
+  here,
   pendingRequestId,
   theyRequestedMe,
 }: {
@@ -402,6 +416,7 @@ function RequestCard({
   userId: string
   firstName: string
   state: AttendeeState
+  here: boolean
   pendingRequestId: Id<'socialMeetingRequests'> | null
   theyRequestedMe: Id<'socialMeetingRequests'> | null
 }) {
@@ -413,6 +428,8 @@ function RequestCard({
   const respondToRequest = useMutation(api.social.meetings.respondToRequest)
   const cancelRequest = useMutation(api.social.meetings.cancelRequest)
   const meetingsOpen = useMeetingsOpen()
+  const { lang } = useSocialLang()
+  const now = useNow(15_000)
   const [note, setNote] = useState('')
   const { busy, run: runBusy } = useBusyAction<
     'send' | 'accept' | 'decline' | 'cancel'
@@ -420,7 +437,7 @@ function RequestCard({
   const run = <T,>(key: NonNullable<typeof busy>, action: () => Promise<T>) =>
     runBusy(key, action, (error) => toast.error(errorMessage(error)))
 
-  const block = requestBlock(live, meetingsOpen, userId, state)
+  const block = requestBlock(live, meetingsOpen, { userId, state, here }, now)
 
   if (theyRequestedMe) {
     const requestId = theyRequestedMe
@@ -468,12 +485,18 @@ function RequestCard({
 
   if (pendingRequestId) {
     const requestId = pendingRequestId
-    const body =
-      state === 'available'
+    const body = !here
+      ? t.sentNotHere(firstName)
+      : state === 'available'
         ? t.sentAvailable(firstName)
         : state === 'in_meeting'
           ? t.sentInMeeting(firstName)
           : t.sentBusy(firstName)
+    const expiry = expiresIn(
+      live.outgoing.find((r) => r._id === requestId)?.expiresAt ?? null,
+      now,
+      lang,
+    )
     return (
       <Panel raised aria-labelledby="request-title">
         <div className="flex items-center gap-2 text-[var(--baish-ok)]">
@@ -482,7 +505,10 @@ function RequestCard({
             {t.sentTitle}
           </h2>
         </div>
-        <p className="text-[15px] leading-normal">{body}</p>
+        <p className="text-[15px] leading-normal">
+          {body}
+          {expiry && ` ${t.sentExpiry(expiry)}`}
+        </p>
         <div className="flex gap-2">
           <button
             type="button"
@@ -521,6 +547,7 @@ function RequestCard({
 
   return (
     <Panel raised aria-label={t.requestLabel} className="gap-2.5 p-4">
+      <RequestOutcomes live={live} onlyUserId={userId} />
       <label
         htmlFor="request-note"
         className="text-sm font-semibold text-[var(--baish-strong)]"

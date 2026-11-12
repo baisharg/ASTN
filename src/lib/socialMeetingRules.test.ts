@@ -1,7 +1,10 @@
 import {
   MAX_MEETING_EXTENSION_MINUTES,
+  compareAttendees,
   extensionMinutesGranted,
   meetingsOpenNow,
+  requestExpiryTime,
+  requestPastExpiry,
 } from '../../convex/social/constants'
 
 // The 1:1 rules in convex/social/constants.ts that the backend enforces and
@@ -14,6 +17,7 @@ declare const describe: BunTestFn
 declare const test: BunTestFn
 declare const expect: <T>(actual: T) => {
   toBe(expected: unknown): void
+  toEqual(expected: unknown): void
 }
 
 describe('extensionMinutesGranted', () => {
@@ -63,5 +67,50 @@ describe('meetingsOpenNow', () => {
 
   test('a draft never has 1:1s', () => {
     expect(meetingsOpenNow('draft', window, 1_500)).toBe(false)
+  })
+})
+
+describe('compareAttendees', () => {
+  test('people at the event come first, each group by name', () => {
+    const list = [
+      { name: 'Zoe', here: false },
+      { name: 'Bruno', here: true },
+      { name: 'Ana', here: false },
+      { name: 'Carla', here: true },
+    ]
+    expect(list.sort(compareAttendees).map((a) => a.name)).toEqual([
+      'Bruno',
+      'Carla',
+      'Ana',
+      'Zoe',
+    ])
+  })
+})
+
+describe('requestPastExpiry', () => {
+  test('a request can be answered until its expiry time', () => {
+    expect(requestPastExpiry({ expiresAt: 2_000 }, 1_999)).toBe(false)
+    expect(requestPastExpiry({ expiresAt: 2_000 }, 2_000)).toBe(true)
+    expect(requestPastExpiry({ expiresAt: 2_000 }, 5_000)).toBe(true)
+  })
+
+  test('a request with no expiry time never expires', () => {
+    expect(requestPastExpiry({}, 5_000)).toBe(false)
+  })
+})
+
+describe('requestExpiryTime', () => {
+  const TEN_MINUTES = 10 * 60 * 1000
+
+  test('a request to someone who is free expires 10 minutes after it is sent', () => {
+    expect(requestExpiryTime(1_000, null)).toBe(1_000 + TEN_MINUTES)
+  })
+
+  test('a request to someone in a meeting expires 10 minutes after that meeting is due to end', () => {
+    expect(requestExpiryTime(1_000, 900_000)).toBe(900_000 + TEN_MINUTES)
+  })
+
+  test('a meeting that is already over time does not shorten the 10 minutes', () => {
+    expect(requestExpiryTime(1_000_000, 900_000)).toBe(1_000_000 + TEN_MINUTES)
   })
 })

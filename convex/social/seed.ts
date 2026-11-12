@@ -223,6 +223,17 @@ export const seedDemoEvent = internalMutation({
             name: person.name,
             source: 'manual',
           })
+          // Most demo attendees are at the event, so they can be asked for
+          // a 1:1; every fourth one hasn't arrived yet.
+          if (i % 4 !== 3) {
+            await ctx.db.insert('socialAttendeeStatus', {
+              eventId: event._id,
+              userId,
+              availability: 'available',
+              arrivedAt: now,
+              updatedAt: now,
+            })
+          }
         }
       }
     }
