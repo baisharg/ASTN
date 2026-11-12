@@ -8,9 +8,16 @@ import type { ActionCtx, MutationCtx, QueryCtx } from '../_generated/server'
 /**
  * LUMA_API_KEY belongs to one Luma calendar, and only the one ASTN org
  * bound to that calendar may use it: to sync, create or edit events, email
- * guests, or push guest changes. An org is bound when its Luma calendar id
- * (or the slug of its public calendar URL) matches the key's calendar. If
- * two orgs match, neither may use the key.
+ * guests, or push guest changes.
+ *
+ * Which org that is comes from the LUMA_OWNER_ORG_SLUG environment variable
+ * (the org's slug). When it is set, only that org is bound, whatever any
+ * org's Luma settings say; if no org has that slug, nobody is bound.
+ *
+ * When the variable is not set, the binding is read from the orgs' own Luma
+ * settings, which their admins can edit: an org is bound when its Luma
+ * calendar id (or the slug of its public calendar URL) matches the key's
+ * calendar, and if two orgs match, neither may use the key.
  */
 
 // Actions re-read the key's calendar from Luma when the cached one is older.
@@ -19,12 +26,54 @@ const CALENDAR_CACHE_MS = 60 * 60 * 1000
 const NOT_CONNECTED =
   'Luma no está conectado para esta organización: la clave de Luma es de otro calendario.'
 
-/** Orgs whose Luma calendar settings point at this calendar. */
+/** How the org bound to the key's calendar is decided. */
+export type OwnerSource = 'env' | 'org_settings'
+
+/** The org slug in LUMA_OWNER_ORG_SLUG, or null when it isn't set. */
+export function configuredOwnerSlug(): string | null {
+  const slug = process.env.LUMA_OWNER_ORG_SLUG?.trim().toLowerCase()
+  return slug ? slug : null
+}
+
+function ownerSource(): OwnerSource {
+  return configuredOwnerSlug() === null ? 'org_settings' : 'env'
+}
+
+/**
+ * The orgs bound to `calendarId` when LUMA_OWNER_ORG_SLUG is set: the one org
+ * with that slug, and only for the key's own calendar. A slug that matches
+ * no org (or more than one) binds nobody.
+ */
+export function orgsBoundByOwnerSlug<OrgId>(input: {
+  calendarId: string
+  // The calendar LUMA_API_KEY belongs to, when it has been read.
+  keyCalendarId: string | null
+  orgsWithOwnerSlug: Array<OrgId>
+}): Array<OrgId> {
+  if (input.keyCalendarId === null) return []
+  if (input.calendarId !== input.keyCalendarId) return []
+  return input.orgsWithOwnerSlug.length === 1 ? input.orgsWithOwnerSlug : []
+}
+
+/** Orgs bound to this calendar (see the top of this file). */
 export async function orgsForCalendar(
   ctx: QueryCtx | MutationCtx,
   calendarId: string,
   calendarSlug: string | null | undefined,
 ): Promise<Array<Id<'organizations'>>> {
+  const ownerSlug = configuredOwnerSlug()
+  if (ownerSlug !== null) {
+    const keyCalendar = await cachedCalendar(ctx)
+    const owners = await ctx.db
+      .query('organizations')
+      .withIndex('by_slug', (q) => q.eq('slug', ownerSlug))
+      .take(2)
+    return orgsBoundByOwnerSlug({
+      calendarId,
+      keyCalendarId: keyCalendar?.calendarId ?? null,
+      orgsWithOwnerSlug: owners.map((org) => org._id),
+    })
+  }
   // A few dozen orgs at most.
   const orgs = await ctx.db.query('organizations').take(1000)
   const slug = calendarSlug?.toLowerCase()
@@ -99,6 +148,8 @@ export const getCachedCalendar = internalQuery({
       checkedAt: v.number(),
       orgId: v.union(v.id('organizations'), v.null()),
       boundOrgCount: v.number(),
+      // 'env' when LUMA_OWNER_ORG_SLUG decides the bound org.
+      ownerSource: v.union(v.literal('env'), v.literal('org_settings')),
     }),
   ),
   handler: async (ctx) => {
@@ -111,6 +162,7 @@ export const getCachedCalendar = internalQuery({
       checkedAt: calendar.checkedAt,
       orgId: orgs.length === 1 ? orgs[0] : null,
       boundOrgCount: orgs.length,
+      ownerSource: ownerSource(),
     }
   },
 })
@@ -138,6 +190,7 @@ export async function resolveApiCalendar(
   calendarId: string
   orgId: Id<'organizations'> | null
   boundOrgCount: number
+  ownerSource: OwnerSource
 }> {
   let cached = await ctx.runQuery(internal.luma.binding.getCachedCalendar, {})
   if (
@@ -157,6 +210,7 @@ export async function resolveApiCalendar(
     calendarId: cached.calendarId,
     orgId: cached.orgId,
     boundOrgCount: cached.boundOrgCount,
+    ownerSource: cached.ownerSource,
   }
 }
 

@@ -131,10 +131,13 @@ export const syncOrg = internalAction({
 async function boundOrg(
   ctx: ActionCtx,
 ): Promise<{ calendarId: string; orgId: Id<'organizations'> | null }> {
-  const { calendarId, orgId, boundOrgCount } = await resolveApiCalendar(ctx, {
-    fresh: true,
-  })
-  if (boundOrgCount === 0) {
+  const { calendarId, orgId, boundOrgCount, ownerSource } =
+    await resolveApiCalendar(ctx, { fresh: true })
+  if (boundOrgCount === 0 && ownerSource === 'env') {
+    console.error(
+      `LUMA_OWNER_ORG_SLUG names no org, so no org may use the Luma key (calendar ${calendarId})`,
+    )
+  } else if (boundOrgCount === 0) {
     console.warn(
       `Luma calendar ${calendarId} matches no org; set the org's Luma calendar in its settings`,
     )
