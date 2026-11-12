@@ -51,6 +51,13 @@ const stateCopy = {
   },
 } satisfies Record<SocialLang, Record<AttendeeState, string>>
 
+const notHereCopy = {
+  es: 'Todavía no llegó',
+  en: 'Not here yet',
+} satisfies Record<SocialLang, string>
+
+const hollowDot = 'border-[1.5px] border-muted-foreground'
+
 const stateStyle: Record<AttendeeState, { text: string; dot: string }> = {
   available: {
     text: 'text-[var(--baish-ok)]',
@@ -62,19 +69,28 @@ const stateStyle: Record<AttendeeState, { text: string; dot: string }> = {
   },
   busy: {
     text: 'text-muted-foreground',
-    dot: 'border-[1.5px] border-muted-foreground',
+    dot: hollowDot,
   },
 }
 
+/**
+ * What a person is doing right now. Someone who isn't at the event yet
+ * (`here` false) reads "Todavía no llegó" whatever their state.
+ */
 export function StateLabel({
   state,
+  here,
   compact = false,
 }: {
   state: AttendeeState
+  here: boolean
   compact?: boolean
 }) {
   const t = useCopy(stateCopy)
-  const style = stateStyle[state]
+  const notHere = useCopy(notHereCopy)
+  const style = here
+    ? stateStyle[state]
+    : { text: 'text-muted-foreground', dot: hollowDot }
   return (
     <span
       className={cn(
@@ -84,7 +100,7 @@ export function StateLabel({
       )}
     >
       <span className={cn('size-2 rounded-full', style.dot)} />
-      {t[state]}
+      {here ? t[state] : notHere}
     </span>
   )
 }

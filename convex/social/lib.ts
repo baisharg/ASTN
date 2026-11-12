@@ -75,6 +75,88 @@ export function shouldAutoApprove(
   )
 }
 
+/**
+ * The status a push sets for the guest in Luma, or null when ASTN has none
+ * to send. ASTN sends only what it decided: an approval or a decline, and
+ * the pending registration of a row ASTN created (the person registered in
+ * the app, or an admin added them). A waitlist or invited row, and a pending
+ * row that came from Luma, hold Luma's own status, so a push leaves the
+ * guest in Luma as they are.
+ */
+export function lumaStatusToPush(
+  guest: Pick<Doc<'socialEventGuests'>, 'status' | 'source'>,
+): 'approved' | 'declined' | 'pending_approval' | null {
+  if (guest.status === 'approved' || guest.status === 'declined') {
+    return guest.status
+  }
+  if (guest.status === 'pending_approval' && guest.source !== 'luma') {
+    return 'pending_approval'
+  }
+  return null
+}
+
+/**
+ * The patch that makes a guest row forget its Luma event: the Luma guest id,
+ * the ticket code and the sync state, leaving the row `not_linked` (what
+ * `pushUnlinkedGuests` pushes after the next link). Null when the row holds
+ * nothing to forget.
+ *
+ * `clearLumaCheckIns` also removes a check-in made in Luma's app (any
+ * check-in whose source isn't 'astn'). Linking a Luma event passes it: from
+ * then on a Luma check-in means one the new event reported, the pull adds
+ * the ones it has, and a leftover from the previous event could never be
+ * undone (the door page refuses, and the new event doesn't have it). A
+ * check-in made at the ASTN door always stays.
+ */
+export function lumaStateReset(
+  guest: Pick<
+    Doc<'socialEventGuests'>,
+    | 'lumaGuestId'
+    | 'lumaCheckInCode'
+    | 'lumaSync'
+    | 'lumaSyncError'
+    | 'checkedInAt'
+    | 'checkInSource'
+  >,
+  options: { clearLumaCheckIns: boolean },
+): Partial<Doc<'socialEventGuests'>> | null {
+  const patch: Partial<Doc<'socialEventGuests'>> = {}
+  if (guest.lumaGuestId !== undefined) patch.lumaGuestId = undefined
+  if (guest.lumaCheckInCode !== undefined) patch.lumaCheckInCode = undefined
+  if (guest.lumaSyncError !== undefined) patch.lumaSyncError = undefined
+  if (guest.lumaSync !== 'not_linked') patch.lumaSync = 'not_linked'
+  if (
+    options.clearLumaCheckIns &&
+    guest.checkedInAt !== undefined &&
+    guest.checkInSource !== 'astn'
+  ) {
+    patch.checkedInAt = undefined
+    patch.checkInSource = undefined
+  }
+  return Object.keys(patch).length > 0 ? patch : null
+}
+
+/**
+ * The details of the linked Luma event to copy into the ASTN event: only
+ * the ones the ASTN event has empty, so nothing an admin wrote is replaced.
+ * The description matters because saving the ASTN one sends it to Luma
+ * (luma/api.ts pushSocialEventToLuma): an ASTN event left empty would
+ * replace Luma's text on the admin's first edit.
+ */
+export function detailsToFillFromLuma(
+  event: Pick<Doc<'socialEvents'>, 'venueAddress' | 'description'>,
+  luma: { venueAddress?: string; description?: string },
+): { venueAddress?: string; description?: string } {
+  const fill: { venueAddress?: string; description?: string } = {}
+  if (luma.venueAddress && !event.venueAddress) {
+    fill.venueAddress = luma.venueAddress
+  }
+  if (luma.description && !event.description) {
+    fill.description = luma.description
+  }
+  return fill
+}
+
 export async function isOnAllowlist(
   ctx: QueryCtx | MutationCtx,
   orgId: Id<'organizations'>,
@@ -251,22 +333,131 @@ export function safeLinkedinUrl(raw: string | undefined | null): string | null {
   }
 }
 
-/** Public-facing slice of a profile shown to other attendees. */
+/** The profile sections a person sets a visibility for in privacy settings. */
+export const PROFILE_SECTIONS = [
+  'basicInfo',
+  'workHistory',
+  'education',
+  'skills',
+  'careerGoals',
+] as const
+export type ProfileSection = (typeof PROFILE_SECTIONS)[number]
+
+/**
+ * The sections a person keeps private: those whose own visibility, or the
+ * default when they have none, is 'private'. Without privacy settings
+ * nothing is private.
+ */
+export function privateProfileSections(
+  privacy: Doc<'profiles'>['privacySettings'],
+): Array<ProfileSection> {
+  if (!privacy) return []
+  return PROFILE_SECTIONS.filter(
+    (section) =>
+      (privacy.sectionVisibility?.[section] ?? privacy.defaultVisibility) ===
+      'private',
+  )
+}
+
+/**
+ * What a profile shares at an in-person event: with the other attendees and
+ * with the model that suggests who to meet. Both read a profile only through
+ * here.
+ *
+ * - Name, headline, `seeking` and `canHelpWith` are always shared: the person
+ *   fills them in on the event profile page for this purpose.
+ * - Everything else belongs to a section of the privacy settings and is left
+ *   out (null or an empty list) when that section is private: location and
+ *   LinkedIn (basicInfo), work history, education, skills, and career goals
+ *   and AI safety interests (careerGoals). Co-attendees count as connections,
+ *   so 'public' and 'connections' sections are both shared.
+ */
+export function attendeeVisibleProfile(profile: Doc<'profiles'> | null) {
+  const hiddenSections = privateProfileSections(profile?.privacySettings)
+  const shows = (section: ProfileSection) => !hiddenSections.includes(section)
+  return {
+    name: profile?.name ?? null,
+    headline: profile?.headline ?? null,
+    seeking: profile?.seeking ?? null,
+    canHelpWith: profile?.canHelpWith ?? null,
+    location: shows('basicInfo') ? (profile?.location ?? null) : null,
+    linkedinUrl: shows('basicInfo')
+      ? safeLinkedinUrl(profile?.linkedinUrl)
+      : null,
+    workHistory: shows('workHistory') ? (profile?.workHistory ?? []) : [],
+    education: shows('education') ? (profile?.education ?? []) : [],
+    skills: shows('skills') ? (profile?.skills ?? []) : [],
+    careerGoals: shows('careerGoals') ? (profile?.careerGoals ?? null) : null,
+    interests: shows('careerGoals') ? (profile?.aiSafetyInterests ?? []) : [],
+    hiddenSections,
+  }
+}
+
+export type AttendeeVisibleProfile = ReturnType<typeof attendeeVisibleProfile>
+
+/** A part of a profile, as the event profile page names them. */
+export type SharedProfilePart =
+  | 'name'
+  | 'headline'
+  | 'seeking'
+  | 'canHelpWith'
+  | 'location'
+  | 'linkedin'
+  | 'workHistory'
+  | 'skills'
+  | 'careerGoals'
+  | 'interests'
+  | 'education'
+
+/**
+ * The parts of a profile that are shared at events and have something in
+ * them, split by who reads them: `attendees` are shown on the person's
+ * attendee page (and read by the suggestions model); `suggestionsOnly` are
+ * read by the model and shown to nobody. The name is always listed: without
+ * one, the name the person registered with is shown.
+ */
+export function sharedProfileParts(visible: AttendeeVisibleProfile): {
+  attendees: Array<SharedProfilePart>
+  suggestionsOnly: Array<SharedProfilePart>
+} {
+  const attendees: Array<[SharedProfilePart, boolean]> = [
+    ['name', true],
+    ['headline', !!visible.headline?.trim()],
+    ['seeking', !!visible.seeking?.trim()],
+    ['canHelpWith', !!visible.canHelpWith?.trim()],
+    ['location', !!visible.location?.trim()],
+    ['linkedin', visible.linkedinUrl !== null],
+    ['workHistory', visible.workHistory.length > 0],
+    ['skills', visible.skills.length > 0],
+    ['careerGoals', !!visible.careerGoals?.trim()],
+    ['interests', visible.interests.length > 0],
+  ]
+  return {
+    attendees: attendees.filter(([, has]) => has).map(([part]) => part),
+    suggestionsOnly: visible.education.length > 0 ? ['education'] : [],
+  }
+}
+
+/**
+ * The slice of a profile shown on a person's attendee page: what
+ * attendeeVisibleProfile shares, with the last four jobs.
+ */
 export function socialProfileView(
   profile: Doc<'profiles'> | null,
   fallbackName: string | undefined,
 ) {
+  const visible = attendeeVisibleProfile(profile)
   return {
-    name: profile?.name ?? fallbackName ?? 'Asistente',
-    headline: profile?.headline ?? null,
-    location: profile?.location ?? null,
-    linkedinUrl: safeLinkedinUrl(profile?.linkedinUrl),
-    seeking: profile?.seeking ?? null,
-    canHelpWith: profile?.canHelpWith ?? null,
-    careerGoals: profile?.careerGoals ?? null,
-    interests: profile?.aiSafetyInterests ?? [],
-    skills: profile?.skills ?? [],
-    workHistory: (profile?.workHistory ?? []).slice(0, 4).map((w) => ({
+    name: visible.name ?? fallbackName ?? 'Asistente',
+    headline: visible.headline,
+    location: visible.location,
+    linkedinUrl: visible.linkedinUrl,
+    seeking: visible.seeking,
+    canHelpWith: visible.canHelpWith,
+    careerGoals: visible.careerGoals,
+    interests: visible.interests,
+    skills: visible.skills,
+    workHistory: visible.workHistory.slice(0, 4).map((w) => ({
       organization: w.organization,
       title: w.title,
       current: w.current ?? false,
@@ -340,6 +531,25 @@ export async function updateGuestAndSync(
       guestId,
     })
   }
+}
+
+// How long after its upload a file can still be attached as a floor plan.
+const FLOOR_PLAN_UPLOAD_WINDOW_MS = 15 * 60 * 1000
+
+/**
+ * Whether a stored file may become an event's floor plan: an image uploaded
+ * in the last few minutes, which is what the admin page sends right after
+ * its upload. Anything else is some other file whose id the caller happens
+ * to know; attaching it would expose it through the plan's URL and delete it
+ * when the plan is replaced.
+ */
+export function isFreshImageUpload(
+  file: { _creationTime: number; contentType?: string } | null,
+  now: number,
+): boolean {
+  if (!file) return false
+  if (!file.contentType?.toLowerCase().startsWith('image/')) return false
+  return now - file._creationTime <= FLOOR_PLAN_UPLOAD_WINDOW_MS
 }
 
 /** Approved guests of an event (with or without an account). */

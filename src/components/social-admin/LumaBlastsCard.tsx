@@ -1,5 +1,4 @@
 import { useAction } from 'convex/react'
-import { ConvexError } from 'convex/values'
 import { AlertTriangle, Loader2, Mail, RefreshCw, Send } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
@@ -207,13 +206,11 @@ export function LumaBlastsCard({
       clearForm()
       return
     }
-    // Luma refusing it (a ConvexError) is final; anything else may only be
-    // a lost answer, and Luma can take a moment to list a new email.
-    if (!(err instanceof ConvexError)) {
-      setSendWarning(
-        'El email no aparece entre los enviados. Antes de mandarlo de nuevo, actualizá esa lista una vez más, por si Luma tardó en registrarlo.',
-      )
-    }
+    // Not listed, which isn't proof it wasn't sent: Luma can answer with an
+    // error after accepting an email, and can take a moment to list a new one.
+    setSendWarning(
+      'El email no aparece entre los enviados. Antes de mandarlo de nuevo, actualizá esa lista una vez más, por si Luma tardó en registrarlo.',
+    )
     toastError('No se pudo enviar el email')(err)
   }
 

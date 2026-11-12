@@ -2,7 +2,12 @@ import { ConvexError, v } from 'convex/values'
 import { mutation, query } from '../_generated/server'
 import { requireOrgAdmin } from '../lib/auth'
 import { normalizeEmail } from '../social/lib'
-import { bestStatus, lumaEventOf } from '../luma/shared'
+import {
+  attendanceStatusShown,
+  bestStatus,
+  canceledLumaEvents,
+  lumaEventOf,
+} from '../luma/shared'
 import {
   crmActivityKindValidator,
   crmCollectionValidator,
@@ -205,14 +210,19 @@ export async function buildPersonView(
       lumaBest.set(lumaEventId, a)
     }
   }
+  // A registration for a canceled Luma event shows as canceled.
+  const canceledLumaIds = await canceledLumaEvents(ctx, orgId, lumaBest.keys())
   for (const a of activities) {
     const lumaEventId = lumaEventOf(a)
     if (lumaEventId && managedLumaIds.has(lumaEventId)) continue
     if (lumaEventId && lumaBest.get(lumaEventId)?._id !== a._id) continue
+    const status = lumaEventId
+      ? attendanceStatusShown(a.status, canceledLumaIds.has(lumaEventId))
+      : a.status
     timeline.push({
       kind: a.kind,
       title: a.title,
-      status: a.status ?? null,
+      status: status ?? null,
       at: a.occurredAt ?? a.createdAt,
       source: a.source,
       href: null,

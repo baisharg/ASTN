@@ -43,21 +43,43 @@ describe('findJustSentBlast', () => {
     ).toBe(null)
   })
 
-  test('ignores a blast with another message or subject', () => {
+  test('a blast not listed before sending is the one, even if Luma rewrote its Markdown', () => {
+    const found = findJustSentBlast({
+      ...attempt,
+      blasts: [blast({ contentMd: 'Nos vemos en la __otra__ sala\\.' })],
+    })
+    expect(found?.id).toBe('blast-new')
+  })
+
+  test("a blast not listed before sending is the one, even if Luma's clock is behind the browser's", () => {
+    const found = findJustSentBlast({
+      ...attempt,
+      blasts: [blast({ sentAt: startedAt - 30 * MINUTE })],
+    })
+    expect(found?.id).toBe('blast-new')
+  })
+
+  test('when the list had not loaded, ignores a blast with another message or subject', () => {
     expect(
       findJustSentBlast({
         ...attempt,
+        knownIds: null,
         blasts: [blast({ contentMd: 'Otro mensaje' })],
       }),
     ).toBe(null)
     expect(
-      findJustSentBlast({ ...attempt, blasts: [blast({ subject: 'Otro' })] }),
+      findJustSentBlast({
+        ...attempt,
+        knownIds: null,
+        blasts: [blast({ subject: 'Otro' })],
+      }),
     ).toBe(null)
   })
 
-  test('differences in spacing do not matter', () => {
+  test('when the list had not loaded, differences in spacing do not matter', () => {
     const found = findJustSentBlast({
       ...attempt,
+      knownIds: null,
       content: '  Nos vemos en la\n**otra** sala.\n',
       blasts: [blast({})],
     })
@@ -67,6 +89,7 @@ describe('findJustSentBlast', () => {
   test('without a typed subject, Luma can have given it any subject', () => {
     const found = findJustSentBlast({
       ...attempt,
+      knownIds: null,
       subject: '  ',
       blasts: [blast({ subject: 'Nuevo mensaje en BAISH Social' })],
     })
