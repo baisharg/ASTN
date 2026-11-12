@@ -26,6 +26,48 @@ export const getOrgBySlug = query({
   },
 })
 
+// What a search engine or a link preview may show about an org's public
+// pages (src/lib/orgPageHead.ts builds the tags from it). Null when no org
+// has that slug.
+export const getOrgPublicProfile = query({
+  args: { slug: v.string() },
+  returns: v.union(
+    v.null(),
+    v.object({
+      name: v.string(),
+      slug: v.string(),
+      description: v.union(v.string(), v.null()),
+      logoUrl: v.union(v.string(), v.null()),
+      website: v.union(v.string(), v.null()),
+      city: v.union(v.string(), v.null()),
+      country: v.union(v.string(), v.null()),
+      socialUrls: v.array(v.string()),
+    }),
+  ),
+  handler: async (ctx, { slug }) => {
+    const org = await ctx.db
+      .query('organizations')
+      .withIndex('by_slug', (q) => q.eq('slug', slug))
+      .first()
+    if (!org) return null
+
+    const uploadedLogoUrl = org.logoStorageId
+      ? await ctx.storage.getUrl(org.logoStorageId)
+      : null
+
+    return {
+      name: org.name,
+      slug,
+      description: org.description ?? null,
+      logoUrl: uploadedLogoUrl ?? org.logoUrl ?? null,
+      website: org.website ?? null,
+      city: org.city ?? null,
+      country: org.country ?? null,
+      socialUrls: (org.socialLinks ?? []).map((link) => link.url),
+    }
+  },
+})
+
 // Get visible members for an organization's directory. Only members of the
 // org can see it; everyone else gets an empty list.
 export const getVisibleMembers = query({
