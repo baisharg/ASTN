@@ -1,11 +1,35 @@
 import { useAction, useMutation, useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
-import { FileUp, Loader2, Plus, Search, Trash2, Upload } from 'lucide-react'
+import {
+  FileUp,
+  Loader2,
+  Plus,
+  Search,
+  Trash2,
+  Upload,
+  UserPlus,
+} from 'lucide-react'
 import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
-import { toastError } from './shared'
+import {
+  MAX_PREAPPROVED_GUESTS_PER_ADD,
+  PREAPPROVED_ADD_APPROVED_LIMIT,
+} from '../../../convex/social/constants'
+import { GUEST_STATUS_LABELS, toastError } from './shared'
+import type { AdminEvent, GuestStatus } from './shared'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '~/components/ui/alert-dialog'
+import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
 import {
   Card,
@@ -33,6 +57,31 @@ const SOURCE_LABELS = {
 } as const
 
 type ImportResult = FunctionReturnType<typeof api.social.events.importAllowlist>
+type AllowlistEntry = FunctionReturnType<
+  typeof api.social.events.listAllowlist
+>[number]
+type AddToEventResult = FunctionReturnType<
+  typeof api.social.events.addPreapprovedGuests
+>
+
+function people(count: number): string {
+  return `${count} persona${count !== 1 ? 's' : ''}`
+}
+
+function addToEventSummary(r: AddToEventResult): string {
+  const parts = [`${r.added} agregada${r.added !== 1 ? 's' : ''}`]
+  if (r.alreadyGuest > 0) {
+    parts.push(
+      `${r.alreadyGuest} ya estaba${r.alreadyGuest !== 1 ? 'n' : ''} en el evento`,
+    )
+  }
+  if (r.invalid > 0) {
+    parts.push(
+      `${r.invalid} no se pud${r.invalid !== 1 ? 'ieron' : 'o'} agregar`,
+    )
+  }
+  return parts.join(' · ')
+}
 
 function importSummary(r: ImportResult): string {
   const parts = [
@@ -52,10 +101,16 @@ function importSummary(r: ImportResult): string {
   return parts.join(' · ')
 }
 
-export function AllowlistTab({ orgId }: { orgId: Id<'organizations'> }) {
+export function AllowlistTab({ event }: { event: AdminEvent }) {
+  const orgId = event.orgId
+  const lumaLinked = !!event.lumaEventId
   const entries = useQuery(api.social.events.listAllowlist, { orgId })
+  const guests = useQuery(api.social.events.listGuests, { eventId: event._id })
   const importAllowlist = useMutation(api.social.events.importAllowlist)
   const removeEntry = useMutation(api.social.events.removeFromAllowlist)
+  const addPreapprovedGuests = useMutation(
+    api.social.events.addPreapprovedGuests,
+  )
 
   const fileRef = useRef<HTMLInputElement>(null)
   const [fileName, setFileName] = useState<string | null>(null)
@@ -67,6 +122,17 @@ export function AllowlistTab({ orgId }: { orgId: Id<'organizations'> }) {
   const importAction = useBusyAction<'import'>()
   const manualAction = useBusyAction<'add'>()
   const removeAction = useBusyAction<Id<'orgAllowlist'>>()
+  const addToEventAction = useBusyAction<'add-to-event'>()
+  const addingToEvent = addToEventAction.busy !== null
+  // Who to add to this event. Starts empty: the admin picks each person.
+  const [selected, setSelected] = useState<ReadonlySet<Id<'orgAllowlist'>>>(
+    new Set(),
+  )
+  // The people the open confirmation is about, fixed when it opens so the
+  // list changing underneath doesn't change what gets added. Stays set while
+  // the dialog closes, so its text doesn't empty out mid-animation.
+  const [addTarget, setAddTarget] = useState<Array<AllowlistEntry>>([])
+  const [addOpen, setAddOpen] = useState(false)
   const importing = importAction.busy !== null
   const addingManual = manualAction.busy !== null
   const removing = removeAction.busy
@@ -181,6 +247,64 @@ export function AllowlistTab({ orgId }: { orgId: Id<'organizations'> }) {
         !q || e.email.includes(q) || (e.name ?? '').toLowerCase().includes(q),
     )
     .sort((a, b) => b.addedAt - a.addedAt)
+
+  // People who already have a guest row for this event can't be added again.
+  const guestStatusByEmail = new Map<string, GuestStatus>(
+    (guests ?? []).map((g) => [g.email, g.status]),
+  )
+  const canAdd = (e: AllowlistEntry) =>
+    guests !== undefined && !guestStatusByEmail.has(e.email)
+  const selectedEntries = (entries ?? []).filter(
+    (e) => selected.has(e._id) && canAdd(e),
+  )
+  const listedEntries = visible.filter(canAdd)
+  // How many one press can add: the batch limit, or less when the event is
+  // close to the approved guests it takes from this list.
+  const room = Math.max(0, PREAPPROVED_ADD_APPROVED_LIMIT - event.approvedCount)
+  const maxPerAdd = Math.min(MAX_PREAPPROVED_GUESTS_PER_ADD, room)
+
+  const toggleSelected = (entryId: Id<'orgAllowlist'>, on: boolean) =>
+    setSelected((current) => {
+      const next = new Set(current)
+      if (on) next.add(entryId)
+      else next.delete(entryId)
+      return next
+    })
+
+  const openAddToEvent = (target: Array<AllowlistEntry>) => {
+    setAddTarget(target)
+    setAddOpen(true)
+  }
+
+  const handleAddToEvent = async () => {
+    const result = await addToEventAction.run(
+      'add-to-event',
+      () =>
+        addPreapprovedGuests({
+          eventId: event._id,
+          entryIds: addTarget.map((e) => e._id),
+        }),
+      toastError('No se pudieron agregar al evento'),
+    )
+    if (!result) return
+    const description = [
+      addToEventSummary(result),
+      lumaLinked && result.added > 0
+        ? 'Luma las está agregando y les manda un email.'
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' ')
+    if (result.added > 0) {
+      toast.success('Agregadas al evento como invitadas aprobadas', {
+        description,
+      })
+    } else {
+      toast.info('No se agregó a nadie', { description })
+    }
+    setSelected(new Set())
+    setAddOpen(false)
+  }
 
   return (
     <div className="space-y-6">
@@ -375,10 +499,74 @@ export function AllowlistTab({ orgId }: { orgId: Id<'organizations'> }) {
                   className="pl-9"
                 />
               </div>
+              <div className="rounded-md border p-4 space-y-3">
+                <div className="space-y-1">
+                  <p className="font-medium">Sumar a este evento</p>
+                  <p className="text-sm text-muted-foreground">
+                    Elegí personas de la lista para sumarlas a «{event.title}»
+                    como invitadas aprobadas, sin que tengan que anotarse.{' '}
+                    {lumaLinked
+                      ? 'El evento está vinculado con Luma: Luma también las agrega como invitadas y les manda un email.'
+                      : 'El evento no está vinculado con Luma: no se les manda ningún email.'}{' '}
+                    {room === 0
+                      ? `El evento ya tiene ${event.approvedCount} invitados aprobados y desde acá no se pueden sumar más.`
+                      : room < MAX_PREAPPROVED_GUESTS_PER_ADD
+                        ? `El evento tiene ${event.approvedCount} invitados aprobados: desde acá se pueden sumar hasta ${room} más.`
+                        : `Hasta ${MAX_PREAPPROVED_GUESTS_PER_ADD} por vez.`}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    className="min-h-11"
+                    disabled={
+                      selectedEntries.length === 0 ||
+                      selectedEntries.length > maxPerAdd
+                    }
+                    onClick={() => openAddToEvent(selectedEntries)}
+                  >
+                    <UserPlus className="size-4 mr-2" />
+                    Agregar al evento las elegidas ({selectedEntries.length})
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="min-h-11"
+                    disabled={
+                      listedEntries.length === 0 ||
+                      listedEntries.length > maxPerAdd
+                    }
+                    onClick={() => openAddToEvent(listedEntries)}
+                  >
+                    Agregar al evento todas las listadas acá (
+                    {listedEntries.length})
+                  </Button>
+                  {selected.size > 0 && (
+                    <Button
+                      variant="ghost"
+                      className="min-h-11"
+                      onClick={() => setSelected(new Set())}
+                    >
+                      Quitar la selección
+                    </Button>
+                  )}
+                </div>
+                {maxPerAdd > 0 &&
+                  (selectedEntries.length > maxPerAdd ||
+                    listedEntries.length > maxPerAdd) && (
+                    <p className="text-xs text-muted-foreground">
+                      Se pueden agregar hasta {maxPerAdd} por vez: elegí menos
+                      personas o acotá la lista con la búsqueda.
+                      {lumaLinked &&
+                        ' Entre una tanda y la siguiente esperá un minuto, que es lo que Luma tarda en recibirlas.'}
+                    </p>
+                  )}
+              </div>
               <div className="overflow-x-auto -mx-6 px-6">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b text-left text-xs text-muted-foreground">
+                      <th className="py-2 pr-3">
+                        <span className="sr-only">Elegir para este evento</span>
+                      </th>
                       <th className="py-2 pr-3 font-medium">Email</th>
                       <th className="py-2 pr-3 font-medium">Nombre</th>
                       <th className="py-2 pr-3 font-medium">Cómo entró</th>
@@ -391,7 +579,30 @@ export function AllowlistTab({ orgId }: { orgId: Id<'organizations'> }) {
                   <tbody>
                     {visible.map((e) => (
                       <tr key={e._id} className="border-b last:border-0">
-                        <td className="py-1.5 pr-3">{e.email}</td>
+                        <td className="py-1.5 pr-3">
+                          <Checkbox
+                            className="size-5"
+                            checked={selected.has(e._id) && canAdd(e)}
+                            disabled={!canAdd(e)}
+                            onCheckedChange={(v) =>
+                              toggleSelected(e._id, v === true)
+                            }
+                            aria-label={`Elegir a ${e.email} para este evento`}
+                          />
+                        </td>
+                        <td className="py-1.5 pr-3">
+                          {e.email}
+                          {guestStatusByEmail.has(e.email) && (
+                            <Badge variant="outline" className="ml-2">
+                              En el evento:{' '}
+                              {
+                                GUEST_STATUS_LABELS[
+                                  guestStatusByEmail.get(e.email)!
+                                ]
+                              }
+                            </Badge>
+                          )}
+                        </td>
                         <td className="py-1.5 pr-3 text-muted-foreground">
                           {e.name ?? '—'}
                         </td>
@@ -431,6 +642,60 @@ export function AllowlistTab({ orgId }: { orgId: Id<'organizations'> }) {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog
+        open={addOpen}
+        onOpenChange={(open) => {
+          if (!addingToEvent) setAddOpen(open)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              ¿Agregar {people(addTarget.length)} a este evento?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {addTarget.length === 1 ? 'Queda' : 'Quedan'} como{' '}
+              {addTarget.length === 1
+                ? 'invitada aprobada'
+                : 'invitadas aprobadas'}{' '}
+              de «{event.title}» sin anotarse.{' '}
+              {lumaLinked
+                ? `El evento está vinculado con Luma: Luma también ${addTarget.length === 1 ? 'la agrega como invitada y le' : 'las agrega como invitadas y les'} manda un email. Ese email no se puede deshacer.`
+                : `El evento no está vinculado con Luma, así que ahora no se manda ningún email. Si más adelante lo vinculás, Luma ${addTarget.length === 1 ? 'la agrega como invitada y le' : 'las agrega como invitadas y les'} escribe.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <ul className="text-sm text-muted-foreground space-y-0.5">
+            {addTarget.slice(0, 5).map((e) => (
+              <li key={e._id} className="truncate">
+                {e.email}
+                {e.name ? ` · ${e.name}` : ''}
+              </li>
+            ))}
+            {addTarget.length > 5 && <li>y {addTarget.length - 5} más</li>}
+          </ul>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="min-h-11" disabled={addingToEvent}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="min-h-11"
+              disabled={addingToEvent}
+              onClick={(e) => {
+                e.preventDefault()
+                void handleAddToEvent()
+              }}
+            >
+              {addingToEvent && (
+                <Loader2 className="size-4 mr-2 animate-spin" />
+              )}
+              {lumaLinked
+                ? `Agregar ${people(addTarget.length)} y que Luma les escriba`
+                : `Agregar ${people(addTarget.length)} al evento`}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
