@@ -4,7 +4,11 @@ import { TimezoneSelector } from '~/components/org/TimezoneSelector'
 import { Input } from '~/components/ui/input'
 import { Label } from '~/components/ui/label'
 import { Textarea } from '~/components/ui/textarea'
-import { eventDetailsArgs, eventDetailsProblem } from '~/lib/event-details'
+import {
+  changedEventDetails,
+  eventDetailsArgs,
+  eventDetailsProblem,
+} from '~/lib/event-details'
 import type { EventDetailsValues } from '~/lib/event-details'
 import { differsFromBrowserZone } from '~/lib/zoned-time'
 
@@ -21,21 +25,46 @@ export const EMPTY_EVENT_DETAILS: EventDetailsValues = {
 }
 
 /**
- * Form state for an event's details. `toArgs` converts the wall-clock times
- * (in the event's timezone) to epoch ms; see `eventDetailsArgs`.
+ * Form state for an event's details: the stored values with the admin's edits
+ * on top. A field the admin hasn't edited follows `stored`, so a value that
+ * changes while the form is open (e.g. an address read from Luma) shows up
+ * and is never overwritten. `changes` holds only what the admin edited.
+ * `toArgs` converts the wall-clock times (in the event's timezone) to epoch
+ * ms; see `eventDetailsArgs`.
  */
-export function useEventDetailsForm(initial: EventDetailsValues) {
-  const [values, setValues] = useState(initial)
+export function useEventDetailsForm(stored: EventDetailsValues) {
+  const [edits, setEdits] = useState<Partial<EventDetailsValues>>({})
+  const values: EventDetailsValues = { ...stored, ...edits }
 
   const set = <K extends keyof EventDetailsValues>(
     key: K,
     value: EventDetailsValues[K],
-  ) => setValues((prev) => ({ ...prev, [key]: value }))
+  ) => setEdits((prev) => ({ ...prev, [key]: value }))
+
+  /** Drop the edits that were saved; anything typed since then stays. */
+  const markSaved = (saved: EventDetailsValues) =>
+    setEdits((prev) => {
+      const rest: Partial<EventDetailsValues> = {}
+      for (const key of Object.keys(prev) as Array<keyof EventDetailsValues>) {
+        if (prev[key] !== saved[key]) rest[key] = prev[key]
+      }
+      return rest
+    })
 
   const problem = eventDetailsProblem(values)
+  const changes = changedEventDetails(stored, values)
   const toArgs = () => eventDetailsArgs(values)
 
-  return { values, set, problem, canSave: problem === null, toArgs }
+  return {
+    values,
+    set,
+    markSaved,
+    problem,
+    canSave: problem === null,
+    changes,
+    hasChanges: Object.keys(changes).length > 0,
+    toArgs,
+  }
 }
 
 export type EventDetailsForm = ReturnType<typeof useEventDetailsForm>

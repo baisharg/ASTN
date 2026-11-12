@@ -41,10 +41,9 @@ import { Textarea } from '~/components/ui/textarea'
 import { detailsFromEvent } from '~/lib/event-details'
 import { useBusyAction } from '~/lib/use-busy-action'
 import {
+  carryZonedTime,
   epochToZoned,
-  nextDate,
   timeOnEventNight,
-  zonedToEpoch,
 } from '~/lib/zoned-time'
 
 export function EventSettingsTab({ event }: { event: AdminEvent }) {
@@ -128,48 +127,38 @@ function StatusCard({ event }: { event: AdminEvent }) {
 
 // ── Details ─────────────────────────────────────────────────────────────
 
-/**
- * Move a stored time to a new event date/timezone, keeping its wall-clock
- * time and whether it falls on the event night's second day.
- */
-function carryTime(
-  ms: number | undefined,
-  old: { date: string; tz: string },
-  next: { date: string; tz: string },
-): number | null {
-  if (ms === undefined) return null
-  const z = epochToZoned(ms, old.tz)
-  const date = z.date === old.date ? next.date : nextDate(next.date)
-  return zonedToEpoch(date, z.time, next.tz)
-}
-
 function DetailsCard({ event }: { event: AdminEvent }) {
   const updateEvent = useMutation(api.social.events.updateEvent)
-  const form = useEventDetailsForm(detailsFromEvent(event))
+  const stored = detailsFromEvent(event)
+  const form = useEventDetailsForm(stored)
   const { busy, run } = useBusyAction<'save'>()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.canSave || busy) return
-    const { date, timezone } = form.values
-    const oldDate = epochToZoned(event.startAt, event.timezone).date
-    // Moving the event to another day keeps the 1:1 window on it.
-    const moved = date !== oldDate || timezone !== event.timezone
-    const old = { date: oldDate, tz: event.timezone }
-    const next = { date, tz: timezone }
+    if (!form.canSave || !form.hasChanges || busy) return
+    const saved = form.values
+    // Moving the event to another day or timezone takes the 1:1 window along.
+    const moved =
+      saved.date !== stored.date || saved.timezone !== stored.timezone
+    const old = { date: stored.date, timeZone: stored.timezone }
+    const next = { date: saved.date, timeZone: saved.timezone }
+    const { meetingsOpenAt, meetingsCloseAt } = event
     await run(
       'save',
       async () => {
+        // Only what the admin edited: the rest may have changed since the
+        // page loaded (e.g. an address read from Luma after linking).
         await updateEvent({
           eventId: event._id,
-          ...form.toArgs(),
-          ...(moved
-            ? {
-                meetingsOpenAt: carryTime(event.meetingsOpenAt, old, next),
-                meetingsCloseAt: carryTime(event.meetingsCloseAt, old, next),
-              }
+          ...form.changes,
+          ...(moved && meetingsOpenAt !== undefined
+            ? { meetingsOpenAt: carryZonedTime(meetingsOpenAt, old, next) }
+            : {}),
+          ...(moved && meetingsCloseAt !== undefined
+            ? { meetingsCloseAt: carryZonedTime(meetingsCloseAt, old, next) }
             : {}),
         })
+        form.markSaved(saved)
         toast.success('Datos del evento guardados')
       },
       toastError('No se pudieron guardar los datos'),
@@ -192,7 +181,7 @@ function DetailsCard({ event }: { event: AdminEvent }) {
           <Button
             type="submit"
             className="min-h-11"
-            disabled={!form.canSave || busy !== null}
+            disabled={!form.canSave || !form.hasChanges || busy !== null}
           >
             {busy ? (
               <Loader2 className="size-4 mr-2 animate-spin" />

@@ -4,7 +4,7 @@
  * Admins may enter an event's times from a different timezone than the
  * event's, so the browser's own offset must never be used for these.
  */
-import { addDays, format, parseISO } from 'date-fns'
+import { addDays, differenceInCalendarDays, format, parseISO } from 'date-fns'
 import { formatInTimeZone, fromZonedTime, getTimezoneOffset } from 'date-fns-tz'
 
 /** "2026-10-10" + "19:30" in `timeZone` → epoch ms. */
@@ -44,6 +44,24 @@ export function timeOnEventNight(
 ): number {
   const date = time < eventStartTime ? nextDate(eventDate) : eventDate
   return zonedToEpoch(date, time, timeZone)
+}
+
+/**
+ * Move a time to an event's new first day and timezone, keeping its
+ * wall-clock time and how many days after the event's first day it falls.
+ */
+export function carryZonedTime(
+  ms: number,
+  old: { date: string; timeZone: string },
+  next: { date: string; timeZone: string },
+): number {
+  const zoned = epochToZoned(ms, old.timeZone)
+  const dayOffset = differenceInCalendarDays(
+    parseISO(zoned.date),
+    parseISO(old.date),
+  )
+  const date = format(addDays(parseISO(next.date), dayOffset), 'yyyy-MM-dd')
+  return zonedToEpoch(date, zoned.time, next.timeZone)
 }
 
 /** Whether the browser is in a different timezone from `timeZone` right now. */

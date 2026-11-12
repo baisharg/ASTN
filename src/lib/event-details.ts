@@ -99,3 +99,29 @@ export function eventDetailsProblem(
   if (endAt !== null && !(endAt > startAt)) return 'ends_before_start'
   return null
 }
+
+/**
+ * The details that differ between what is stored and what the form holds, as
+ * `updateEvent` takes them. Both sides go through the same conversion, so a
+ * field the admin didn't edit is never in the result.
+ */
+export function changedEventDetails(
+  stored: EventDetailsValues,
+  current: EventDetailsValues,
+): Partial<EventDetailsArgs> {
+  const before = eventDetailsArgs(stored)
+  const after = eventDetailsArgs(current)
+  const changes: Partial<EventDetailsArgs> = {}
+  if (after.title !== before.title) changes.title = after.title
+  if (after.startAt !== before.startAt) changes.startAt = after.startAt
+  if (after.endAt !== before.endAt) changes.endAt = after.endAt
+  if (after.timezone !== before.timezone) changes.timezone = after.timezone
+  if (after.venueName !== before.venueName) changes.venueName = after.venueName
+  if (after.venueAddress !== before.venueAddress) {
+    changes.venueAddress = after.venueAddress
+  }
+  if (after.description !== before.description) {
+    changes.description = after.description
+  }
+  return changes
+}

@@ -1,4 +1,5 @@
 import {
+  changedEventDetails,
   detailsFromEvent,
   eventDetailsArgs,
   eventDetailsProblem,
@@ -129,6 +130,74 @@ describe('eventDetailsProblem', () => {
     // Same time as the start, no end date: a zero-length event.
     expect(eventDetailsProblem(values({ endTime: '19:00' }))).toBe(
       'ends_before_start',
+    )
+  })
+})
+
+describe('changedEventDetails', () => {
+  const stored = detailsFromEvent({
+    ...base,
+    startAt: at('2026-10-10', '10:00'),
+    // Seconds don't survive the form; they must not count as an edit.
+    endAt: at('2026-10-11', '18:00') + 30_000,
+  })
+
+  test('an untouched form changes nothing', () => {
+    expect(changedEventDetails(stored, { ...stored })).toEqual({})
+  })
+
+  test('only the edited text field is sent', () => {
+    expect(
+      changedEventDetails(stored, { ...stored, description: 'Otra cosa' }),
+    ).toEqual({ description: 'Otra cosa' })
+    expect(
+      changedEventDetails(stored, { ...stored, venueAddress: '' }),
+    ).toEqual({ venueAddress: '' })
+  })
+
+  test('surrounding spaces are not an edit', () => {
+    expect(
+      changedEventDetails(stored, { ...stored, title: ` ${stored.title} ` }),
+    ).toEqual({})
+  })
+
+  test('a new start time leaves the end alone', () => {
+    expect(
+      changedEventDetails(stored, { ...stored, startTime: '11:00' }),
+    ).toEqual({ startAt: at('2026-10-10', '11:00') })
+  })
+
+  test('a new date moves the start and a same-night end', () => {
+    const night = detailsFromEvent({
+      ...base,
+      startAt: at('2026-10-10', '19:00'),
+      endAt: at('2026-10-11', '01:00'),
+    })
+    expect(
+      changedEventDetails(night, { ...night, date: '2026-10-17' }),
+    ).toEqual({
+      startAt: at('2026-10-17', '19:00'),
+      endAt: at('2026-10-18', '01:00'),
+    })
+  })
+
+  test('clearing the end time removes the end', () => {
+    expect(
+      changedEventDetails(stored, { ...stored, endTime: '', endDate: '' }),
+    ).toEqual({ endAt: null })
+  })
+
+  test('a new timezone moves both times', () => {
+    const changes = changedEventDetails(stored, {
+      ...stored,
+      timezone: 'Europe/London',
+    })
+    expect(changes.timezone).toBe('Europe/London')
+    expect(changes.startAt).toBe(
+      zonedToEpoch('2026-10-10', '10:00', 'Europe/London'),
+    )
+    expect(changes.endAt).toBe(
+      zonedToEpoch('2026-10-11', '18:00', 'Europe/London'),
     )
   })
 })
