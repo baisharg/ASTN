@@ -143,10 +143,10 @@ export function redactSignInTicket(text: string): string {
   return text.replace(TICKET_IN_TEXT, '$1$2$3[redacted]')
 }
 
-// How many objects and arrays one redaction walks. Error reports and
-// analytics events are far smaller; a larger value is left as it is past
-// this point rather than hold up the page.
-const REDACT_CONTAINER_BUDGET = 20_000
+// How many fields (object properties and array items) one redaction reads.
+// Error reports and analytics events are far smaller. Past this point the
+// rest of a larger value is left as it is rather than hold up the page.
+const REDACT_FIELD_BUDGET = 200_000
 
 function isPlainContainer(value: object): boolean {
   if (Array.isArray(value)) return true
@@ -158,7 +158,8 @@ function isPlainContainer(value: object): boolean {
  * Redact sign-in tokens in every string inside `value` and return it. Plain
  * objects and arrays are walked and changed in place; anything else (a DOM
  * node, a class instance) is left alone, each container is visited once and
- * the walk stops at REDACT_CONTAINER_BUDGET.
+ * the walk stops after REDACT_FIELD_BUDGET fields, however they are spread
+ * over containers.
  *
  * The second line of defence for what leaves the browser in error reports
  * and analytics: the token should never be in an address by then, and if it
@@ -169,14 +170,14 @@ export function redactSignInTicketDeep<T>(value: T): T {
   if (value === null || typeof value !== 'object') return value
   const seen = new WeakSet<object>()
   const pending: Array<object> = [value]
-  let visited = 0
-  while (pending.length > 0 && visited < REDACT_CONTAINER_BUDGET) {
+  let fieldsLeft = REDACT_FIELD_BUDGET
+  while (pending.length > 0 && fieldsLeft > 0) {
     const container = pending.pop()!
     if (seen.has(container) || !isPlainContainer(container)) continue
     seen.add(container)
-    visited++
     const fields = container as Record<string, unknown>
     for (const key of Object.keys(fields)) {
+      if (fieldsLeft-- <= 0) break
       const item = fields[key]
       if (typeof item === 'string') {
         const redacted = redactSignInTicket(item)

@@ -317,6 +317,13 @@ describe('redaction never holds up the page', () => {
     expect(node.address).toBe('/e/s#ticket=abc')
   })
 
+  test('a value with more fields than the budget is read up to the budget and no further', () => {
+    const wide = Array.from({ length: 250_000 }, () => '/e/s#ticket=abc')
+    redactSignInTicketDeep(wide)
+    expect(wide[0]).toBe('/e/s#ticket=[redacted]')
+    expect(wide[wide.length - 1]).toBe('/e/s#ticket=abc')
+  })
+
   test('a breadcrumb has its message and addresses redacted, its logged values untouched', () => {
     const logged = { anything: '/e/s#ticket=abc' }
     const breadcrumb = {
