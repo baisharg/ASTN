@@ -2327,6 +2327,25 @@ export default defineSchema({
     // Luma
     .index('by_eventId_and_lumaCheckInCode', ['eventId', 'lumaCheckInCode']),
 
+  // Who made a personal (already signed in) link for which guest, and when.
+  // A record for the org, never the link or its token: those are not stored.
+  socialPersonalLinkLog: defineTable({
+    eventId: v.id('socialEvents'),
+    orgId: v.id('organizations'),
+    guestId: v.id('socialEventGuests'),
+    email: v.string(),
+    // The Clerk account the link signs in to.
+    accountUserId: v.string(),
+    // True when making the link created that account.
+    accountCreated: v.boolean(),
+    // The admin who made the link.
+    createdBy: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+  })
+    .index('by_eventId_and_createdAt', ['eventId', 'createdAt'])
+    .index('by_guestId_and_createdAt', ['guestId', 'createdAt']),
+
   // Whether an attendee is taking 1:1 requests right now. Kept apart from
   // the guest row because it changes often during the event.
   socialAttendeeStatus: defineTable({

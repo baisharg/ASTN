@@ -1,11 +1,25 @@
 import { ConvexError, v } from 'convex/values'
 import { internal } from '../_generated/api'
-import { mutation, query } from '../_generated/server'
+import {
+  action,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from '../_generated/server'
 import { getUserId, requireOrgAdmin } from '../lib/auth'
 import { slugifyTitle } from '../orgOpportunities'
 import schema from '../schema'
 import { requireOrgOwnsApiCalendar } from '../luma/binding'
-import { DEFAULT_MEETING_MINUTES } from './constants'
+import {
+  DEFAULT_MEETING_MINUTES,
+  PERSONAL_LINKS_PER_CALL,
+  eventPageUrl,
+  personalEventLink,
+  personalLinkLifetimeSeconds,
+  personalLinkRefusal,
+  splitGuestName,
+} from './constants'
 import {
   addToAllowlist,
   autoApprovesKnownGuests,
@@ -32,7 +46,11 @@ import {
   lumaSyncValidator,
   profileMissingValidator,
 } from './validators'
-import type { RegisterErrorCode, RegisterErrorData } from './constants'
+import type {
+  PersonalLinkAccount,
+  RegisterErrorCode,
+  RegisterErrorData,
+} from './constants'
 import type { GuestStatus } from './lib'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
@@ -1041,5 +1059,512 @@ export const setSpots = mutation({
       })
     }
     return null
+  },
+})
+
+// ── Personal links ──────────────────────────────────────────────────────
+// A personal link opens the event page already signed in as one guest: the
+// page's address with a single-use Clerk sign-in token in its fragment. The
+// token and the link exist only in the action's return value: they are never
+// stored and never logged. `socialPersonalLinkLog` records who made a link
+// for whom.
+
+const noPersonalLinkReasonValidator = v.union(
+  v.literal('account_in_use'),
+  v.literal('email_not_primary'),
+  v.literal('account_has_role'),
+  v.literal('email_has_other_data'),
+  // The guest is not approved (any more).
+  v.literal('not_approved'),
+  // Clerk refused a request; `clerkErrorCode` says why.
+  v.literal('clerk_error'),
+)
+
+const personalLinkGuestValidator = v.object({
+  guestId: v.id('socialEventGuests'),
+  email: v.string(),
+  name: v.union(v.string(), v.null()),
+  approved: v.boolean(),
+  emailHasOtherData: v.boolean(),
+})
+
+const personalLinkContextValidator = v.object({
+  adminUserId: v.string(),
+  orgId: v.id('organizations'),
+  orgSlug: v.string(),
+  eventSlug: v.string(),
+  meetingsCloseAt: v.number(),
+  guests: v.array(personalLinkGuestValidator),
+})
+
+const personalLinkResultValidator = v.object({
+  guestId: v.id('socialEventGuests'),
+  email: v.string(),
+  // The link, or null with the reason in `noLinkReason`.
+  link: v.union(v.string(), v.null()),
+  // True when an account was created for this guest by this call.
+  accountCreated: v.boolean(),
+  noLinkReason: v.union(noPersonalLinkReasonValidator, v.null()),
+  clerkErrorCode: v.union(v.string(), v.null()),
+})
+
+type PersonalLinkContext = typeof personalLinkContextValidator.type
+type PersonalLinkResult = typeof personalLinkResultValidator.type
+
+/**
+ * Whether signing in with `email` for the first time would attach data from
+ * outside `orgId` to the account: an account from before the move to Clerk
+ * (migrated by email on first sign-in, memberships included), applications
+ * sent to another organization without an account, or a place on another
+ * organization's event.
+ */
+async function emailHasDataOutsideOrg(
+  ctx: QueryCtx,
+  orgId: Id<'organizations'>,
+  email: string,
+): Promise<boolean> {
+  const legacyUser = await ctx.db
+    .query('users')
+    .withIndex('email', (q) => q.eq('email', email))
+    .first()
+  if (legacyUser) return true
+
+  const guestApplications = await ctx.db
+    .query('opportunityApplications')
+    .withIndex('by_guest_email_and_opportunity', (q) =>
+      q.eq('guestEmail', email),
+    )
+    .take(100)
+  if (guestApplications.some((a) => a.orgId !== orgId)) return true
+
+  const guestRows = await ctx.db
+    .query('socialEventGuests')
+    .withIndex('by_email', (q) => q.eq('email', email))
+    .take(100)
+  return guestRows.some((g) => g.orgId !== orgId)
+}
+
+/**
+ * What `createPersonalLinks` needs to know, for an admin of the event's org
+ * only. Throws for a guest that is not on this event.
+ */
+export const getPersonalLinkContext = internalQuery({
+  args: {
+    eventId: v.id('socialEvents'),
+    guestIds: v.array(v.id('socialEventGuests')),
+  },
+  returns: personalLinkContextValidator,
+  handler: async (ctx, { eventId, guestIds }) => {
+    const { event, userId } = await requireEventAdmin(ctx, eventId)
+    if (guestIds.length === 0 || guestIds.length > PERSONAL_LINKS_PER_CALL) {
+      throw new ConvexError(
+        `Make links for 1 to ${PERSONAL_LINKS_PER_CALL} guests at a time`,
+      )
+    }
+    if (new Set(guestIds).size !== guestIds.length) {
+      throw new ConvexError('Each guest can be listed once')
+    }
+    const org = await ctx.db.get('organizations', event.orgId)
+    if (!org?.slug) throw new ConvexError('The organization has no page')
+
+    const guests: PersonalLinkContext['guests'] = []
+    for (const guestId of guestIds) {
+      const guest = await ctx.db.get('socialEventGuests', guestId)
+      if (!guest || guest.eventId !== eventId) {
+        throw new ConvexError('Guest not found on this event')
+      }
+      const email = normalizeEmail(guest.email)
+      guests.push({
+        guestId,
+        email,
+        name: guest.name ?? null,
+        approved: guest.status === 'approved',
+        emailHasOtherData: await emailHasDataOutsideOrg(
+          ctx,
+          event.orgId,
+          email,
+        ),
+      })
+    }
+    return {
+      adminUserId: userId,
+      orgId: event.orgId,
+      orgSlug: org.slug,
+      eventSlug: event.slug,
+      meetingsCloseAt: meetingsWindow(event).closeAt,
+      guests,
+    }
+  },
+})
+
+/** Whether an account administers any organization or the platform. */
+export const accountHasAdminRole = internalQuery({
+  args: { userId: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, { userId }) => {
+    const platformAdmin = await ctx.db
+      .query('platformAdmins')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .first()
+    if (platformAdmin) return true
+    const memberships = await ctx.db
+      .query('orgMemberships')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .take(200)
+    return memberships.some((m) => m.role === 'admin')
+  },
+})
+
+/** Record who made personal links for whom. Never the links themselves. */
+export const recordPersonalLinks = internalMutation({
+  args: {
+    eventId: v.id('socialEvents'),
+    orgId: v.id('organizations'),
+    createdBy: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    links: v.array(
+      v.object({
+        guestId: v.id('socialEventGuests'),
+        email: v.string(),
+        accountUserId: v.string(),
+        accountCreated: v.boolean(),
+      }),
+    ),
+  },
+  returns: v.null(),
+  handler: async (ctx, { links, ...shared }) => {
+    for (const link of links) {
+      await ctx.db.insert('socialPersonalLinkLog', { ...shared, ...link })
+    }
+    return null
+  },
+})
+
+/** A request Clerk's Backend API refused. Carries Clerk's error code only. */
+class ClerkRequestError extends Error {
+  constructor(
+    operation: string,
+    readonly code: string,
+  ) {
+    super(`Clerk ${operation} failed: ${code}`)
+  }
+}
+
+type ClerkUser = {
+  id: string
+  primary_email_address_id: string | null
+  last_sign_in_at: number | null
+  email_addresses: Array<{
+    id: string
+    email_address: string
+    verification: { status: string } | null
+  }>
+}
+
+/**
+ * One request to Clerk's Backend API. A rate-limited request is tried once
+ * more. Failures throw a ClerkRequestError built from the status and Clerk's
+ * error code: the response body, which can hold a token, is never put in an
+ * error or a log line.
+ */
+async function clerkRequest(
+  secretKey: string,
+  operation: string,
+  path: string,
+  body?: Record<string, unknown>,
+): Promise<unknown> {
+  for (let attempt = 0; ; attempt++) {
+    let res: Response
+    try {
+      res = await fetch(`https://api.clerk.com/v1${path}`, {
+        method: body ? 'POST' : 'GET',
+        headers: {
+          Authorization: `Bearer ${secretKey}`,
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      })
+    } catch {
+      throw new ClerkRequestError(operation, 'network_error')
+    }
+    if (res.status === 429 && attempt === 0) {
+      const retryAfter = Number(res.headers.get('Retry-After'))
+      const seconds =
+        Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 2
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(seconds, 10) * 1000),
+      )
+      continue
+    }
+    if (!res.ok) {
+      let code = `http_${res.status}`
+      try {
+        const data = (await res.json()) as {
+          errors?: Array<{ code?: unknown }>
+        }
+        const clerkCode = data.errors?.[0]?.code
+        if (
+          typeof clerkCode === 'string' &&
+          /^[a-z0-9_]{1,80}$/.test(clerkCode)
+        ) {
+          code = clerkCode
+        }
+      } catch {
+        // No readable error body: the status is the code.
+      }
+      throw new ClerkRequestError(operation, code)
+    }
+    return await res.json()
+  }
+}
+
+/** A value Clerk returned in a shape this code does not expect. */
+function unexpectedClerkResponse(operation: string): ClerkRequestError {
+  return new ClerkRequestError(operation, 'unexpected_response')
+}
+
+/**
+ * The account that has `email`, as Clerk knows it, or null when none does.
+ * `userId` is only given for an account whose verified primary address is
+ * `email`: that is the address the site knows an account by.
+ */
+async function findClerkAccount(
+  secretKey: string,
+  email: string,
+): Promise<
+  | { userId: string; emailIsVerifiedPrimary: true; hasSignedIn: boolean }
+  | { userId: null; emailIsVerifiedPrimary: false; hasSignedIn: false }
+  | null
+> {
+  const operation = 'user lookup'
+  const users = await clerkRequest(
+    secretKey,
+    operation,
+    `/users?email_address=${encodeURIComponent(email)}&limit=10`,
+  )
+  if (!Array.isArray(users)) throw unexpectedClerkResponse(operation)
+  if (users.length === 0) return null
+  const owner = (users as Array<ClerkUser>).find((user) =>
+    user.email_addresses.some(
+      (address) =>
+        address.id === user.primary_email_address_id &&
+        normalizeEmail(address.email_address) === email &&
+        address.verification?.status === 'verified',
+    ),
+  )
+  if (!owner) {
+    return { userId: null, emailIsVerifiedPrimary: false, hasSignedIn: false }
+  }
+  return {
+    userId: owner.id,
+    emailIsVerifiedPrimary: true,
+    hasSignedIn: owner.last_sign_in_at !== null,
+  }
+}
+
+/**
+ * Create the account for a guest who has none: their email (which Clerk
+ * marks as verified, since the backend vouches for it), their name and no
+ * password. Sign-up restrictions and legal-consent requirements of the Clerk
+ * instance still apply. Returns the new account's id.
+ */
+async function createClerkAccount(
+  secretKey: string,
+  email: string,
+  name: string | null,
+): Promise<string> {
+  const operation = 'user creation'
+  const account = { email_address: [email], skip_password_requirement: true }
+  const { firstName, lastName } = splitGuestName(name)
+  let created: unknown
+  try {
+    created = await clerkRequest(secretKey, operation, '/users', {
+      ...account,
+      first_name: firstName,
+      last_name: lastName,
+    })
+  } catch (error) {
+    // An instance that does not collect names refuses them: create without.
+    const namesRefused =
+      error instanceof ClerkRequestError && error.code === 'form_param_unknown'
+    if (!namesRefused) throw error
+    created = await clerkRequest(secretKey, operation, '/users', account)
+  }
+  const id = (created as { id?: unknown } | null)?.id
+  if (typeof id !== 'string') throw unexpectedClerkResponse(operation)
+  return id
+}
+
+/**
+ * A single-use sign-in token for an account, valid for `lifetimeSeconds`.
+ * It completes the first factor only: an account with a second factor still
+ * has to give it.
+ */
+async function createClerkSignInToken(
+  secretKey: string,
+  userId: string,
+  lifetimeSeconds: number,
+): Promise<string> {
+  const operation = 'sign-in token creation'
+  const created = await clerkRequest(secretKey, operation, '/sign_in_tokens', {
+    user_id: userId,
+    expires_in_seconds: lifetimeSeconds,
+  })
+  const token = (created as { token?: unknown } | null)?.token
+  if (typeof token !== 'string' || !token) {
+    throw unexpectedClerkResponse(operation)
+  }
+  return token
+}
+
+/**
+ * Make personal links for approved guests of an event, for an admin of its
+ * org. For a guest whose email has no account, this creates one (with that
+ * email, marked as verified, and no password). A guest gets no link when
+ * `personalLinkRefusal` says so; they sign in the usual way.
+ *
+ * Each link works once and until `expiresAt` (see
+ * `personalLinkLifetimeSeconds`). Making a new link does not cancel earlier
+ * ones. Nothing is emailed: the admin passes the links on.
+ */
+export const createPersonalLinks = action({
+  args: {
+    eventId: v.id('socialEvents'),
+    guestIds: v.array(v.id('socialEventGuests')),
+  },
+  returns: v.object({
+    // The event page's address, without a token.
+    eventUrl: v.string(),
+    expiresAt: v.number(),
+    results: v.array(personalLinkResultValidator),
+  }),
+  handler: async (ctx, { eventId, guestIds }) => {
+    const context: PersonalLinkContext = await ctx.runQuery(
+      internal.social.events.getPersonalLinkContext,
+      { eventId, guestIds },
+    )
+    const secretKey = process.env.CLERK_SECRET_KEY
+    if (!secretKey) {
+      throw new ConvexError('CLERK_SECRET_KEY is not set on the backend')
+    }
+    const eventUrl = eventPageUrl(
+      process.env.SITE_URL ?? 'https://safetytalent.org',
+      context.orgSlug,
+      context.eventSlug,
+    )
+    const now = Date.now()
+    const lifetimeSeconds = personalLinkLifetimeSeconds(
+      now,
+      context.meetingsCloseAt,
+    )
+    const expiresAt = now + lifetimeSeconds * 1000
+
+    const results: Array<PersonalLinkResult> = []
+    const made: Array<{
+      guestId: Id<'socialEventGuests'>
+      email: string
+      accountUserId: string
+      accountCreated: boolean
+    }> = []
+
+    for (const guest of context.guests) {
+      const noLink = (
+        noLinkReason: NonNullable<PersonalLinkResult['noLinkReason']>,
+        clerkErrorCode: string | null = null,
+      ) =>
+        results.push({
+          guestId: guest.guestId,
+          email: guest.email,
+          link: null,
+          accountCreated: false,
+          noLinkReason,
+          clerkErrorCode,
+        })
+      if (!guest.approved) {
+        noLink('not_approved')
+        continue
+      }
+      let accountCreated = false
+      try {
+        const found = await findClerkAccount(secretKey, guest.email)
+        let account: PersonalLinkAccount = { kind: 'none' }
+        if (found) {
+          // Only an unused account can still get a link, so only then does
+          // its role matter.
+          const hasAdminRole: boolean =
+            found.userId !== null && !found.hasSignedIn
+              ? await ctx.runQuery(internal.social.events.accountHasAdminRole, {
+                  userId: found.userId,
+                })
+              : false
+          account = {
+            kind: 'existing',
+            emailIsVerifiedPrimary: found.emailIsVerifiedPrimary,
+            hasSignedIn: found.hasSignedIn,
+            hasAdminRole,
+          }
+        }
+        const refusal = personalLinkRefusal({
+          account,
+          emailHasOtherData: guest.emailHasOtherData,
+        })
+        if (refusal) {
+          noLink(refusal)
+          continue
+        }
+
+        let accountUserId = found?.userId ?? null
+        if (!accountUserId) {
+          accountUserId = await createClerkAccount(
+            secretKey,
+            guest.email,
+            guest.name,
+          )
+          accountCreated = true
+        }
+        const token = await createClerkSignInToken(
+          secretKey,
+          accountUserId,
+          lifetimeSeconds,
+        )
+        made.push({
+          guestId: guest.guestId,
+          email: guest.email,
+          accountUserId,
+          accountCreated,
+        })
+        results.push({
+          guestId: guest.guestId,
+          email: guest.email,
+          link: personalEventLink(eventUrl, token),
+          accountCreated,
+          noLinkReason: null,
+          clerkErrorCode: null,
+        })
+      } catch (error) {
+        if (!(error instanceof ClerkRequestError)) throw error
+        results.push({
+          guestId: guest.guestId,
+          email: guest.email,
+          link: null,
+          accountCreated,
+          noLinkReason: 'clerk_error',
+          clerkErrorCode: error.code,
+        })
+      }
+    }
+
+    if (made.length > 0) {
+      await ctx.runMutation(internal.social.events.recordPersonalLinks, {
+        eventId,
+        orgId: context.orgId,
+        createdBy: context.adminUserId,
+        createdAt: now,
+        expiresAt,
+        links: made,
+      })
+    }
+    return { eventUrl, expiresAt, results }
   },
 })
