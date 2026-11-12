@@ -79,6 +79,27 @@ export function useNow(intervalMs = 60_000): number {
   return now
 }
 
+/**
+ * `value`, or the last one it had while it is undefined. For a query whose
+ * arguments change (e.g. `now` every minute): the previous result stays on
+ * screen while the next one loads, instead of a spinner. A different `scope`
+ * (e.g. another org) starts over.
+ */
+export function useLastDefined<T>(
+  value: T | undefined,
+  scope: string,
+): T | undefined {
+  const [last, setLast] = useState<{ scope: string; value: T } | null>(null)
+  if (
+    value !== undefined &&
+    (last === null || last.value !== value || last.scope !== scope)
+  ) {
+    setLast({ scope, value })
+  }
+  if (value !== undefined) return value
+  return last?.scope === scope ? last.value : undefined
+}
+
 // Rounded so the query's arguments (and cache) stay stable within a minute.
 function roundTo(ms: number, step: number) {
   return Math.floor(ms / step) * step
