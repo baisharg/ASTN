@@ -42,6 +42,7 @@ const copy = {
     goToEvent: 'Ir al evento',
     ready: 'Listo para el matching',
     notReady: 'Completá tu perfil',
+    checklistLoading: 'Revisando tu perfil…',
     progress: (done: number) => `${done} de 3`,
     items: {
       background: 'Trayectoria',
@@ -91,6 +92,7 @@ const copy = {
     goToEvent: 'Go to the event',
     ready: 'Ready for matching',
     notReady: 'Finish your profile',
+    checklistLoading: 'Checking your profile…',
     progress: (done: number) => `${done} of 3`,
     items: {
       background: 'Background',
@@ -221,9 +223,11 @@ function ProfileForm({ profile }: { profile: Doc<'profiles'> }) {
   const edit = (field: DraftField) => (next: string) =>
     setDraft((d) => ({ ...d, [field]: next }))
 
+  // What's missing is unknown until the registration loads.
+  const checklistLoading = registration === undefined
   const missing = registration?.profileMissing ?? []
   const done = 3 - missing.length
-  const ready = registration !== undefined && missing.length === 0
+  const ready = !checklistLoading && missing.length === 0
   const isAttendee = registration?.guest?.status === 'approved'
 
   const dirty = Object.keys(draft).length > 0
@@ -313,60 +317,69 @@ function ProfileForm({ profile }: { profile: Doc<'profiles'> }) {
 
   return (
     <div className="flex flex-col gap-5">
-      <Panel aria-label={ready ? t.ready : t.notReady}>
-        <div className="flex items-center justify-between">
-          <h2
-            className={
-              ready
-                ? 'text-[17px] font-semibold text-[var(--baish-ok)]'
-                : 'text-[17px] font-semibold text-[var(--baish-strong)]'
-            }
-          >
-            {ready ? t.ready : t.notReady}
-          </h2>
-          <span className="text-[13px] text-muted-foreground">
-            {t.progress(done)}
-          </span>
-        </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-border">
-          <div
-            className="h-1.5 bg-primary transition-[width]"
-            style={{ width: `${(done / 3) * 100}%` }}
-          />
-        </div>
-        <ul className="flex flex-col gap-2.5 text-sm">
-          {checklist.map((item) => (
-            <li key={item.key} className="flex items-center gap-2.5">
-              {item.ok ? (
+      {checklistLoading ? (
+        <Panel aria-label={t.checklistLoading} aria-busy="true">
+          <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
+            <Spinner size="sm" />
+            {t.checklistLoading}
+          </div>
+        </Panel>
+      ) : (
+        <Panel aria-label={ready ? t.ready : t.notReady}>
+          <div className="flex items-center justify-between">
+            <h2
+              className={
+                ready
+                  ? 'text-[17px] font-semibold text-[var(--baish-ok)]'
+                  : 'text-[17px] font-semibold text-[var(--baish-strong)]'
+              }
+            >
+              {ready ? t.ready : t.notReady}
+            </h2>
+            <span className="text-[13px] text-muted-foreground">
+              {t.progress(done)}
+            </span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-border">
+            <div
+              className="h-1.5 bg-primary transition-[width]"
+              style={{ width: `${(done / 3) * 100}%` }}
+            />
+          </div>
+          <ul className="flex flex-col gap-2.5 text-sm">
+            {checklist.map((item) => (
+              <li key={item.key} className="flex items-center gap-2.5">
+                {item.ok ? (
+                  <Check
+                    className="size-[18px] text-[var(--baish-ok)]"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <Circle
+                    className="size-[18px] text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                )}
+                <span className={item.ok ? '' : 'text-muted-foreground'}>
+                  {t.items[item.key]}
+                </span>
+              </li>
+            ))}
+            <li className="flex items-center gap-2.5 text-muted-foreground">
+              {profile.aiSafetyInterests?.length ? (
                 <Check
                   className="size-[18px] text-[var(--baish-ok)]"
                   aria-hidden="true"
                 />
               ) : (
-                <Circle
-                  className="size-[18px] text-muted-foreground"
-                  aria-hidden="true"
-                />
+                <Circle className="size-[18px]" aria-hidden="true" />
               )}
-              <span className={item.ok ? '' : 'text-muted-foreground'}>
-                {t.items[item.key]}
-              </span>
+              <span className="grow">{t.interests}</span>
+              <span>{t.optional}</span>
             </li>
-          ))}
-          <li className="flex items-center gap-2.5 text-muted-foreground">
-            {profile.aiSafetyInterests?.length ? (
-              <Check
-                className="size-[18px] text-[var(--baish-ok)]"
-                aria-hidden="true"
-              />
-            ) : (
-              <Circle className="size-[18px]" aria-hidden="true" />
-            )}
-            <span className="grow">{t.interests}</span>
-            <span>{t.optional}</span>
-          </li>
-        </ul>
-      </Panel>
+          </ul>
+        </Panel>
+      )}
 
       <section className="flex flex-col gap-2">
         <label
