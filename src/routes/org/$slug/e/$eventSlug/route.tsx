@@ -1,5 +1,6 @@
 import { Link, Outlet, createFileRoute } from '@tanstack/react-router'
 import { useSuspenseQuery } from '@tanstack/react-query'
+import { useAuth } from '@clerk/clerk-react'
 import { convexQuery } from '@convex-dev/react-query'
 import { useConvexAuth, useMutation } from 'convex/react'
 import { Inbox } from 'lucide-react'
@@ -123,16 +124,23 @@ function EventLayoutInner() {
   )
 }
 
-/** Guests who registered on Luma get linked to their account on first visit. */
+/**
+ * Guests who registered on Luma get linked to their account on first visit:
+ * once per event and account, so a second event or a second account in the
+ * same session is linked too.
+ */
 function LinkGuestOnLoad({ eventId }: { eventId: Id<'socialEvents'> }) {
   const { isAuthenticated } = useConvexAuth()
+  const { userId } = useAuth()
   const linkMyGuest = useMutation(api.social.events.linkMyGuest)
-  const done = useRef(false)
+  const linkedFor = useRef<string | null>(null)
   useEffect(() => {
-    if (!isAuthenticated || done.current) return
-    done.current = true
+    if (!isAuthenticated || !userId) return
+    const key = `${eventId}:${userId}`
+    if (linkedFor.current === key) return
+    linkedFor.current = key
     void linkMyGuest({ eventId })
-  }, [isAuthenticated, eventId, linkMyGuest])
+  }, [isAuthenticated, userId, eventId, linkMyGuest])
   return null
 }
 
