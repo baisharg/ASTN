@@ -8,6 +8,7 @@ import { useNow } from '~/components/social/SocialEventContext'
 import {
   ArrivalCard,
   AttendeeGate,
+  expiresIn,
   timeAgo,
   useMeetingsOpen,
   useSocialErrorMessage,
@@ -168,7 +169,9 @@ function RequestsContent({ live }: { live: LiveState }) {
         {live.outgoing.length === 0 ? (
           <p className="text-[15px] text-muted-foreground">{t.noOutgoing}</p>
         ) : (
-          live.outgoing.map((r) => <OutgoingRow key={r._id} request={r} />)
+          live.outgoing.map((r) => (
+            <OutgoingRow key={r._id} request={r} now={now} />
+          ))
         )}
       </section>
 
@@ -245,7 +248,13 @@ function IncomingCard({
             {r.from.name}
           </span>
           <span className="text-[13px] text-muted-foreground">
-            {t.wantsToMeet} · {timeAgo(r.createdAt, now, lang)}
+            {[
+              t.wantsToMeet,
+              timeAgo(r.createdAt, now, lang),
+              expiresIn(r.expiresAt, now, lang),
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           </span>
         </span>
       </Link>
@@ -291,9 +300,10 @@ function IncomingCard({
   )
 }
 
-function OutgoingRow({ request: r }: { request: Outgoing }) {
+function OutgoingRow({ request: r, now }: { request: Outgoing; now: number }) {
   const { slug, eventSlug } = Route.useParams()
   const t = useCopy(copy)
+  const { lang } = useSocialLang()
   const errorMessage = useSocialErrorMessage()
   const cancelRequest = useMutation(api.social.meetings.cancelRequest)
   const { busy, run } = useBusyAction<'cancel'>()
@@ -318,6 +328,7 @@ function OutgoingRow({ request: r }: { request: Outgoing }) {
         : r.toState === 'busy'
           ? t.theyBusy
           : null,
+    expiresIn(r.expiresAt, now, lang),
   ]
     .filter(Boolean)
     .join(' · ')

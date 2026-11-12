@@ -24,6 +24,14 @@ export function endedRecently(endedAt: number, now: number): boolean {
 
 // ── Requests ────────────────────────────────────────────────────────────
 
+/**
+ * Whole minutes until a request expires, rounded up so "1 min" shows until
+ * the last second; 0 once the time has passed.
+ */
+export function expiryMinutesLeft(expiresAt: number, now: number): number {
+  return Math.max(0, Math.ceil((expiresAt - now) / 60_000))
+}
+
 /** Reasons the "meet now" button is disabled, each with its own message. */
 export type RequestBlock = Extract<
   MeetingErrorCode,

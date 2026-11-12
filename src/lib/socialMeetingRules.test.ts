@@ -3,6 +3,7 @@ import {
   compareAttendees,
   extensionMinutesGranted,
   meetingsOpenNow,
+  requestPastExpiry,
 } from '../../convex/social/constants'
 
 // The 1:1 rules in convex/social/constants.ts that the backend enforces and
@@ -82,5 +83,17 @@ describe('compareAttendees', () => {
       'Ana',
       'Zoe',
     ])
+  })
+})
+
+describe('requestPastExpiry', () => {
+  test('a request can be answered until its expiry time', () => {
+    expect(requestPastExpiry({ expiresAt: 2_000 }, 1_999)).toBe(false)
+    expect(requestPastExpiry({ expiresAt: 2_000 }, 2_000)).toBe(true)
+    expect(requestPastExpiry({ expiresAt: 2_000 }, 5_000)).toBe(true)
+  })
+
+  test('a request with no expiry time never expires', () => {
+    expect(requestPastExpiry({}, 5_000)).toBe(false)
   })
 })

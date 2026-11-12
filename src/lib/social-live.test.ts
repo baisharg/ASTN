@@ -1,5 +1,10 @@
 import { MAX_OUTGOING_PENDING } from '../../convex/social/constants'
-import { ENDED_CARD_MS, endedRecently, requestBlock } from './social-live'
+import {
+  ENDED_CARD_MS,
+  endedRecently,
+  expiryMinutesLeft,
+  requestBlock,
+} from './social-live'
 import type { RequestBlockLive } from './social-live'
 
 type BunTestFn = (name: string, fn: () => void | Promise<void>) => void
@@ -73,5 +78,18 @@ describe('requestBlock', () => {
     expect(requestBlock({ ...asked, meeting: {} }, true, ana)).toBe(
       'self_in_meeting',
     )
+  })
+})
+
+describe('expiryMinutesLeft', () => {
+  test('counts whole minutes, rounding up', () => {
+    expect(expiryMinutesLeft(NOW + 10 * 60_000, NOW)).toBe(10)
+    expect(expiryMinutesLeft(NOW + 6 * 60_000 + 1, NOW)).toBe(7)
+    expect(expiryMinutesLeft(NOW + 20_000, NOW)).toBe(1)
+  })
+
+  test('is 0 once the time has passed', () => {
+    expect(expiryMinutesLeft(NOW, NOW)).toBe(0)
+    expect(expiryMinutesLeft(NOW - 5_000, NOW)).toBe(0)
   })
 })

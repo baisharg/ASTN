@@ -8,6 +8,8 @@ export const MAX_NOTE_LENGTH = 280
 export const DEFAULT_MEETING_MINUTES = 20
 // A meeting can run at most this long past its original length.
 export const MAX_MEETING_EXTENSION_MINUTES = 15
+// A request nobody answered expires this long after it was sent.
+export const REQUEST_EXPIRY_MS = 10 * 60 * 1000
 // Without explicit 1:1 times, they run from the event start for this long
 // (or until the event's end, when it has one).
 export const DEFAULT_EVENT_HOURS = 6
@@ -45,6 +47,18 @@ export function compareAttendees(
   return a.name.localeCompare(b.name)
 }
 
+/**
+ * Whether a pending request can no longer be answered at `now`. The
+ * scheduled job marks it 'expired' at the same moment; this covers the
+ * instant before it has run.
+ */
+export function requestPastExpiry(
+  request: { expiresAt?: number },
+  now: number,
+): boolean {
+  return request.expiresAt !== undefined && request.expiresAt <= now
+}
+
 /** Why a 1:1 action was refused. Sent as ConvexError data `{ code }`. */
 export type MeetingErrorCode =
   | 'closed'
@@ -53,6 +67,7 @@ export type MeetingErrorCode =
   | 'not_here'
   | 'busy'
   | 'limit'
+  | 'request_expired'
   | 'self_in_meeting'
   | 'they_in_meeting'
   | 'ended'

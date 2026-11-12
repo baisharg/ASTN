@@ -6,9 +6,11 @@ import {
   MAX_MEETING_EXTENSION_MINUTES,
   MAX_NOTE_LENGTH,
   MAX_OUTGOING_PENDING,
+  REQUEST_EXPIRY_MS,
   compareAttendees,
   extensionMinutesGranted,
   meetingsOpenNow,
+  requestPastExpiry,
 } from './constants'
 import {
   approvedGuests,
@@ -280,6 +282,8 @@ export const getLiveState = query({
           from: cardValidator,
           note: v.union(v.string(), v.null()),
           createdAt: v.number(),
+          // When it expires if nobody answers; null for requests without one.
+          expiresAt: v.union(v.number(), v.null()),
           fromState: stateValidator,
           fromHere: v.boolean(),
         }),
@@ -290,6 +294,7 @@ export const getLiveState = query({
           to: cardValidator,
           note: v.union(v.string(), v.null()),
           createdAt: v.number(),
+          expiresAt: v.union(v.number(), v.null()),
           queuePosition: v.number(),
           toState: stateValidator,
           toHere: v.boolean(),
@@ -389,6 +394,7 @@ export const getLiveState = query({
           from: await attendeeCard(ctx, eventId, r.fromUserId),
           note: r.note ?? null,
           createdAt: r.createdAt,
+          expiresAt: r.expiresAt ?? null,
           fromState: from.state,
           fromHere: from.here,
         }
@@ -414,6 +420,7 @@ export const getLiveState = query({
           to: await attendeeCard(ctx, eventId, r.toUserId),
           note: r.note ?? null,
           createdAt: r.createdAt,
+          expiresAt: r.expiresAt ?? null,
           queuePosition: ahead.length + 1,
           toState: to.state,
           toHere: to.here,
@@ -608,13 +615,19 @@ async function startMeeting(
   return meetingId
 }
 
-/** Accept a pending request: both must be free; starts the meeting. */
+/**
+ * Accept a pending request that hasn't expired: both must be free; starts
+ * the meeting.
+ */
 async function acceptRequest(
   ctx: MutationCtx,
   event: Doc<'socialEvents'>,
   request: Doc<'socialMeetingRequests'>,
 ): Promise<Id<'socialMeetings'>> {
   requireMeetingsOpen(event)
+  if (requestPastExpiry(request, Date.now())) {
+    refuse('request_expired', 'This request has expired')
+  }
   if (await activeMeetingFor(ctx, event._id, request.toUserId)) {
     refuse('self_in_meeting', 'Finish your current meeting first')
   }
@@ -661,8 +674,11 @@ export const requestMeeting = mutation({
     await requireApprovedAttendee(ctx, eventId, toUserId)
 
     // They already asked me: accept that instead of opening a second request.
+    const now = Date.now()
     const theirs = await pendingRequestsFrom(ctx, eventId, toUserId)
-    const reverse = theirs.find((r) => r.toUserId === userId)
+    const reverse = theirs.find(
+      (r) => r.toUserId === userId && !requestPastExpiry(r, now),
+    )
     if (reverse) {
       const meetingId = await acceptRequest(ctx, event, reverse)
       return { requestId: reverse._id, meetingId }
@@ -685,14 +701,21 @@ export const requestMeeting = mutation({
 
     // Asking means being there.
     await recordArrival(ctx, eventId, userId)
+    const expiresAt = now + REQUEST_EXPIRY_MS
     const requestId = await ctx.db.insert('socialMeetingRequests', {
       eventId,
       fromUserId: userId,
       toUserId,
       note: note?.trim().slice(0, MAX_NOTE_LENGTH) || undefined,
       status: 'pending',
-      createdAt: Date.now(),
+      createdAt: now,
+      expiresAt,
     })
+    await ctx.scheduler.runAt(
+      expiresAt,
+      internal.social.meetings.expireRequestIfDue,
+      { requestId },
+    )
     return { requestId, meetingId: null }
   },
 })
@@ -708,6 +731,9 @@ export const respondToRequest = mutation({
     const request = await ctx.db.get('socialMeetingRequests', requestId)
     if (!request || request.toUserId !== userId) {
       refuse('not_found', 'Request not found')
+    }
+    if (accept && request.status === 'expired') {
+      refuse('request_expired', 'This request has expired')
     }
     if (request.status !== 'pending') return request.meetingId ?? null
 
@@ -739,6 +765,27 @@ export const cancelRequest = mutation({
         respondedAt: Date.now(),
       })
     }
+    return null
+  },
+})
+
+/**
+ * Scheduled for a request's expiry time; no-op if it was answered or
+ * cancelled first.
+ */
+export const expireRequestIfDue = internalMutation({
+  args: { requestId: v.id('socialMeetingRequests') },
+  returns: v.null(),
+  handler: async (ctx, { requestId }) => {
+    const request = await ctx.db.get('socialMeetingRequests', requestId)
+    if (!request || request.status !== 'pending') return null
+    const now = Date.now()
+    // The scheduler can run a moment early.
+    if (!requestPastExpiry(request, now + 1000)) return null
+    await ctx.db.patch('socialMeetingRequests', requestId, {
+      status: 'expired',
+      respondedAt: now,
+    })
     return null
   },
 })

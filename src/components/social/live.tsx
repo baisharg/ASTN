@@ -8,6 +8,7 @@ import {
   MAX_OUTGOING_PENDING,
   meetingsOpenNow,
 } from '../../../convex/social/constants'
+import { expiryMinutesLeft } from '~/lib/social-live'
 import { useNow, useSocialEvent } from './SocialEventContext'
 import { Panel, primaryButtonClass, secondaryButtonClass } from './ui'
 import type { FunctionReturnType } from 'convex/server'
@@ -324,6 +325,7 @@ const meetingErrorCopy = {
     not_here: 'Esta persona todavía no llegó al evento.',
     busy: 'Esta persona no está tomando solicitudes ahora.',
     limit: `Ya tenés ${MAX_OUTGOING_PENDING} solicitudes esperando. Cancelá alguna para mandar otra.`,
+    request_expired: 'Esta solicitud ya venció.',
     self_in_meeting: 'Primero terminá tu reunión actual.',
     they_in_meeting: 'Está en una reunión. Probá de nuevo cuando termine.',
     ended: 'Esta reunión ya terminó.',
@@ -337,6 +339,7 @@ const meetingErrorCopy = {
     not_here: "They haven't arrived at the event yet.",
     busy: "They're not taking requests right now.",
     limit: `You already have ${MAX_OUTGOING_PENDING} requests waiting. Cancel one to send another.`,
+    request_expired: 'This request has expired.',
     self_in_meeting: 'Finish your current meeting first.',
     they_in_meeting: "They're in a meeting. Try again when it ends.",
     ended: 'This meeting has already ended.',
@@ -368,6 +371,22 @@ export function timeAgo(from: number, now: number, lang: SocialLang): string {
         ? `${Math.floor(seconds / 60)} min`
         : `${Math.floor(seconds / 3600)} h`
   return lang === 'es' ? `hace ${amount}` : `${amount} ago`
+}
+
+/**
+ * "vence en 7 min" / "expires in 7 min" for a pending request, or null when
+ * it has no expiry.
+ */
+export function expiresIn(
+  expiresAt: number | null,
+  now: number,
+  lang: SocialLang,
+): string | null {
+  if (expiresAt === null) return null
+  const minutes = expiryMinutesLeft(expiresAt, now)
+  if (minutes === 0)
+    return lang === 'es' ? 'está por vencer' : 'about to expire'
+  return lang === 'es' ? `vence en ${minutes} min` : `expires in ${minutes} min`
 }
 
 /** "1 h 12 min", "12 min" or "<1 min". */

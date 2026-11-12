@@ -2338,9 +2338,15 @@ export default defineSchema({
       v.literal('accepted'),
       v.literal('declined'),
       v.literal('cancelled'),
+      // Nobody answered before expiresAt.
+      v.literal('expired'),
     ),
     meetingId: v.optional(v.id('socialMeetings')),
     createdAt: v.number(),
+    // When a pending request stops being answerable (REQUEST_EXPIRY_MS after
+    // it was sent). Requests from before expiry existed have none.
+    expiresAt: v.optional(v.number()),
+    // When the request left 'pending', whatever the outcome.
     respondedAt: v.optional(v.number()),
   })
     .index('by_eventId_and_status', ['eventId', 'status'])
