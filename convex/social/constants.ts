@@ -27,6 +27,14 @@ export type MeetingErrorCode =
 
 export type MeetingErrorData = { code: MeetingErrorCode; message: string }
 
+/** Why a registration was refused. Sent as ConvexError data `{ code }`. */
+export type RegisterErrorCode =
+  | 'not_authenticated'
+  | 'no_email'
+  | 'registration_closed'
+
+export type RegisterErrorData = { code: RegisterErrorCode; message: string }
+
 /**
  * How many of the `requested` minutes a meeting that was already extended by
  * `usedMinutes` can still get. 0 means it has reached the limit.

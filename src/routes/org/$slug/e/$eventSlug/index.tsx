@@ -18,6 +18,7 @@ import {
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../convex/_generated/api'
+import type { RegisterErrorCode } from '../../../../../../convex/social/constants'
 import { useSocialEvent } from '~/components/social/SocialEventContext'
 import { SignInPanel } from '~/components/social/live'
 import {
@@ -26,6 +27,7 @@ import {
   secondaryButtonClass,
 } from '~/components/social/ui'
 import { Spinner } from '~/components/ui/spinner'
+import { errorCode } from '~/lib/convex-error'
 import { useBusyAction } from '~/lib/use-busy-action'
 import {
   formatEventDate,
@@ -103,6 +105,13 @@ const copy = {
     ] as Array<[string, string]>,
     meetingsWindow: (from: string, to: string) => `1:1 de ${from} a ${to}`,
     registerFailed: 'No pudimos registrarte. Probá de nuevo.',
+    registerError: {
+      not_authenticated:
+        'Se cerró tu sesión. Iniciá sesión de nuevo para registrarte.',
+      no_email:
+        'Tu cuenta no tiene un email, así que no podemos registrarte. Agregale uno o entrá con otra cuenta.',
+      registration_closed: 'La inscripción para este evento ya cerró.',
+    } satisfies Record<RegisterErrorCode, string>,
   },
   en: {
     eyebrow: 'Community social',
@@ -168,6 +177,12 @@ const copy = {
     ] as Array<[string, string]>,
     meetingsWindow: (from: string, to: string) => `1:1s from ${from} to ${to}`,
     registerFailed: "We couldn't register you. Please try again.",
+    registerError: {
+      not_authenticated: 'You were signed out. Sign in again to register.',
+      no_email:
+        "Your account has no email address, so we can't register you. Add one or sign in with a different account.",
+      registration_closed: 'Registration for this event has closed.',
+    } satisfies Record<RegisterErrorCode, string>,
   },
 }
 
@@ -318,7 +333,15 @@ function RegistrationCard() {
           eventId: event._id,
           linkedinUrl: linkedin.trim() || undefined,
         }),
-      () => toast.error(t.registerFailed),
+      (error) => {
+        // Retrying only helps when the backend didn't give a reason.
+        const code = errorCode<RegisterErrorCode>(error)
+        toast.error(
+          code && code in t.registerError
+            ? t.registerError[code]
+            : t.registerFailed,
+        )
+      },
     )
 
   const guest = registration.guest
