@@ -21,10 +21,16 @@ function comparable(text: string | null): string {
 }
 
 /**
- * The blast in `blasts` that is the one just attempted: same message (and
- * subject, when one was typed), not among `knownIds` (the blasts listed
- * before sending; null when that list hadn't loaded), and not sent before
- * the attempt began.
+ * The blast in `blasts` that is the one just attempted.
+ *
+ * When the blasts were listed before sending (`knownIds`), it is any blast
+ * that wasn't listed then. Its text and time aren't compared: Luma may return
+ * the message's Markdown rewritten, and its clock may differ from the
+ * browser's.
+ *
+ * When that list hadn't loaded (`knownIds` is null), it is a blast with the
+ * same message (and subject, when one was typed) that wasn't sent before the
+ * attempt began.
  */
 export function findJustSentBlast<Blast extends ListedBlast>(args: {
   blasts: Array<Blast>
@@ -37,7 +43,7 @@ export function findJustSentBlast<Blast extends ListedBlast>(args: {
   const content = comparable(args.content)
   return (
     args.blasts.find((blast) => {
-      if (args.knownIds?.has(blast.id)) return false
+      if (args.knownIds) return !args.knownIds.has(blast.id)
       if (comparable(blast.contentMd) !== content) return false
       if (subject && comparable(blast.subject) !== subject) return false
       // Scheduled or held by Luma (not sent yet): an identical one is waiting
