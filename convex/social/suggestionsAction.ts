@@ -6,8 +6,13 @@ import { z } from 'zod'
 import { internal } from '../_generated/api'
 import { internalAction } from '../_generated/server'
 import { MODEL_SOCIAL_SUGGESTIONS } from '../lib/models'
+import { cleanSuggestionPicks } from './suggestions'
 
 const MAX_SUGGESTIONS = 5
+// A run whose model call fails is tried once more, as a new action so each
+// attempt gets the full action time limit.
+const MAX_ATTEMPTS = 2
+const RETRY_DELAY_MS = 5000
 
 // Kept free of length limits: strict structured output rejects some of
 // them. Counts and lengths are enforced after parsing instead.
@@ -69,14 +74,26 @@ function buildPrompt(context: {
 }
 
 export const generateForUser = internalAction({
-  args: { eventId: v.id('socialEvents'), userId: v.string() },
+  args: {
+    eventId: v.id('socialEvents'),
+    userId: v.string(),
+    // 1 (the default) for a run's first try, 2 for its retry.
+    attempt: v.optional(v.number()),
+  },
   returns: v.null(),
-  handler: async (ctx, { eventId, userId }) => {
+  handler: async (ctx, { eventId, userId, attempt = 1 }): Promise<null> => {
     const context = await ctx.runQuery(
       internal.social.suggestions.getSuggestionContext,
       { eventId, userId },
     )
-    if (!context) return null
+    if (!context) {
+      // No longer an approved attendee with a ready profile.
+      await ctx.runMutation(
+        internal.social.suggestions.recordSuggestionsOutcome,
+        { eventId, userId, outcome: 'skipped' },
+      )
+      return null
+    }
     const others = context.candidates.filter((c) => c.userId !== userId)
     if (others.length === 0) {
       await ctx.runMutation(internal.social.suggestions.saveSuggestions, {
@@ -103,9 +120,10 @@ export const generateForUser = internalAction({
     // first and is identical for everyone at the event, so the provider's
     // automatic prefix caching applies across attendees.
     const started = Date.now()
-    let result
+    let suggestions
+    let usage
     try {
-      result = await generateText({
+      const result = await generateText({
         model: MODEL_SOCIAL_SUGGESTIONS,
         system,
         messages: [
@@ -120,45 +138,47 @@ export const generateForUser = internalAction({
         output: Output.object({ schema: outputSchema }),
         providerOptions: { openai: { reasoningEffort: 'xhigh' } },
       })
+      usage = result.usage
+      // Reading the output throws when the model's reply doesn't parse.
+      suggestions = cleanSuggestionPicks(result.output.suggestions, {
+        userIdByKey: new Map(keyed.map((c) => [c.key, c.userId])),
+        selfId: userId,
+        max: MAX_SUGGESTIONS,
+      })
     } catch (error) {
-      console.error('Suggestion generation failed', eventId, userId, error)
+      console.error(
+        `Suggestion generation failed (attempt ${attempt} of ${MAX_ATTEMPTS})`,
+        eventId,
+        userId,
+        error,
+      )
+      if (attempt < MAX_ATTEMPTS) {
+        await ctx.scheduler.runAfter(
+          RETRY_DELAY_MS,
+          internal.social.suggestionsAction.generateForUser,
+          { eventId, userId, attempt: attempt + 1 },
+        )
+      } else {
+        await ctx.runMutation(
+          internal.social.suggestions.recordSuggestionsOutcome,
+          { eventId, userId, outcome: 'failed' },
+        )
+      }
       return null
     }
-    await ctx.runMutation(internal.lib.llmUsage.logUsage, {
-      operation: 'social_suggestions',
-      model: MODEL_SOCIAL_SUGGESTIONS,
-      inputTokens: result.usage.inputTokens ?? 0,
-      outputTokens: result.usage.outputTokens ?? 0,
-      userId,
-      durationMs: Date.now() - started,
-    })
 
-    const byKey = new Map(keyed.map((c) => [c.key, c.userId]))
-    const seen = new Set<string>()
-    const suggestions = []
-    for (const s of result.output.suggestions) {
-      const suggestedUserId = byKey.get(s.person.trim())
-      const reason = s.reason.trim().slice(0, 600)
-      const topics = s.topics
-        .map((t) => t.trim().slice(0, 160))
-        .filter(Boolean)
-        .slice(0, 3)
-      if (
-        !suggestedUserId ||
-        suggestedUserId === userId ||
-        seen.has(suggestedUserId) ||
-        !reason
-      ) {
-        continue
-      }
-      seen.add(suggestedUserId)
-      suggestions.push({ suggestedUserId, reason, topics })
-      if (suggestions.length >= MAX_SUGGESTIONS) break
-    }
     await ctx.runMutation(internal.social.suggestions.saveSuggestions, {
       eventId,
       userId,
       suggestions,
+    })
+    await ctx.runMutation(internal.lib.llmUsage.logUsage, {
+      operation: 'social_suggestions',
+      model: MODEL_SOCIAL_SUGGESTIONS,
+      inputTokens: usage.inputTokens ?? 0,
+      outputTokens: usage.outputTokens ?? 0,
+      userId,
+      durationMs: Date.now() - started,
     })
     return null
   },

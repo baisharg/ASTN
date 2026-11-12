@@ -9,6 +9,7 @@ import {
   lumaSyncValidator,
   socialVisibilityValidator,
   suggestionLanguageValidator,
+  suggestionsStatusValidator,
 } from './social/validators'
 import {
   crmActivityKindValidator,
@@ -2321,6 +2322,9 @@ export default defineSchema({
     suggestionsRequestedAt: v.optional(v.number()),
     // Language the attendee's suggestions are written in (the page's).
     suggestionsLanguage: v.optional(suggestionLanguageValidator),
+    // The attendee's current or last suggestion run, and when it got there.
+    suggestionsStatus: v.optional(suggestionsStatusValidator),
+    suggestionsStatusAt: v.optional(v.number()),
     updatedAt: v.number(),
   }).index('by_eventId_and_userId', ['eventId', 'userId']),
 
