@@ -43,15 +43,19 @@ describe('findJustSentBlast', () => {
     ).toBe(null)
   })
 
-  test('a blast not listed before sending is the one, even if Luma rewrote its Markdown', () => {
-    const found = findJustSentBlast({
-      ...attempt,
-      blasts: [blast({ contentMd: 'Nos vemos en la __otra__ sala\\.' })],
-    })
-    expect(found?.id).toBe('blast-new')
+  test('a new blast with another message is not the one: someone else may have sent it', () => {
+    expect(
+      findJustSentBlast({
+        ...attempt,
+        blasts: [blast({ contentMd: 'Otro mensaje' })],
+      }),
+    ).toBe(null)
+    expect(
+      findJustSentBlast({ ...attempt, blasts: [blast({ subject: 'Otro' })] }),
+    ).toBe(null)
   })
 
-  test("a blast not listed before sending is the one, even if Luma's clock is behind the browser's", () => {
+  test("a new blast with the same message is the one, even if Luma's clock is behind the browser's", () => {
     const found = findJustSentBlast({
       ...attempt,
       blasts: [blast({ sentAt: startedAt - 30 * MINUTE })],
