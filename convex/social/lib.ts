@@ -47,6 +47,27 @@ export function keepsStatusOverLuma(
   )
 }
 
+/**
+ * The details of the linked Luma event to copy into the ASTN event: only
+ * the ones the ASTN event has empty, so nothing an admin wrote is replaced.
+ * The description matters because saving the ASTN one sends it to Luma
+ * (luma/api.ts pushSocialEventToLuma): an ASTN event left empty would
+ * replace Luma's text on the admin's first edit.
+ */
+export function detailsToFillFromLuma(
+  event: Pick<Doc<'socialEvents'>, 'venueAddress' | 'description'>,
+  luma: { venueAddress?: string; description?: string },
+): { venueAddress?: string; description?: string } {
+  const fill: { venueAddress?: string; description?: string } = {}
+  if (luma.venueAddress && !event.venueAddress) {
+    fill.venueAddress = luma.venueAddress
+  }
+  if (luma.description && !event.description) {
+    fill.description = luma.description
+  }
+  return fill
+}
+
 export async function isOnAllowlist(
   ctx: QueryCtx | MutationCtx,
   orgId: Id<'organizations'>,

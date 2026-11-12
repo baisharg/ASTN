@@ -10,6 +10,7 @@ import { apiCalendarOrg, assertOrgOwnsApiCalendar } from '../luma/binding'
 import { flagGuestSync } from '../luma/mirror'
 import {
   addToAllowlist,
+  detailsToFillFromLuma,
   getGuestByEmail,
   guestStatusFromLuma,
   isOnAllowlist,
@@ -145,6 +146,7 @@ export const setEventSyncResult = internalMutation({
     error: v.optional(v.string()),
     lumaUrl: v.optional(v.string()),
     venueAddress: v.optional(v.string()),
+    description: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, { eventId, error, ...details }) => {
@@ -155,10 +157,7 @@ export const setEventSyncResult = internalMutation({
       lumaLastSyncError: error,
     }
     if (details.lumaUrl) patch.lumaUrl = details.lumaUrl
-    // Fill in details from Luma only where the admin left them empty.
-    if (details.venueAddress && !event.venueAddress) {
-      patch.venueAddress = details.venueAddress
-    }
+    Object.assign(patch, detailsToFillFromLuma(event, details))
     await ctx.db.patch('socialEvents', eventId, patch)
     return null
   },
@@ -470,6 +469,7 @@ export const importLumaEvent = internalAction({
           lumaEvent.geo_address_json?.full_address ??
           lumaEvent.geo_address_json?.address ??
           undefined,
+        description: lumaEvent.description_md?.trim() || undefined,
       })
     } catch (error) {
       const message =
