@@ -124,7 +124,14 @@ export function getRouter() {
         redactSignInTicketInBreadcrumb(breadcrumb),
       beforeSend: (event) => redactSignInTicketDeep(event),
       beforeSendTransaction: (event) => redactSignInTicketDeep(event),
-      beforeSendSpan: (span) => redactSignInTicketDeep(span),
+      // A span can't be dropped: one that could not be redacted is sent
+      // without the fields that hold text.
+      beforeSendSpan: (span) =>
+        redactSignInTicketDeep(span) ?? {
+          ...span,
+          description: undefined,
+          data: {},
+        },
       beforeSendLog: (log) => redactSignInTicketDeep(log),
       tracesSampleRate: 1.0,
       replaysSessionSampleRate: 0.1,

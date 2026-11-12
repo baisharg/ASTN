@@ -324,6 +324,41 @@ describe('redaction never holds up the page', () => {
     expect(wide[wide.length - 1]).toBe('/e/s#ticket=abc')
   })
 
+  test('a very long array is read by position, up to the budget', () => {
+    const sparse: Array<string> = []
+    sparse[5_000_000] = '/e/s#ticket=abc'
+    sparse[1] = '/e/s#ticket=abc'
+    expect(redactSignInTicketDeep(sparse)).toBe(sparse)
+    expect(sparse[1]).toBe('/e/s#ticket=[redacted]')
+  })
+
+  test('a field or container that cannot be read is skipped, and nothing is thrown', () => {
+    const event = {
+      url: '/e/s#ticket=abc',
+      get broken(): string {
+        throw new Error('no')
+      },
+      trap: new Proxy(
+        {},
+        {
+          ownKeys() {
+            throw new Error('no')
+          },
+        },
+      ),
+    }
+    expect(redactSignInTicketDeep(event)).toBe(event)
+    expect(event.url).toBe('/e/s#ticket=[redacted]')
+  })
+
+  test('a token that cannot be replaced means nothing is sent', () => {
+    const event = { request: Object.freeze({ url: '/e/s#ticket=abc' }) }
+    expect(redactSignInTicketDeep(event)).toBe(null)
+    // A frozen object without a token is no reason to send nothing.
+    const clean = { request: Object.freeze({ url: '/e/s' }) }
+    expect(redactSignInTicketDeep(clean)).toBe(clean)
+  })
+
   test('a breadcrumb has its message and addresses redacted, its logged values untouched', () => {
     const logged = { anything: '/e/s#ticket=abc' }
     const breadcrumb = {

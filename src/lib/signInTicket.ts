@@ -155,39 +155,77 @@ function isPlainContainer(value: object): boolean {
 }
 
 /**
- * Redact sign-in tokens in every string inside `value` and return it. Plain
- * objects and arrays are walked and changed in place; anything else (a DOM
- * node, a class instance) is left alone, each container is visited once and
- * the walk stops after REDACT_FIELD_BUDGET fields, however they are spread
- * over containers.
+ * Redact sign-in tokens in every string inside `value` and return it, or
+ * return null when a token was found that could not be replaced (in a frozen
+ * object, say): the caller then sends nothing.
+ *
+ * Plain objects and arrays are walked and changed in place; anything else (a
+ * DOM node, a class instance) is left alone, each container is visited once
+ * and the walk stops after REDACT_FIELD_BUDGET fields, however they are
+ * spread over containers. It never throws: a container or field that cannot
+ * be read is skipped.
  *
  * The second line of defence for what leaves the browser in error reports
  * and analytics: the token should never be in an address by then, and if it
  * is, it does not travel.
  */
-export function redactSignInTicketDeep<T>(value: T): T {
+export function redactSignInTicketDeep<T>(value: T): T | null {
   if (typeof value === 'string') return redactSignInTicket(value) as T
   if (value === null || typeof value !== 'object') return value
   const seen = new WeakSet<object>()
   const pending: Array<object> = [value]
   let fieldsLeft = REDACT_FIELD_BUDGET
-  while (pending.length > 0 && fieldsLeft > 0) {
-    const container = pending.pop()!
-    if (seen.has(container) || !isPlainContainer(container)) continue
-    seen.add(container)
-    const fields = container as Record<string, unknown>
-    for (const key of Object.keys(fields)) {
-      if (fieldsLeft-- <= 0) break
-      const item = fields[key]
-      if (typeof item === 'string') {
-        const redacted = redactSignInTicket(item)
-        if (redacted !== item) fields[key] = redacted
-      } else if (item !== null && typeof item === 'object') {
-        pending.push(item)
+  let tokenLeftIn = false
+
+  const redactField = (
+    container: Record<string | number, unknown>,
+    key: string | number,
+  ) => {
+    let item: unknown
+    try {
+      item = container[key]
+    } catch {
+      return
+    }
+    if (typeof item === 'string') {
+      const redacted = redactSignInTicket(item)
+      if (redacted === item) return
+      try {
+        container[key] = redacted
+      } catch {
+        // Checked below: the field still holds the token.
       }
+      try {
+        if (container[key] !== redacted) tokenLeftIn = true
+      } catch {
+        tokenLeftIn = true
+      }
+    } else if (item !== null && typeof item === 'object') {
+      pending.push(item)
     }
   }
-  return value
+
+  while (pending.length > 0 && fieldsLeft > 0) {
+    const container = pending.pop()!
+    try {
+      if (seen.has(container) || !isPlainContainer(container)) continue
+      seen.add(container)
+      const fields = container as Record<string | number, unknown>
+      if (Array.isArray(container)) {
+        const count = Math.min(container.length, fieldsLeft)
+        for (let index = 0; index < count; index++) redactField(fields, index)
+        fieldsLeft -= count
+      } else {
+        for (const key of Object.keys(container)) {
+          if (fieldsLeft-- <= 0) break
+          redactField(fields, key)
+        }
+      }
+    } catch {
+      // A container that refuses to be read (a proxy, say) is skipped.
+    }
+  }
+  return tokenLeftIn ? null : value
 }
 
 /**
