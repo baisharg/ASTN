@@ -1,35 +1,21 @@
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useMutation, useQuery } from 'convex/react'
+import { Link, createFileRoute } from '@tanstack/react-router'
+import { useQuery } from 'convex/react'
 import { useState } from 'react'
-import { toast } from 'sonner'
-import { CalendarDays, ChevronRight, Link2, Loader2, Plus } from 'lucide-react'
+import { CalendarDays, ChevronRight, Link2, Plus } from 'lucide-react'
 import { api } from '../../../../../../convex/_generated/api'
-import type { Doc, Id } from '../../../../../../convex/_generated/dataModel'
-import {
-  EMPTY_EVENT_DETAILS,
-  EventDetailsFields,
-  useEventDetailsForm,
-} from '~/components/social-admin/EventDetailsFields'
+import type { Doc } from '../../../../../../convex/_generated/dataModel'
+import { CreateEventDialog } from '~/components/social-admin/CreateEventDialog'
 import { LumaCalendarSection } from '~/components/social-admin/LumaCalendarSection'
+import { useLastDefined, useNow } from '~/components/social-admin/luma-shared'
 import {
   EventStatusBadge,
   OrgAdminGate,
   PageShell,
-  toastError,
 } from '~/components/social-admin/shared'
 import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
 import { Card } from '~/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '~/components/ui/dialog'
 import { Spinner } from '~/components/ui/spinner'
-import { useBusyAction } from '~/lib/use-busy-action'
 import { formatEventDateTime } from '~/lib/zoned-time'
 
 export const Route = createFileRoute('/org/$slug/admin/events/')({
@@ -53,6 +39,12 @@ function AdminEventsPage({
   slug: string
 }) {
   const events = useQuery(api.social.events.listEvents, { orgId: org._id })
+  // Whether the org is connected to Luma decides what "Crear evento" offers.
+  const now = useNow()
+  const luma = useLastDefined(
+    useQuery(api.luma.admin.listLumaEvents, { orgId: org._id, now }),
+    org._id,
+  )
   const [dialogOpen, setDialogOpen] = useState(false)
 
   return (
@@ -167,79 +159,9 @@ function AdminEventsPage({
           onOpenChange={setDialogOpen}
           orgId={org._id}
           slug={slug}
+          lumaConnected={luma?.connected}
         />
       </div>
     </PageShell>
-  )
-}
-
-function CreateEventDialog({
-  open,
-  onOpenChange,
-  orgId,
-  slug,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  orgId: Id<'organizations'>
-  slug: string
-}) {
-  const createEvent = useMutation(api.social.events.createEvent)
-  const navigate = useNavigate()
-  const form = useEventDetailsForm(EMPTY_EVENT_DETAILS)
-  const { busy, run } = useBusyAction<'create'>()
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!form.canSave || busy) return
-    const result = await run(
-      'create',
-      () => {
-        const { endAt, ...args } = form.toArgs()
-        return createEvent({ orgId, ...args, endAt: endAt ?? undefined })
-      },
-      toastError('No se pudo crear el evento'),
-    )
-    if (!result) return
-    toast.success('Evento creado como borrador')
-    onOpenChange(false)
-    void navigate({
-      to: '/org/$slug/admin/events/$eventId',
-      params: { slug, eventId: result.eventId },
-    })
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Crear evento</DialogTitle>
-          <DialogDescription>
-            Empieza como borrador. Nadie lo ve hasta que lo publiques.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <EventDetailsFields form={form} idPrefix="new-event" />
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              onClick={() => onOpenChange(false)}
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="submit"
-              className="min-h-11"
-              disabled={!form.canSave || busy !== null}
-            >
-              {busy && <Loader2 className="size-4 mr-2 animate-spin" />}
-              Crear evento
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
   )
 }

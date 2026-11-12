@@ -1,10 +1,9 @@
 import { Link, useNavigate } from '@tanstack/react-router'
-import { useAction, useMutation, useQuery } from 'convex/react'
+import { useMutation, useQuery } from 'convex/react'
 import { formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
 import {
   AlertTriangle,
-  CalendarPlus,
   ExternalLink,
   Loader2,
   RefreshCw,
@@ -17,12 +16,6 @@ import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
 import { LumaGuestsDialog } from './LumaGuestsList'
 import {
-  EMPTY_LUMA_EVENT,
-  LumaEventFields,
-  lumaArgs,
-  useLumaEventForm,
-} from './LumaEventForm'
-import {
   VisibilityBadge,
   guestCountsText,
   useLastDefined,
@@ -33,14 +26,6 @@ import { toastError } from './shared'
 import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
 import { Card } from '~/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '~/components/ui/dialog'
 import { Spinner } from '~/components/ui/spinner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { useBusyAction } from '~/lib/use-busy-action'
@@ -69,7 +54,6 @@ export function LumaCalendarSection({
   const status = useQuery(api.luma.admin.getSyncStatus, { orgId })
   const syncNow = useMutation(api.luma.admin.syncNow)
   const { busy, run } = useBusyAction<'sync'>()
-  const [createOpen, setCreateOpen] = useState(false)
   const [guestsFor, setGuestsFor] = useState<LumaEventRow | null>(null)
   const [pastShown, setPastShown] = useState(PAST_PAGE)
 
@@ -109,29 +93,19 @@ export function LumaCalendarSection({
             </p>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            className="min-h-11"
-            disabled={busy !== null || data?.connected === false}
-            onClick={() => void handleSync()}
-          >
-            {busy === 'sync' ? (
-              <Loader2 className="size-4 mr-2 animate-spin" />
-            ) : (
-              <RefreshCw className="size-4 mr-2" />
-            )}
-            Sincronizar
-          </Button>
-          <Button
-            className="min-h-11"
-            disabled={data?.connected === false}
-            onClick={() => setCreateOpen(true)}
-          >
-            <CalendarPlus className="size-4 mr-2" />
-            Crear evento en Luma
-          </Button>
-        </div>
+        <Button
+          variant="outline"
+          className="min-h-11"
+          disabled={busy !== null || data?.connected === false}
+          onClick={() => void handleSync()}
+        >
+          {busy === 'sync' ? (
+            <Loader2 className="size-4 mr-2 animate-spin" />
+          ) : (
+            <RefreshCw className="size-4 mr-2" />
+          )}
+          Sincronizar
+        </Button>
       </div>
 
       {status?.lastEventsSyncError && (
@@ -214,12 +188,6 @@ export function LumaCalendarSection({
           managed={guestsFor.socialEventId !== null}
         />
       )}
-      <CreateLumaEventDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        orgId={orgId}
-        slug={slug}
-      />
     </section>
   )
 }
@@ -394,75 +362,5 @@ function LumaEventCard({
         </div>
       </div>
     </Card>
-  )
-}
-
-function CreateLumaEventDialog({
-  open,
-  onOpenChange,
-  orgId,
-  slug,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  orgId: Id<'organizations'>
-  slug: string
-}) {
-  const createEvent = useAction(api.luma.api.createEvent)
-  const navigate = useNavigate()
-  const form = useLumaEventForm(EMPTY_LUMA_EVENT)
-  const { busy, run } = useBusyAction<'create'>()
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!form.canSave || busy) return
-    const result = await run(
-      'create',
-      () => createEvent({ orgId, ...lumaArgs(form.values) }),
-      toastError('No se pudo crear el evento en Luma'),
-    )
-    if (!result) return
-    toast.success('Evento creado en Luma')
-    onOpenChange(false)
-    form.setValues(EMPTY_LUMA_EVENT)
-    void navigate({
-      to: '/org/$slug/admin/events/luma/$lumaEventId',
-      params: { slug, lumaEventId: result.lumaEventId },
-    })
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Crear evento en Luma</DialogTitle>
-          <DialogDescription>
-            Se publica en el calendario de Luma de la organización con la
-            visibilidad que elijas. Después podés gestionarlo en ASTN.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <LumaEventFields form={form} idPrefix="new-luma-event" />
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              onClick={() => onOpenChange(false)}
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="submit"
-              className="min-h-11"
-              disabled={!form.canSave || busy !== null}
-            >
-              {busy && <Loader2 className="size-4 mr-2 animate-spin" />}
-              Crear en Luma
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
   )
 }
