@@ -1,6 +1,15 @@
 import { v } from 'convex/values'
 import { internalMutation } from '../_generated/server'
-import { addToAllowlist, getGuestByUser, normalizeEmail } from './lib'
+import { acceptProposal } from './bookings'
+import { bookingOpen, bookingSlots, placeForBooking } from './constants'
+import {
+  addToAllowlist,
+  bookedRowsAround,
+  getGuestByUser,
+  meetingsWindow,
+  normalizeEmail,
+  reservationOf,
+} from './lib'
 import type { Id } from '../_generated/dataModel'
 import type { MutationCtx } from '../_generated/server'
 
@@ -292,6 +301,161 @@ export const seedIncomingRequests = internalMutation({
   },
 })
 
+/** The demo event with booking on, and the real account's user id. */
+async function demoBookingContext(
+  ctx: MutationCtx,
+  orgSlug: string,
+  email: string,
+) {
+  const org = await findOrg(ctx, orgSlug)
+  const event = await findDemoEvent(ctx, org._id)
+  if (!event) throw new Error('Run seedDemoEvent first')
+  if (!bookingOpen(event)) {
+    throw new Error(
+      'Switch on "Reservar 1:1 con anticipación" in the demo event\'s Configuración first',
+    )
+  }
+  const guest = await ctx.db
+    .query('socialEventGuests')
+    .withIndex('by_eventId_and_email', (q) =>
+      q.eq('eventId', event._id).eq('email', normalizeEmail(email)),
+    )
+    .first()
+  if (!guest?.userId || guest.status !== 'approved') {
+    throw new Error('Register for the demo event with that account first')
+  }
+  return { event, userId: guest.userId }
+}
+
+/**
+ * Set up booked 1:1s for a real account at the demo event, to try the
+ * agenda and what happens when a slot starts. The demo event's slots are
+ * moved so one starts `startsInMinutes` from now (default 2), then:
+ * - that slot: a 1:1 with Tomás, who is already there, so "Ya estoy" starts
+ *   the meeting;
+ * - the next slot: a 1:1 with Camila, who never comes, to try releasing
+ *   it after the wait;
+ * - the slot after: a proposal from Martín waiting for an answer.
+ * The account must have registered, and booking must be on.
+ */
+export const seedBookings = internalMutation({
+  args: {
+    orgSlug: v.string(),
+    email: v.string(),
+    startsInMinutes: v.optional(v.number()),
+  },
+  returns: v.object({
+    firstSlotStart: v.number(),
+    booked: v.number(),
+    proposed: v.number(),
+  }),
+  handler: async (ctx, { orgSlug, email, startsInMinutes }) => {
+    const { event, userId } = await demoBookingContext(ctx, orgSlug, email)
+    const now = Date.now()
+    const length = event.meetingMinutes * 60 * 1000
+    const firstSlotStart = now + (startsInMinutes ?? 2) * 60 * 1000
+    // Keep the window open now: move its start back by whole slots.
+    const slotsBefore = Math.max(
+      0,
+      Math.ceil((firstSlotStart - meetingsWindow(event).openAt) / length),
+    )
+    const meetingsOpenAt = firstSlotStart - slotsBefore * length
+    await ctx.db.patch('socialEvents', event._id, {
+      meetingsOpenAt,
+      updatedAt: now,
+    })
+    const slots = bookingSlots(
+      { openAt: meetingsOpenAt, closeAt: meetingsWindow(event).closeAt },
+      event.meetingMinutes,
+    ).filter((slot) => slot.start >= firstSlotStart)
+    if (slots.length < 3) throw new Error('The demo event is about to close')
+
+    const spotNumbers = (
+      await ctx.db
+        .query('socialEventSpots')
+        .withIndex('by_eventId_and_number', (q) => q.eq('eventId', event._id))
+        .take(200)
+    ).map((spot) => spot.number)
+
+    let booked = 0
+    const plans = [
+      { slot: slots[0], seed: 2, there: true },
+      { slot: slots[1], seed: 3, there: false },
+    ]
+    for (const { slot, seed, there } of plans) {
+      const around = await bookedRowsAround(
+        ctx,
+        event._id,
+        slot.start,
+        slot.end,
+      )
+      const place = placeForBooking(
+        spotNumbers,
+        slot,
+        around.map(reservationOf),
+      )
+      if (!place.bookable) continue
+      await ctx.db.insert('socialBookings', {
+        eventId: event._id,
+        fromUserId: `${SEED_PREFIX}${seed}`,
+        toUserId: userId,
+        slotStart: slot.start,
+        slotEnd: slot.end,
+        status: 'booked',
+        spotNumber: place.spotNumber ?? undefined,
+        createdAt: now,
+        respondedAt: now,
+        fromReadyAt: there ? slot.start : undefined,
+      })
+      booked += 1
+    }
+    await ctx.db.insert('socialBookings', {
+      eventId: event._id,
+      fromUserId: `${SEED_PREFIX}5`,
+      toUserId: userId,
+      slotStart: slots[2].start,
+      slotEnd: slots[2].end,
+      note: '¿Te parece si hablamos de cómo empezar en evals?',
+      status: 'proposed',
+      createdAt: now,
+    })
+    return { firstSlotStart, booked, proposed: 1 }
+  },
+})
+
+/**
+ * Have the demo attendees accept every proposal a real account sent them
+ * that is still waiting. Returns how many became bookings; one that can't
+ * (the time is taken or full) is left as it is.
+ */
+export const seedAcceptProposals = internalMutation({
+  args: { orgSlug: v.string(), email: v.string() },
+  returns: v.number(),
+  handler: async (ctx, { orgSlug, email }) => {
+    const { event, userId } = await demoBookingContext(ctx, orgSlug, email)
+    const sent = await ctx.db
+      .query('socialBookings')
+      .withIndex('by_eventId_and_fromUserId_and_status', (q) =>
+        q
+          .eq('eventId', event._id)
+          .eq('fromUserId', userId)
+          .eq('status', 'proposed'),
+      )
+      .take(50)
+    let accepted = 0
+    for (const row of sent) {
+      if (!row.toUserId.startsWith(SEED_PREFIX)) continue
+      try {
+        await acceptProposal(ctx, row)
+        accepted += 1
+      } catch (error) {
+        console.warn('Proposal not accepted', row._id, error)
+      }
+    }
+    return accepted
+  },
+})
+
 /** Make an existing account an admin of the org (dev convenience). */
 export const grantOrgAdminByEmail = internalMutation({
   args: { orgSlug: v.string(), email: v.string() },
@@ -342,6 +506,7 @@ export const clearDemoEvent = internalMutation({
         'socialMeetingRequests',
         'socialMeetings',
         'socialMeetingNotes',
+        'socialBookings',
         'socialSuggestions',
         'socialSuggestionCandidates',
         'socialSuggestionRuns',

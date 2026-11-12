@@ -56,6 +56,8 @@ const eventPublicValidator = v.object({
   meetingsOpenAt: v.number(),
   meetingsCloseAt: v.number(),
   meetingMinutes: v.number(),
+  // Whether attendees can book 1:1s for a set time at this event.
+  bookingEnabled: v.boolean(),
   focus: v.union(v.string(), v.null()),
   viewerIsAdmin: v.boolean(),
 })
@@ -192,6 +194,7 @@ export const getEventPage = query({
       meetingsOpenAt: meetingsWindow(event).openAt,
       meetingsCloseAt: meetingsWindow(event).closeAt,
       meetingMinutes: event.meetingMinutes,
+      bookingEnabled: event.bookingEnabled === true,
       focus: focusFromPrompt(event.matchingPrompt),
       viewerIsAdmin,
     }
@@ -547,6 +550,8 @@ export const updateEvent = mutation({
     // name, time or place. Left out, Luma is told not to.
     notifyGuests: v.optional(v.boolean()),
     autoApproveKnown: v.optional(v.boolean()),
+    // Whether attendees can book 1:1s for a set time.
+    bookingEnabled: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, { eventId, notifyGuests, ...fields }) => {
@@ -596,6 +601,9 @@ export const updateEvent = mutation({
     }
     if (fields.autoApproveKnown !== undefined) {
       patch.autoApproveKnown = fields.autoApproveKnown
+    }
+    if (fields.bookingEnabled !== undefined) {
+      patch.bookingEnabled = fields.bookingEnabled
     }
     await ctx.db.patch('socialEvents', eventId, patch)
 

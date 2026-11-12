@@ -93,6 +93,12 @@ export type MeetingErrorCode =
   | 'ended'
   | 'extension_limit'
   | 'not_found'
+  // Only at events with booking on: a booked 1:1 of the person acting
+  // ('self') or of the other one starts too soon for a meeting now, or for
+  // more time in the one in progress.
+  | 'self_booking_soon'
+  | 'they_booking_soon'
+  | 'extension_booking'
 
 export type MeetingErrorData = { code: MeetingErrorCode; message: string }
 
@@ -167,4 +173,313 @@ export function suggestionOutcome(input: {
  */
 export function meetingNoteToStore(text: string): string | null {
   return text.trim().slice(0, MAX_MEETING_NOTE_LENGTH).trimEnd() || null
+}
+
+// ── Booked 1:1s (events with `bookingEnabled`) ─────────────────────────
+
+// How long after a slot starts the person who is there waits for the other
+// before they can release the booking.
+export const NO_SHOW_GRACE_MS = 5 * 60 * 1000
+// A meet-now meeting needs at least this long before either person's next
+// booked 1:1; with less, it can't start.
+export const MIN_MEET_NOW_MS = 5 * 60 * 1000
+// Proposals a person can have waiting for an answer at once.
+export const MAX_PENDING_PROPOSALS = 10
+// No event has more slots than this; only stops a bad window from looping.
+const MAX_SLOTS = 500
+
+/** Why a booking action was refused. Sent as ConvexError data `{ code }`. */
+export type BookingErrorCode =
+  | 'booking_off'
+  | 'not_attendee'
+  | 'self'
+  | 'not_found'
+  | 'slot_invalid'
+  | 'slot_past'
+  | 'self_booked'
+  | 'they_booked'
+  | 'slot_full'
+  | 'already_booked'
+  | 'limit'
+  | 'proposal_expired'
+  | 'not_started'
+  | 'slot_over'
+  | 'self_in_meeting'
+  | 'they_in_meeting'
+  | 'release_too_early'
+
+export type BookingErrorData = { code: BookingErrorCode; message: string }
+
+/** A stretch of time: a slot, or the time a booking holds. */
+export type TimeSpan = { start: number; end: number }
+
+export function spansOverlap(a: TimeSpan, b: TimeSpan): boolean {
+  return a.start < b.end && b.start < a.end
+}
+
+/**
+ * Whether attendees can book 1:1s at an event: the setting is on and the
+ * event is not a draft. Unlike meet-now, booking needs neither the 1:1
+ * window to be open nor anyone to be at the event.
+ */
+export function bookingOpen(event: {
+  status: SocialEventStatus
+  bookingEnabled?: boolean
+}): boolean {
+  return event.bookingEnabled === true && event.status !== 'draft'
+}
+
+/**
+ * The slots of an event: its 1:1 window cut into consecutive stretches of
+ * `meetingMinutes`, starting when the window opens. Time left over at the end
+ * that doesn't fit a whole slot is not a slot.
+ */
+export function bookingSlots(
+  window: { openAt: number; closeAt: number },
+  meetingMinutes: number,
+): Array<TimeSpan> {
+  const length = meetingMinutes * 60 * 1000
+  if (!(length > 0)) return []
+  const slots: Array<TimeSpan> = []
+  for (
+    let start = window.openAt;
+    start + length <= window.closeAt && slots.length < MAX_SLOTS;
+    start += length
+  ) {
+    slots.push({ start, end: start + length })
+  }
+  return slots
+}
+
+/** The event's slot that starts at `start`, or null when there is none. */
+export function slotStartingAt(
+  window: { openAt: number; closeAt: number },
+  meetingMinutes: number,
+  start: number,
+): TimeSpan | null {
+  return (
+    bookingSlots(window, meetingMinutes).find((s) => s.start === start) ?? null
+  )
+}
+
+/** A booked 1:1's time and the number of the place reserved for it, if any. */
+export type Reservation = TimeSpan & { spotNumber: number | null }
+
+/**
+ * Capacity rule. The place a new booking in `slot` gets:
+ * - an event with no places at all books without one (`spotNumber` null):
+ *   the two people agree where to meet, as a meet-now meeting does when
+ *   every place is taken;
+ * - otherwise each place holds one booked 1:1 per slot, so an event with S
+ *   places books S per slot; the booking gets the highest-numbered place
+ *   that is free in the slot (meet-now takes the lowest, so the two rarely
+ *   want the same one);
+ * - once every place is reserved, the slot is not bookable.
+ */
+export function placeForBooking(
+  spotNumbers: ReadonlyArray<number>,
+  slot: TimeSpan,
+  reservations: ReadonlyArray<Reservation>,
+): { bookable: true; spotNumber: number | null } | { bookable: false } {
+  if (spotNumbers.length === 0) return { bookable: true, spotNumber: null }
+  const taken = new Set(
+    reservations.filter((r) => spansOverlap(r, slot)).map((r) => r.spotNumber),
+  )
+  const free = spotNumbers.filter((n) => !taken.has(n))
+  if (free.length === 0) return { bookable: false }
+  return { bookable: true, spotNumber: Math.max(...free) }
+}
+
+/** Why a slot can't be proposed between two people, each with its message. */
+export type SlotBlock = Extract<
+  BookingErrorCode,
+  'slot_past' | 'self_booked' | 'they_booked' | 'slot_full'
+>
+
+/**
+ * Why `slot` can't be booked between two people at `now`, or null when it
+ * can: it has to start in the future, both have to be free in it, and it
+ * has to have a place left (see placeForBooking).
+ */
+export function slotBlock(input: {
+  slot: TimeSpan
+  now: number
+  // The booked 1:1s each of the two already has.
+  mine: ReadonlyArray<TimeSpan>
+  theirs: ReadonlyArray<TimeSpan>
+  spotNumbers: ReadonlyArray<number>
+  // Every booked 1:1 of the event.
+  reservations: ReadonlyArray<Reservation>
+}): SlotBlock | null {
+  const { slot } = input
+  if (slot.start <= input.now) return 'slot_past'
+  if (input.mine.some((b) => spansOverlap(b, slot))) return 'self_booked'
+  if (input.theirs.some((b) => spansOverlap(b, slot))) return 'they_booked'
+  if (!placeForBooking(input.spotNumbers, slot, input.reservations).bookable) {
+    return 'slot_full'
+  }
+  return null
+}
+
+/**
+ * Whether a proposal can still be answered at `now`: it is waiting and its
+ * slot hasn't started. An unanswered proposal expires when its slot starts.
+ */
+export function proposalOpen(
+  proposal: { status: string; slotStart: number },
+  now: number,
+): boolean {
+  return proposal.status === 'proposed' && proposal.slotStart > now
+}
+
+/**
+ * When a person's next booked 1:1 starts: the earliest start among their
+ * bookings that haven't ended at `now`. A time in the past means one is due
+ * right now. Null without any.
+ */
+export function nextBookingStart(
+  bookings: ReadonlyArray<TimeSpan>,
+  now: number,
+): number | null {
+  const starts = bookings.filter((b) => b.end > now).map((b) => b.start)
+  return starts.length > 0 ? Math.min(...starts) : null
+}
+
+/**
+ * Meet-now next to a booking. When a meeting that starts at `now` ends, or
+ * who keeps it from starting:
+ * - with booking off, or when neither person has a booked 1:1 coming, it
+ *   runs its full length, as it always did;
+ * - otherwise it ends when the first of their booked 1:1s starts, so it
+ *   never runs into one;
+ * - if that leaves less than MIN_MEET_NOW_MS, it can't start: `blockedBy`
+ *   says whose booking is in the way ('self' is the person acting).
+ */
+export function meetNowWindow(input: {
+  bookingEnabled: boolean
+  now: number
+  meetingMinutes: number
+  selfNextBookingAt: number | null
+  theirNextBookingAt: number | null
+}): { endsAt: number } | { blockedBy: 'self' | 'they' } {
+  const fullEnd = input.now + input.meetingMinutes * 60 * 1000
+  if (!input.bookingEnabled) return { endsAt: fullEnd }
+  const self = input.selfNextBookingAt ?? Infinity
+  const they = input.theirNextBookingAt ?? Infinity
+  const endsAt = Math.min(fullEnd, self, they)
+  if (endsAt === fullEnd) return { endsAt }
+  if (endsAt - input.now < MIN_MEET_NOW_MS) {
+    return { blockedBy: self <= they ? 'self' : 'they' }
+  }
+  return { endsAt }
+}
+
+/**
+ * The places a meeting running from `from` to `to` may not take because a
+ * booked 1:1 has them reserved in that time. With booking off, none: a
+ * meet-now meeting takes any free place, as it always did.
+ */
+export function spotsHeldForBookings(input: {
+  bookingEnabled: boolean
+  reservations: ReadonlyArray<Reservation>
+  from: number
+  to: number
+}): Array<number> {
+  if (!input.bookingEnabled) return []
+  const time = { start: input.from, end: input.to }
+  return input.reservations.flatMap((r) =>
+    r.spotNumber !== null && spansOverlap(r, time) ? [r.spotNumber] : [],
+  )
+}
+
+/**
+ * How many of the `granted` extension minutes a meeting ending at `endsAt`
+ * gets when the first booked 1:1 of either person starts at
+ * `nextBookingAt`: only those that fit before it. With booking off, or no
+ * booking coming, all of them.
+ */
+export function extensionBeforeBooking(input: {
+  bookingEnabled: boolean
+  granted: number
+  endsAt: number
+  nextBookingAt: number | null
+}): number {
+  if (!input.bookingEnabled || input.nextBookingAt === null) {
+    return input.granted
+  }
+  const room = Math.floor((input.nextBookingAt - input.endsAt) / 60_000)
+  return Math.max(0, Math.min(input.granted, room))
+}
+
+/**
+ * Where a booked 1:1 stands for one of its two people at `now`:
+ * - upcoming: its slot hasn't started;
+ * - confirm: the slot is on and they haven't said they are there;
+ * - waiting: they said so and the other hasn't, within NO_SHOW_GRACE_MS of
+ *   the slot's start;
+ * - can_release: still waiting after that. No-show rule: they can release
+ *   the booking and be free again, and the other is told they missed it;
+ * - over: the slot ended without the two starting.
+ * Once both have said they are there the meeting starts and the booking is
+ * no longer 'booked', so there is no stage for it.
+ */
+export type BookingStage =
+  | 'upcoming'
+  | 'confirm'
+  | 'waiting'
+  | 'can_release'
+  | 'over'
+
+export function bookingStage(
+  booking: TimeSpan & { selfReadyAt: number | null },
+  now: number,
+): BookingStage {
+  if (now < booking.start) return 'upcoming'
+  if (now >= booking.end) return 'over'
+  if (booking.selfReadyAt === null) return 'confirm'
+  return now < booking.start + NO_SHOW_GRACE_MS ? 'waiting' : 'can_release'
+}
+
+export type BookingStatus =
+  | 'proposed'
+  | 'booked'
+  | 'started'
+  | 'declined'
+  | 'withdrawn'
+  | 'expired'
+  | 'cancelled'
+  | 'no_show'
+
+/** What a person is told about a proposal or booking that didn't happen. */
+export type BookingNotice = 'declined' | 'expired' | 'cancelled' | 'no_show'
+
+/**
+ * The notice `viewerId` gets about a row that ended without a meeting, or
+ * null when they get none: the proposer hears that their proposal was
+ * declined or expired; the other person hears that a booking was cancelled;
+ * the person who wasn't there hears that the other released it. Whoever did
+ * it themselves is not told, and neither is anyone once it is dismissed.
+ */
+export function bookingNoticeFor(
+  row: {
+    status: BookingStatus
+    fromUserId: string
+    closedBy?: string
+    acknowledgedAt?: number
+  },
+  viewerId: string,
+): BookingNotice | null {
+  if (row.acknowledgedAt !== undefined) return null
+  switch (row.status) {
+    case 'declined':
+    case 'expired':
+      return row.fromUserId === viewerId ? row.status : null
+    case 'cancelled':
+    case 'no_show':
+      return row.closedBy !== undefined && row.closedBy !== viewerId
+        ? row.status
+        : null
+    default:
+      return null
+  }
 }

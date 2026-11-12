@@ -1,7 +1,8 @@
 import { ConvexError } from 'convex/values'
 import { internal } from '../_generated/api'
 import { requireOrgAdmin } from '../lib/auth'
-import { DEFAULT_EVENT_HOURS } from './constants'
+import { DEFAULT_EVENT_HOURS, nextBookingStart } from './constants'
+import type { Reservation } from './constants'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 
@@ -644,4 +645,82 @@ export async function findSuggestion(
     )
     .take(20)
   return rows.find((r) => r.suggestedUserId === other) ?? null
+}
+
+// ── Booked 1:1s ─────────────────────────────────────────────────────────
+
+// The longest a slot can be: updateEvent allows meetings of up to 120
+// minutes. Bounds how far before a time a slot overlapping it can start.
+const MAX_SLOT_MS = 120 * 60 * 1000
+
+/** A booking's time and reserved place, as the capacity rules read them. */
+export function reservationOf(row: Doc<'socialBookings'>): Reservation {
+  return {
+    start: row.slotStart,
+    end: row.slotEnd,
+    spotNumber: row.spotNumber ?? null,
+  }
+}
+
+/**
+ * A person's 1:1s that are booked: accepted, and neither started nor called
+ * off. Past ones stay 'booked', so callers compare the times with the clock.
+ */
+export async function bookedRowsOf(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+  userId: string,
+): Promise<Array<Doc<'socialBookings'>>> {
+  const [asFrom, asTo] = await Promise.all([
+    ctx.db
+      .query('socialBookings')
+      .withIndex('by_eventId_and_fromUserId_and_status', (q) =>
+        q
+          .eq('eventId', eventId)
+          .eq('fromUserId', userId)
+          .eq('status', 'booked'),
+      )
+      .take(200),
+    ctx.db
+      .query('socialBookings')
+      .withIndex('by_eventId_and_toUserId_and_status', (q) =>
+        q.eq('eventId', eventId).eq('toUserId', userId).eq('status', 'booked'),
+      )
+      .take(200),
+  ])
+  return [...asFrom, ...asTo]
+}
+
+/** When a person's next booked 1:1 starts (see nextBookingStart). */
+export async function nextBookingStartFor(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+  userId: string,
+  now: number,
+): Promise<number | null> {
+  const rows = await bookedRowsOf(ctx, eventId, userId)
+  return nextBookingStart(rows.map(reservationOf), now)
+}
+
+/**
+ * The event's booked 1:1s whose slot can overlap the time from `from` to
+ * `to`: those that start before `to` and no more than the longest slot
+ * before `from`. Callers still check the overlap itself.
+ */
+export async function bookedRowsAround(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+  from: number,
+  to: number,
+): Promise<Array<Doc<'socialBookings'>>> {
+  return await ctx.db
+    .query('socialBookings')
+    .withIndex('by_eventId_and_status_and_slotStart', (q) =>
+      q
+        .eq('eventId', eventId)
+        .eq('status', 'booked')
+        .gt('slotStart', from - MAX_SLOT_MS)
+        .lt('slotStart', to),
+    )
+    .take(1000)
 }

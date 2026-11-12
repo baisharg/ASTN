@@ -405,6 +405,12 @@ const meetingErrorCopy = {
     ended: 'Esta reunión ya terminó.',
     extension_limit: 'Esta reunión ya no se puede extender más.',
     not_found: 'Eso ya no existe.',
+    self_booking_soon:
+      'Tenés un 1:1 reservado que está por empezar. Miralo en tu agenda.',
+    they_booking_soon:
+      'Esta persona tiene un 1:1 reservado que está por empezar. Probá más tarde o proponele un horario.',
+    extension_booking:
+      'No se puede extender: uno de los dos tiene un 1:1 reservado a continuación.',
   },
   en: {
     closed: '1:1s are not open right now.',
@@ -423,6 +429,12 @@ const meetingErrorCopy = {
     ended: 'This meeting has already ended.',
     extension_limit: "This meeting can't be extended any further.",
     not_found: 'That no longer exists.',
+    self_booking_soon:
+      'You have a booked 1:1 about to start. Check your agenda.',
+    they_booking_soon:
+      'They have a booked 1:1 about to start. Try later, or propose a time.',
+    extension_booking:
+      "It can't be extended: one of you has a booked 1:1 right after.",
   },
 } satisfies Record<SocialLang, Record<MeetingErrorCode, string>>
 

@@ -8,16 +8,20 @@ import {
   MAX_NOTE_LENGTH,
   MAX_OUTGOING_PENDING,
   compareAttendees,
+  extensionBeforeBooking,
   extensionMinutesGranted,
   meetingNoteToStore,
+  meetNowWindow,
   meetingsOpenNow,
   requestExpiryTime,
   requestPastExpiry,
+  spotsHeldForBookings,
   suggestionOutcome,
 } from './constants'
 import {
   approvedGuests,
   attendeeCard,
+  bookedRowsAround,
   canViewSocialProfile,
   findSuggestion,
   getGuestByUser,
@@ -25,7 +29,9 @@ import {
   initialsOf,
   isProfileReadyForMatching,
   meetingsWindow,
+  nextBookingStartFor,
   requireEventAdmin,
+  reservationOf,
   socialProfileView,
 } from './lib'
 import { availabilityValidator } from './validators'
@@ -50,7 +56,7 @@ async function requireApprovedAttendee(
   return guest
 }
 
-async function activeMeetingFor(
+export async function activeMeetingFor(
   ctx: QueryCtx | MutationCtx,
   eventId: Id<'socialEvents'>,
   userId: string,
@@ -157,7 +163,7 @@ async function attendeePresence(
 }
 
 /** Record that `userId` is at the event, unless that is already known. */
-async function recordArrival(
+export async function recordArrival(
   ctx: MutationCtx,
   eventId: Id<'socialEvents'>,
   userId: string,
@@ -715,12 +721,26 @@ export const markArrived = mutation({
   },
 })
 
-/** Start the meeting `userA` asked for and `userB` accepted. */
-async function startMeeting(
+/**
+ * Start the meeting `userA` asked for and `userB` accepted, at the lowest
+ * free place. At an event with booking on, a place reserved for a booked 1:1
+ * during the meeting is not free.
+ *
+ * `plan` is for the callers that decide more than that: `endsAt` when the
+ * meeting doesn't run its full length, and, for a booked 1:1 that is
+ * starting, its own booking (whose reservation doesn't count against it) and
+ * the place reserved for it, taken when it is free.
+ */
+export async function startMeeting(
   ctx: MutationCtx,
   event: Doc<'socialEvents'>,
   userA: string,
   userB: string,
+  plan: {
+    endsAt?: number
+    bookingId?: Id<'socialBookings'>
+    reservedSpotNumber?: number
+  } = {},
 ): Promise<Id<'socialMeetings'>> {
   const now = Date.now()
   const active = await ctx.db
@@ -734,9 +754,25 @@ async function startMeeting(
     .query('socialEventSpots')
     .withIndex('by_eventId_and_number', (q) => q.eq('eventId', event._id))
     .take(200)
-  const free = spots.find((s) => !taken.has(s._id))
+  const endsAt = plan.endsAt ?? now + event.meetingMinutes * 60 * 1000
 
-  const endsAt = now + event.meetingMinutes * 60 * 1000
+  const bookingEnabled = event.bookingEnabled === true
+  const held = spotsHeldForBookings({
+    bookingEnabled,
+    reservations: bookingEnabled
+      ? (await bookedRowsAround(ctx, event._id, now, endsAt))
+          .filter((row) => row._id !== plan.bookingId)
+          .map(reservationOf)
+      : [],
+    from: now,
+    to: endsAt,
+  })
+  const isFree = (spot: Doc<'socialEventSpots'>) =>
+    !taken.has(spot._id) && !held.includes(spot.number)
+  const free =
+    spots.find((s) => s.number === plan.reservedSpotNumber && isFree(s)) ??
+    spots.find(isFree)
+
   const meetingId = await ctx.db.insert('socialMeetings', {
     eventId: event._id,
     userA,
@@ -750,6 +786,42 @@ async function startMeeting(
     meetingId,
   })
   return meetingId
+}
+
+/**
+ * When a meet-now meeting between `selfId` (the person acting) and
+ * `otherId` would end if it started now. At an event with booking on it
+ * can't run into a booked 1:1 of either, and is refused when one starts too
+ * soon (see meetNowWindow); otherwise it runs its full length.
+ */
+async function meetNowEnd(
+  ctx: MutationCtx,
+  event: Doc<'socialEvents'>,
+  selfId: string,
+  otherId: string,
+): Promise<number> {
+  const now = Date.now()
+  const bookingEnabled = event.bookingEnabled === true
+  const [selfNextBookingAt, theirNextBookingAt] = bookingEnabled
+    ? await Promise.all([
+        nextBookingStartFor(ctx, event._id, selfId, now),
+        nextBookingStartFor(ctx, event._id, otherId, now),
+      ])
+    : [null, null]
+  const window = meetNowWindow({
+    bookingEnabled,
+    now,
+    meetingMinutes: event.meetingMinutes,
+    selfNextBookingAt,
+    theirNextBookingAt,
+  })
+  if ('blockedBy' in window) {
+    if (window.blockedBy === 'self') {
+      refuse('self_booking_soon', 'You have a booked 1:1 about to start')
+    }
+    refuse('they_booking_soon', 'They have a booked 1:1 about to start')
+  }
+  return window.endsAt
 }
 
 /**
@@ -774,6 +846,12 @@ async function acceptRequest(
   if ((await availabilityFor(ctx, event._id, request.fromUserId)) === 'busy') {
     refuse('they_unavailable', 'They are no longer available')
   }
+  const endsAt = await meetNowEnd(
+    ctx,
+    event,
+    request.toUserId,
+    request.fromUserId,
+  )
   // Accepting means being there; the requester was recorded when they asked.
   await recordArrival(ctx, event._id, request.toUserId)
   const meetingId = await startMeeting(
@@ -781,6 +859,7 @@ async function acceptRequest(
     event,
     request.fromUserId,
     request.toUserId,
+    { endsAt },
   )
   await ctx.db.patch('socialMeetingRequests', request._id, {
     status: 'accepted',
@@ -868,6 +947,11 @@ export const requestMeeting = mutation({
     const mine = await pendingRequestsFrom(ctx, eventId, userId)
     const existing = mine.find((r) => r.toUserId === toUserId)
     if (existing) return { requestId: existing._id, meetingId: null }
+    // With booking on: no asking for a meeting that a booked 1:1 of either
+    // person wouldn't leave time for. Accepting checks it again.
+    if (event.bookingEnabled === true) {
+      await meetNowEnd(ctx, event, userId, toUserId)
+    }
     if (mine.length >= MAX_OUTGOING_PENDING) {
       refuse(
         'limit',
@@ -1028,9 +1112,31 @@ export const extendMeeting = mutation({
     const meeting = await requireParticipant(ctx, meetingId)
     if (meeting.status !== 'active') refuse('ended', 'This meeting has ended')
     const used = meeting.extendedMinutes ?? 0
-    const add = extensionMinutesGranted(used, minutes)
-    if (add === 0) {
+    const granted = extensionMinutesGranted(used, minutes)
+    if (granted === 0) {
       refuse('extension_limit', "This meeting can't be extended any further")
+    }
+    // With booking on, the extra time has to fit before the next booked 1:1
+    // of either person.
+    const event = await ctx.db.get('socialEvents', meeting.eventId)
+    const bookingEnabled = event?.bookingEnabled === true
+    const nextBookings = bookingEnabled
+      ? (
+          await Promise.all(
+            [meeting.userA, meeting.userB].map((id) =>
+              nextBookingStartFor(ctx, meeting.eventId, id, Date.now()),
+            ),
+          )
+        ).flatMap((start) => (start === null ? [] : [start]))
+      : []
+    const add = extensionBeforeBooking({
+      bookingEnabled,
+      granted,
+      endsAt: meeting.endsAt,
+      nextBookingAt: nextBookings.length > 0 ? Math.min(...nextBookings) : null,
+    })
+    if (add === 0) {
+      refuse('extension_booking', 'One of you has a booked 1:1 next')
     }
     const endsAt = meeting.endsAt + add * 60 * 1000
     await ctx.db.patch('socialMeetings', meetingId, {
