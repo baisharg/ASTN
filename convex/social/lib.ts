@@ -265,6 +265,47 @@ export function isProfileReadyForMatching(
   return profileMissingForMatching(profile).length === 0
 }
 
+/** Whether the person turned off the suggestions of who to meet. */
+export function optedOutOfSuggestions(
+  profile: Doc<'profiles'> | null,
+): boolean {
+  return profile?.socialSuggestionsOptOut === true
+}
+
+/**
+ * Whether a person is ranked for suggestions of who to meet: their profile
+ * is ready for matching and they haven't turned suggestions off.
+ */
+export function takesPartInSuggestions(
+  profile: Doc<'profiles'> | null,
+): boolean {
+  return isProfileReadyForMatching(profile) && !optedOutOfSuggestions(profile)
+}
+
+/**
+ * Which of `userIds` turned suggestions off. Reads no profile, so it suits
+ * callers that only have user ids; with the profile at hand, use
+ * optedOutOfSuggestions.
+ */
+export async function suggestionOptOutsAmong(
+  ctx: QueryCtx | MutationCtx,
+  userIds: Array<string>,
+): Promise<Set<string>> {
+  const optedOut = await Promise.all(
+    userIds.map((userId) =>
+      ctx.db
+        .query('profiles')
+        .withIndex('by_socialSuggestionsOptOut_and_userId', (q) =>
+          q.eq('socialSuggestionsOptOut', true).eq('userId', userId),
+        )
+        .first(),
+    ),
+  )
+  return new Set(
+    optedOut.flatMap((profile) => (profile ? [profile.userId] : [])),
+  )
+}
+
 /**
  * Whether `viewerId` may see `ownerId`'s event profile. Owners always can;
  * otherwise it depends on the owner's socialVisibility:
@@ -584,13 +625,18 @@ export async function attendeeCard(
   }
 }
 
-/** The suggestion `owner` got about `other`, if any. */
+/**
+ * The suggestion `owner` got about `other`, if any. None once either of them
+ * turned suggestions off, even while an older row about them is still stored.
+ */
 export async function findSuggestion(
   ctx: QueryCtx | MutationCtx,
   eventId: Id<'socialEvents'>,
   owner: string,
   other: string,
 ): Promise<Doc<'socialSuggestions'> | null> {
+  const optedOut = await suggestionOptOutsAmong(ctx, [owner, other])
+  if (optedOut.size > 0) return null
   const rows = await ctx.db
     .query('socialSuggestions')
     .withIndex('by_eventId_and_userId_and_rank', (q) =>
