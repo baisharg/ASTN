@@ -710,6 +710,10 @@ export async function nextBookingStartFor(
  * The event's booked 1:1s whose slot can overlap the time from `from` to
  * `to`: those that start before `to` and no more than the longest slot
  * before `from`. Callers still check the overlap itself.
+ *
+ * Reads every row in that range, because capacity is decided from it: a
+ * row left out would have its place given away twice. The range bounds the
+ * read (at most one booking per place, or per pair of attendees, per slot).
  */
 export async function bookedRowsAround(
   ctx: QueryCtx | MutationCtx,
@@ -717,7 +721,8 @@ export async function bookedRowsAround(
   from: number,
   to: number,
 ): Promise<Array<Doc<'socialBookings'>>> {
-  return await ctx.db
+  const rows: Array<Doc<'socialBookings'>> = []
+  const inRange = ctx.db
     .query('socialBookings')
     .withIndex('by_eventId_and_status_and_slotStart', (q) =>
       q
@@ -726,5 +731,6 @@ export async function bookedRowsAround(
         .gt('slotStart', from - MAX_SLOT_MS)
         .lt('slotStart', to),
     )
-    .take(1000)
+  for await (const row of inRange) rows.push(row)
+  return rows
 }

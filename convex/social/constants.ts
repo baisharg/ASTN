@@ -413,7 +413,8 @@ export type SlotBlock = Extract<
 export function slotBlock(input: {
   slot: TimeSpan
   now: number
-  // The booked 1:1s each of the two already has.
+  // The time each of the two is already taken: their booked 1:1s and the
+  // meeting they are in.
   mine: ReadonlyArray<TimeSpan>
   theirs: ReadonlyArray<TimeSpan>
   spotNumbers: ReadonlyArray<number>
@@ -503,9 +504,9 @@ export function spotsHeldForBookings(input: {
 
 /**
  * How many of the `granted` extension minutes a meeting ending at `endsAt`
- * gets when the first booked 1:1 of either person starts at
- * `nextBookingAt`: only those that fit before it. With booking off, or no
- * booking coming, all of them.
+ * gets when the first booked 1:1 in its way starts at `nextBookingAt` (one
+ * of either person's, or one with the meeting's place reserved): only those
+ * that fit before it. With booking off, or no booking coming, all of them.
  */
 export function extensionBeforeBooking(input: {
   bookingEnabled: boolean

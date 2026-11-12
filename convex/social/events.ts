@@ -617,7 +617,8 @@ export const updateEvent = mutation({
       patch.autoApproveKnown = fields.autoApproveKnown
     }
     if (fields.bookingEnabled !== undefined) {
-      patch.bookingEnabled = fields.bookingEnabled
+      // Off is stored as no field at all (see the schema).
+      patch.bookingEnabled = fields.bookingEnabled ? true : undefined
     }
     if (fields.myMeetingsEnabled !== undefined) {
       patch.myMeetingsEnabled = fields.myMeetingsEnabled

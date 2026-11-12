@@ -221,6 +221,13 @@ describe('slotBlock: which slots two people can book', () => {
     ).toBe(null)
   })
 
+  test('a meeting in progress that runs into the slot takes it too', () => {
+    // A meet-now meeting from 16:10 to 16:30 leaves no 16:20 slot.
+    expect(slotBlock({ ...base, mine: [span(10, 30)] })).toBe('self_booked')
+    expect(slotBlock({ ...base, theirs: [span(10, 30)] })).toBe('they_booked')
+    expect(slotBlock({ ...base, mine: [span(0, 20)] })).toBe(null)
+  })
+
   test('a slot whose places are all reserved is not offered', () => {
     expect(
       slotBlock({

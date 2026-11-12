@@ -15,8 +15,10 @@ import {
   meetingNoteToStore,
   meetNowWindow,
   meetingsOpenNow,
+  nextBookingStart,
   requestExpiryTime,
   requestPastExpiry,
+  spansOverlap,
   spotsHeldForBookings,
   suggestionOutcome,
 } from './constants'
@@ -1091,6 +1093,46 @@ export const expireRequestIfDue = internalMutation({
   },
 })
 
+/**
+ * When the first booked 1:1 that more time for `meeting` could run into
+ * starts: one of either person's, or one that has the meeting's place
+ * reserved within the `minutes` asked for. Null when there is none.
+ */
+async function nextBookingInTheWay(
+  ctx: MutationCtx,
+  meeting: Doc<'socialMeetings'>,
+  minutes: number,
+): Promise<number | null> {
+  const now = Date.now()
+  const starts: Array<number | null> = await Promise.all(
+    [meeting.userA, meeting.userB].map((id) =>
+      nextBookingStartFor(ctx, meeting.eventId, id, now),
+    ),
+  )
+  const spot = meeting.spotId
+    ? await ctx.db.get('socialEventSpots', meeting.spotId)
+    : null
+  if (spot) {
+    const extraTime = {
+      start: meeting.endsAt,
+      end: meeting.endsAt + minutes * 60 * 1000,
+    }
+    const reserved = (
+      await bookedRowsAround(
+        ctx,
+        meeting.eventId,
+        extraTime.start,
+        extraTime.end,
+      )
+    )
+      .map(reservationOf)
+      .filter((r) => r.spotNumber === spot.number && spansOverlap(r, extraTime))
+    starts.push(nextBookingStart(reserved, extraTime.start))
+  }
+  const known = starts.flatMap((start) => (start === null ? [] : [start]))
+  return known.length > 0 ? Math.min(...known) : null
+}
+
 async function requireParticipant(
   ctx: MutationCtx,
   meetingId: Id<'socialMeetings'>,
@@ -1119,26 +1161,19 @@ export const extendMeeting = mutation({
       refuse('extension_limit', "This meeting can't be extended any further")
     }
     // With booking on, the extra time has to fit before the next booked 1:1
-    // of either person.
+    // of either person, and before the next one with this place reserved.
     const event = await ctx.db.get('socialEvents', meeting.eventId)
     const bookingEnabled = event?.bookingEnabled === true
-    const nextBookings = bookingEnabled
-      ? (
-          await Promise.all(
-            [meeting.userA, meeting.userB].map((id) =>
-              nextBookingStartFor(ctx, meeting.eventId, id, Date.now()),
-            ),
-          )
-        ).flatMap((start) => (start === null ? [] : [start]))
-      : []
     const add = extensionBeforeBooking({
       bookingEnabled,
       granted,
       endsAt: meeting.endsAt,
-      nextBookingAt: nextBookings.length > 0 ? Math.min(...nextBookings) : null,
+      nextBookingAt: bookingEnabled
+        ? await nextBookingInTheWay(ctx, meeting, granted)
+        : null,
     })
     if (add === 0) {
-      refuse('extension_booking', 'One of you has a booked 1:1 next')
+      refuse('extension_booking', 'A booked 1:1 comes right after this one')
     }
     const endsAt = meeting.endsAt + add * 60 * 1000
     await ctx.db.patch('socialMeetings', meetingId, {

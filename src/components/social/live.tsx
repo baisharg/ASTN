@@ -412,7 +412,7 @@ const meetingErrorCopy = {
     they_booking_soon:
       'Esta persona tiene un 1:1 reservado que está por empezar. Probá más tarde o proponele un horario.',
     extension_booking:
-      'No se puede extender: uno de los dos tiene un 1:1 reservado a continuación.',
+      'No se puede extender más: hay un 1:1 reservado a continuación, de uno de ustedes o en este lugar.',
   },
   en: {
     closed: '1:1s are not open right now.',
@@ -436,7 +436,7 @@ const meetingErrorCopy = {
     they_booking_soon:
       'They have a booked 1:1 about to start. Try later, or propose a time.',
     extension_booking:
-      "It can't be extended: one of you has a booked 1:1 right after.",
+      "It can't be extended further: a booked 1:1 comes right after, for one of you or at this place.",
   },
 } satisfies Record<SocialLang, Record<MeetingErrorCode, string>>
 

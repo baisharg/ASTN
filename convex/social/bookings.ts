@@ -156,6 +156,23 @@ async function pendingProposalsOf(
 }
 
 /**
+ * The time a person is taken: their booked 1:1s, and the meeting they are
+ * in right now (which may run into a slot that is about to start).
+ */
+async function takenTimesOf(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+  userId: string,
+  booked: Array<Doc<'socialBookings'>>,
+): Promise<Array<TimeSpan>> {
+  const meeting = await activeMeetingFor(ctx, eventId, userId)
+  return [
+    ...booked.map(slotOf),
+    ...(meeting ? [{ start: meeting.startedAt, end: meeting.endsAt }] : []),
+  ]
+}
+
+/**
  * Whether `slot` can be booked between `selfId` and `otherId` at `now`, and
  * the place it would get. `alreadyBooked` is true when the two already have
  * a booked 1:1 together that hasn't ended: one at a time per pair.
@@ -183,8 +200,8 @@ async function slotAvailability(
     block: slotBlock({
       slot,
       now,
-      mine: mine.map(reservationOf),
-      theirs: theirs.map(reservationOf),
+      mine: await takenTimesOf(ctx, eventId, selfId, mine),
+      theirs: await takenTimesOf(ctx, eventId, otherId, theirs),
       spotNumbers,
       reservations,
     }),
@@ -422,8 +439,8 @@ export const getMyAgenda = query({
 
 /**
  * The event's slots, each with why the caller can't book it with
- * `withUserId` (null when they can): one of them is taken at that time, or
- * the slot has no places left. Which slots have already started is left to
+ * `withUserId` (null when they can): one of them is taken at that time (a
+ * booked 1:1, or the meeting they are in), or the slot has no places left. Which slots have already started is left to
  * the page's clock. Null unless both are approved attendees of an event
  * with booking on.
  */
@@ -473,8 +490,8 @@ export const getSlotsWith = query({
       // Every slot counts as still to come: the page hides the ones that
       // started.
       now: Number.NEGATIVE_INFINITY,
-      mine: mine.map(reservationOf),
-      theirs: theirs.map(reservationOf),
+      mine: await takenTimesOf(ctx, eventId, userId, mine),
+      theirs: await takenTimesOf(ctx, eventId, withUserId, theirs),
       spotNumbers: spots.map((s) => s.number),
       reservations: booked.map(reservationOf),
     }
