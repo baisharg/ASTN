@@ -2360,6 +2360,12 @@ export default defineSchema({
     // When the requester dismissed the notice that it was declined or
     // expired, or asked or met the same person again.
     acknowledgedAt: v.optional(v.number()),
+    // Whether each side had the other among their suggestions when they
+    // acted: the requester when they asked, the recipient when they
+    // accepted. Suggestions are replaced over time, so this is the only
+    // record. Requests from before it was recorded have neither.
+    requesterWasSuggested: v.optional(v.boolean()),
+    recipientWasSuggested: v.optional(v.boolean()),
   })
     .index('by_eventId_and_status', ['eventId', 'status'])
     .index('by_eventId_and_toUserId_and_status', [

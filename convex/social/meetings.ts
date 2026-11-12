@@ -12,6 +12,7 @@ import {
   meetingsOpenNow,
   requestExpiryTime,
   requestPastExpiry,
+  suggestionOutcome,
 } from './constants'
 import {
   approvedGuests,
@@ -784,6 +785,13 @@ async function acceptRequest(
     status: 'accepted',
     meetingId,
     respondedAt: Date.now(),
+    recipientWasSuggested:
+      (await findSuggestion(
+        ctx,
+        event._id,
+        request.toUserId,
+        request.fromUserId,
+      )) !== null,
   })
   // They are meeting now: earlier declined or expired requests between the
   // two no longer need a notice.
@@ -880,6 +888,8 @@ export const requestMeeting = mutation({
       status: 'pending',
       createdAt: now,
       expiresAt,
+      requesterWasSuggested:
+        (await findSuggestion(ctx, eventId, userId, toUserId)) !== null,
     })
     await ctx.scheduler.runAt(
       expiresAt,
@@ -1073,6 +1083,13 @@ export const getLiveOverview = query({
     activeMeetings: v.number(),
     pendingRequests: v.number(),
     meetingsSoFar: v.number(),
+    suggestionOutcome: v.object({
+      requests: v.number(),
+      requestsToSuggested: v.number(),
+      meetings: v.number(),
+      meetingsFromSuggested: v.number(),
+      chanceShare: v.union(v.number(), v.null()),
+    }),
   }),
   handler: async (ctx, { eventId }) => {
     await requireEventAdmin(ctx, eventId)
@@ -1085,20 +1102,54 @@ export const getLiveOverview = query({
           )
           .take(2000)
       ).length
-    const [activeMeetings, endedMeetings, pending] = await Promise.all([
-      countMeetings('active'),
-      countMeetings('ended'),
+    const requestsWith = (status: Doc<'socialMeetingRequests'>['status']) =>
       ctx.db
         .query('socialMeetingRequests')
         .withIndex('by_eventId_and_status', (q) =>
-          q.eq('eventId', eventId).eq('status', 'pending'),
+          q.eq('eventId', eventId).eq('status', status),
         )
-        .take(2000),
+        .take(2000)
+    const [
+      activeMeetings,
+      endedMeetings,
+      pending,
+      accepted,
+      declined,
+      cancelled,
+      expired,
+      suggestions,
+      guests,
+    ] = await Promise.all([
+      countMeetings('active'),
+      countMeetings('ended'),
+      requestsWith('pending'),
+      requestsWith('accepted'),
+      requestsWith('declined'),
+      requestsWith('cancelled'),
+      requestsWith('expired'),
+      ctx.db
+        .query('socialSuggestions')
+        .withIndex('by_eventId_and_userId_and_rank', (q) =>
+          q.eq('eventId', eventId),
+        )
+        .take(5000),
+      approvedGuests(ctx, eventId),
     ])
     return {
       activeMeetings,
       pendingRequests: pending.length,
       meetingsSoFar: activeMeetings + endedMeetings,
+      suggestionOutcome: suggestionOutcome({
+        requests: [
+          ...pending,
+          ...accepted,
+          ...declined,
+          ...cancelled,
+          ...expired,
+        ],
+        suggestionCount: suggestions.length,
+        attendeeCount: guests.filter((g) => g.userId !== undefined).length,
+      }),
     }
   },
 })
