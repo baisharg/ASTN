@@ -33,7 +33,7 @@ type CanonicalKind = 'course' | 'eoi'
 /**
  * The org's canonicals: the two application forms every new opportunity
  * copies (the EOI one for expressions of interest), the two feedback surveys
- * a new survey starts from, and the emails every new course edition uses.
+ * a new survey starts from, and the emails every new opportunity copies.
  */
 function CanonicalFormsPage() {
   const { slug } = Route.useParams()

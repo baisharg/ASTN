@@ -6,7 +6,7 @@ import {
   mutation,
   query,
 } from './_generated/server'
-import { canonicalSetFor } from './emails/templateLibrary'
+import { copyCanonicalEmails } from './emails/templateLibrary'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import {
   BAISH_ORG_SLUG,
@@ -154,6 +154,7 @@ const opportunityReturnValidator = v.object({
   courseName: v.optional(v.string()),
   courseArea: v.optional(v.string()),
   formSource: v.optional(formSourceValidator),
+  emailsCopiedAt: v.optional(v.number()),
   emailTemplateSetId: v.optional(v.id('emailTemplateSets')),
   sendApplicationReceivedEmail: v.optional(v.boolean()),
   redirectOpportunityId: v.optional(v.id('orgOpportunities')),
@@ -653,19 +654,18 @@ export async function duplicateOpportunityFor(
     formSource,
     tags: source.tags,
     isEOI: source.isEOI,
-    emailTemplateSetId:
-      (await canonicalSetFor(ctx, {
-        orgId: source.orgId,
-        formSource,
-        tags: source.tags,
-      })) ?? source.emailTemplateSetId,
-    // Inherit the on-apply kill switch so a duplicated EOI does not start
-    // emailing people the original deliberately kept quiet.
-    sendApplicationReceivedEmail: source.sendApplicationReceivedEmail,
+    emailsCopiedAt: now,
     externalUrl: source.externalUrl,
     sourceOpportunityId: source._id,
     createdAt: now,
     updatedAt: now,
+  })
+  // Like the form, the emails come from the canonical, not from the source.
+  await copyCanonicalEmails(ctx, {
+    opportunityId: copyId,
+    orgId: source.orgId,
+    tags: source.tags,
+    formSource,
   })
   // The original's poll stays with its run, but the copy needs one of its
   // own: the application form asks for availability through it.
@@ -755,15 +755,18 @@ export async function createOpportunityFor(
     formSource,
     ...(args.tags !== undefined && { tags: normalizeTags(args.tags) }),
     isEOI: args.isEOI,
-    // A course edition announces its decisions with the canonical emails.
-    emailTemplateSetId: await canonicalSetFor(ctx, {
-      orgId: args.orgId,
-      formSource,
-      tags: args.tags,
-    }),
+    emailsCopiedAt: now,
     slug: await uniqueSlug(ctx, args.orgId, args.title),
     createdAt: now,
     updatedAt: now,
+  })
+  // Its six emails: a copy of the canonical, off for anything but a course
+  // edition.
+  await copyCanonicalEmails(ctx, {
+    opportunityId,
+    orgId: args.orgId,
+    tags: args.tags,
+    formSource,
   })
 
   // Auto-provision a default availability poll so every opportunity ships

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useAction, useMutation, useQuery } from 'convex/react'
-import { ConvexError } from 'convex/values'
+import type { FunctionReturnType } from 'convex/server'
 import {
   CalendarClock,
   Check,
@@ -18,6 +18,7 @@ import {
 import { toast } from 'sonner'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
+import { useUnsavedChangesWarning } from '~/hooks/use-unsaved-changes'
 import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
 import {
@@ -53,19 +54,11 @@ import { Switch } from '~/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { Textarea } from '~/components/ui/textarea'
 
-// Emails tab for an opportunity (issue #20). Three sections:
+// Emails tab for an opportunity. Three sections:
 //   Outbox    — pending decision-email drafts; review, edit, send explicitly
 //   History   — unified log of every email sent (or blocked) for this opp
-//   Templates — the set this opportunity inherits, with per-opp overrides
+//   Templates — the opportunity's own six emails, copied from the canonical
 // Changing an application status never sends anything; it lands here first.
-
-type EmailKind =
-  | 'application_received'
-  | 'accepted'
-  | 'next_edition'
-  | 'rejected'
-  | 'redirected'
-  | 'waitlisted'
 
 export const KIND_LABELS: Record<string, string> = {
   application_received: 'Application received',
@@ -95,11 +88,7 @@ export function EmailsTab({
 }: {
   opportunity: {
     _id: Id<'orgOpportunities'>
-    orgId: Id<'organizations'>
     slug?: string
-    emailTemplateSetId?: Id<'emailTemplateSets'>
-    isEOI?: boolean
-    sendApplicationReceivedEmail?: boolean
   }
   slug: string
 }) {
@@ -139,7 +128,7 @@ export function EmailsTab({
         <HistorySection opportunityId={opportunity._id} />
       </TabsContent>
       <TabsContent value="templates" className="mt-6">
-        <TemplatesSection opportunity={opportunity} />
+        <TemplatesSection opportunityId={opportunity._id} />
       </TabsContent>
     </Tabs>
   )
@@ -613,33 +602,20 @@ function HistorySection({
 
 // ── Templates ───────────────────────────────────────────────────────────────
 
+type OpportunityEmail = FunctionReturnType<
+  typeof api.emails.templateLibrary.getOpportunityEmails
+>[number]
+
 function TemplatesSection({
-  opportunity,
+  opportunityId,
 }: {
-  opportunity: {
-    _id: Id<'orgOpportunities'>
-    orgId: Id<'organizations'>
-    slug?: string
-    emailTemplateSetId?: Id<'emailTemplateSets'>
-    isEOI?: boolean
-    sendApplicationReceivedEmail?: boolean
-  }
+  opportunityId: Id<'orgOpportunities'>
 }) {
-  const effective = useQuery(api.emails.templateLibrary.getEffectiveTemplates, {
-    opportunityId: opportunity._id,
+  const emails = useQuery(api.emails.templateLibrary.getOpportunityEmails, {
+    opportunityId,
   })
-  const setUseCanonical = useMutation(
-    api.emails.templateLibrary.setUseCanonicalEmails,
-  )
-  const setOnApply = useMutation(
-    api.emails.templateLibrary.setSendApplicationReceivedEmail,
-  )
 
-  const usesCanonical = opportunity.emailTemplateSetId != null
-  const onApplyEnabled =
-    opportunity.sendApplicationReceivedEmail ?? !(opportunity.isEOI ?? false)
-
-  if (effective === undefined) {
+  if (emails === undefined) {
     return (
       <div className="py-12 text-center">
         <Spinner className="size-8 mx-auto" />
@@ -649,91 +625,27 @@ function TemplatesSection({
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardContent className="flex items-center justify-between gap-4 py-4">
-          <div>
-            <p className="text-sm font-medium">Use the canonical emails</p>
-            <p className="text-xs text-muted-foreground">
-              The org&apos;s emails for each decision, edited in Admin →
-              Canonicals. Customize any of them for this opportunity below.
-              Turning this on gives every decision already made a pending draft
-              in the Outbox; nothing is sent until you press Send.
-            </p>
-          </div>
-          <Switch
-            checked={usesCanonical}
-            onCheckedChange={async (checked) => {
-              try {
-                await setUseCanonical({
-                  opportunityId: opportunity._id,
-                  enabled: checked,
-                })
-                toast.success(
-                  checked ? 'Canonical emails on' : 'Canonical emails off',
-                )
-              } catch (err) {
-                toast.error("Couldn't change it", {
-                  description:
-                    err instanceof ConvexError && typeof err.data === 'string'
-                      ? err.data
-                      : 'Please try again.',
-                })
-              }
-            }}
-          />
-        </CardContent>
-      </Card>
-
-      {effective && (
-        <>
-          {/* On-apply confirmation switch */}
-          <Card>
-            <CardContent className="flex items-center justify-between py-4">
-              <div>
-                <p className="text-sm font-medium">
-                  Confirmation email on apply
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Sends the "Application received" template automatically when
-                  someone applies. Applies to future applications only —
-                  toggling never emails existing applicants.
-                </p>
-              </div>
-              <Switch
-                checked={onApplyEnabled}
-                onCheckedChange={async (checked) => {
-                  await setOnApply({
-                    opportunityId: opportunity._id,
-                    enabled: checked,
-                  })
-                  toast.success(
-                    checked
-                      ? 'Confirmation email on — future applications only'
-                      : 'Confirmation email off',
-                  )
-                }}
-              />
-            </CardContent>
-          </Card>
-
-          {/* Template cards */}
-          {effective.templates.map((t) => (
-            // Key includes `overridden` so reverting to the canonical (or
-            // creating an override) remounts the card and re-inits its fields
-            // from the now-effective template.
-            <TemplateCard
-              key={`${t.kind}:${t.overridden}`}
-              opportunityId={opportunity._id}
-              template={t}
-            />
-          ))}
-        </>
-      )}
+      <p className="text-sm text-muted-foreground">
+        These emails belong to this opportunity. They started as a copy of the
+        canonical emails (Admin → Canonicals), and editing them here changes
+        nothing else. Each one sends only while its switch is on; the
+        &quot;Application received&quot; email goes out on its own when someone
+        applies, the others wait in the Outbox until you send them.
+      </p>
+      {emails.map((email) => (
+        // Keyed on updatedAt so a save or a revert remounts the card and its
+        // fields re-init from what is now stored.
+        <TemplateCard
+          key={`${email.kind}:${email.updatedAt}`}
+          opportunityId={opportunityId}
+          email={email}
+        />
+      ))}
     </div>
   )
 }
 
-// A toggle can add or remove a dozen drafts at once. Say which, so the Outbox
+// A switch can add or remove a dozen drafts at once. Say which, so the Outbox
 // never changes size behind the admin's back.
 function queueEffect(r: {
   queued: number
@@ -754,62 +666,65 @@ function queueEffect(r: {
 
 function TemplateCard({
   opportunityId,
-  template,
+  email,
 }: {
   opportunityId: Id<'orgOpportunities'>
-  template: {
-    kind: EmailKind
-    enabled: boolean
-    subject: string
-    markdownBody: string
-    includePollLink: boolean
-    includeSurveyLink: boolean
-    overridden: boolean
-  }
+  email: OpportunityEmail
 }) {
-  const upsertOverride = useMutation(
-    api.emails.templateLibrary.upsertOpportunityTemplate,
-  )
-  const clearOverride = useMutation(
-    api.emails.templateLibrary.clearOpportunityTemplate,
-  )
+  const save = useMutation(api.emails.templateLibrary.saveOpportunityEmail)
+  const revert = useMutation(api.emails.templateLibrary.revertOpportunityEmail)
 
-  const [subject, setSubject] = useState(template.subject)
-  const [body, setBody] = useState(template.markdownBody)
-  const [enabled, setEnabled] = useState(template.enabled)
-  const [pollLink, setPollLink] = useState(template.includePollLink)
-  const [surveyLink, setSurveyLink] = useState(template.includeSurveyLink)
+  const [subject, setSubject] = useState(email.subject)
+  const [body, setBody] = useState(email.markdownBody)
+  const [enabled, setEnabled] = useState(email.enabled)
+  const [pollLink, setPollLink] = useState(email.includePollLink)
+  const [surveyLink, setSurveyLink] = useState(email.includeSurveyLink)
   const [isSaving, setIsSaving] = useState(false)
 
   const dirty =
-    subject !== template.subject ||
-    body !== template.markdownBody ||
-    enabled !== template.enabled ||
-    pollLink !== template.includePollLink ||
-    surveyLink !== template.includeSurveyLink
+    subject !== email.subject ||
+    body !== email.markdownBody ||
+    enabled !== email.enabled ||
+    pollLink !== email.includePollLink ||
+    surveyLink !== email.includeSurveyLink
+  useUnsavedChangesWarning(dirty && !isSaving)
 
   const varError = (msg: string) =>
     msg.includes('variable')
       ? 'Unknown {{variable}}: use {{applicant_name}}, {{course}} or {{area}}'
       : 'Failed to save'
 
-  const saveOverride = async () => {
+  const handleSave = async () => {
     setIsSaving(true)
     try {
-      const result = await upsertOverride({
+      const result = await save({
         opportunityId,
-        kind: template.kind,
+        kind: email.kind,
         subject,
         markdownBody: body,
         enabled,
         includePollLink: pollLink,
         includeSurveyLink: surveyLink,
       })
-      toast.success('Saved for this opportunity', {
+      toast.success('Saved', { description: queueEffect(result) })
+    } catch (err) {
+      toast.error(varError(err instanceof Error ? err.message : ''))
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleRevert = async () => {
+    setIsSaving(true)
+    try {
+      const result = await revert({ opportunityId, kind: email.kind })
+      toast.success('Back to the canonical text', {
         description: queueEffect(result),
       })
     } catch (err) {
-      toast.error(varError(err instanceof Error ? err.message : ''))
+      toast.error(
+        err instanceof Error ? err.message : 'Could not revert this email',
+      )
     } finally {
       setIsSaving(false)
     }
@@ -820,20 +735,32 @@ function TemplateCard({
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Badge variant="outline" className={KIND_COLORS[template.kind]}>
-              {KIND_LABELS[template.kind]}
+            <Badge variant="outline" className={KIND_COLORS[email.kind]}>
+              {KIND_LABELS[email.kind]}
             </Badge>
-            {template.overridden && (
-              <Badge variant="secondary">Customized for this opportunity</Badge>
+            {email.differsFromCanonical && (
+              <Badge variant="secondary">Edited for this opportunity</Badge>
             )}
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">
-              {enabled ? 'Sends email' : 'No email for this decision'}
+              {enabled
+                ? email.kind === 'application_received'
+                  ? 'Sent when someone applies'
+                  : 'Sends email'
+                : email.kind === 'application_received'
+                  ? 'No confirmation on apply'
+                  : 'No email for this decision'}
             </span>
             <Switch checked={enabled} onCheckedChange={setEnabled} />
           </div>
         </div>
+        {email.kind === 'application_received' && (
+          <CardDescription>
+            Future applications only: switching it never emails people who
+            already applied.
+          </CardDescription>
+        )}
       </CardHeader>
       <CardContent className="space-y-4">
         <TemplateFields
@@ -847,22 +774,16 @@ function TemplateCard({
           onSurveyLink={setSurveyLink}
         />
         <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            onClick={saveOverride}
-            disabled={!dirty || isSaving}
-          >
+          <Button size="sm" onClick={handleSave} disabled={!dirty || isSaving}>
             {isSaving && <Loader2 className="size-4 mr-2 animate-spin" />}
-            Save for this opportunity
+            Save
           </Button>
-          {template.overridden && (
+          {email.differsFromCanonical && (
             <Button
               size="sm"
               variant="ghost"
-              onClick={async () => {
-                await clearOverride({ opportunityId, kind: template.kind })
-                toast.success('Reverted to the canonical')
-              }}
+              onClick={handleRevert}
+              disabled={isSaving}
             >
               <RotateCcw className="size-4 mr-2" />
               Revert to canonical

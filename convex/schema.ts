@@ -1480,12 +1480,13 @@ export default defineSchema({
     formSource: v.optional(
       v.union(v.literal('course'), v.literal('eoi'), v.literal('custom')),
     ),
-    // The canonical email set, when this opportunity uses the canonical emails.
-    // Only then does it draft decision emails and send the confirmation.
+    // When the opportunity got its own six emails, copied from the canonical
+    // (emailTemplates rows keyed by opportunityId). Set at creation.
+    emailsCopiedAt: v.optional(v.number()),
+    // Legacy, until emails/templateLibrary:giveOpportunitiesTheirEmails runs:
+    // the canonical set an opportunity read its emails from, and its on-apply
+    // confirmation switch. Both fold into its own emails.
     emailTemplateSetId: v.optional(v.id('emailTemplateSets')),
-    // On-apply confirmation email kill switch (outbox system only). undefined
-    // defaults to ON, except EOIs which default OFF. Toggling never sends
-    // retroactively — it only affects future submissions.
     sendApplicationReceivedEmail: v.optional(v.boolean()),
     redirectOpportunityId: v.optional(v.id('orgOpportunities')),
     sourceOpportunityId: v.optional(v.id('orgOpportunities')),
@@ -1674,21 +1675,20 @@ export default defineSchema({
 
   // ── Emails: canonical templates, outbox, unified log ──────────────────────
 
-  // The org's canonical emails (isCanonical). It always holds one template per
-  // kind, so a linked opportunity can never hit a missing template.
+  // The org's canonical emails: one set per org (isCanonical), holding one
+  // template per kind. Every new opportunity copies them.
   emailTemplateSets: defineTable({
     orgId: v.id('organizations'),
     name: v.string(),
-    // The org's canonical emails (at most one set per org): new course
-    // editions link it, and {{course}}/{{area}} fill from their course tag.
     isCanonical: v.optional(v.boolean()),
     createdBy: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index('by_org', ['orgId']),
 
-  // Templates. Library templates carry setId; per-opportunity overrides carry
-  // opportunityId instead (exactly one of the two is set). Every kind always
+  // Templates. The canonical's carry setId; an opportunity's own six carry
+  // opportunityId instead (exactly one of the two is set), copied from the
+  // canonical when it is created and edited there since. Every kind always
   // has a row; `enabled: false` is the explicit "this decision sends no email"
   // choice (never a missing template). Poll/survey links are system-managed
   // blocks toggled per template — never text variables that can break.
@@ -2017,17 +2017,6 @@ export default defineSchema({
       'sourceApplicationId',
       'targetOpportunityId',
     ]),
-
-  formTemplates: defineTable({
-    orgId: v.id('organizations'),
-    name: v.string(),
-    // Which editor offers it: application forms or feedback surveys.
-    kind: v.union(v.literal('application'), v.literal('feedback')),
-    formFields: v.any(), // Array<FormField> — see convex/lib/formFields.ts
-    createdBy: v.string(),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  }).index('by_org_and_kind', ['orgId', 'kind']),
 
   // Answers to an anonymous survey. Deliberately has no respondentId, name or
   // userId column: the anonymity is a property of the schema, not of what the

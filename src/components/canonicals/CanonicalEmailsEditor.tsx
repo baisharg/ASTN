@@ -35,8 +35,10 @@ const errorText = (err: unknown) =>
     : 'Please try again.'
 
 /**
- * The org's canonical emails: the decision emails every new course edition
- * links, and the footer that closes every email the org sends.
+ * The org's canonical emails: what every new opportunity copies as its own
+ * six emails, and the footer that closes every email the org sends. Saving
+ * here changes no existing opportunity; each takes the new text with
+ * "Revert to canonical" in its Emails tab.
  */
 export function CanonicalEmailsEditor({
   orgId,
@@ -53,6 +55,13 @@ export function CanonicalEmailsEditor({
 
   return (
     <div className="space-y-6">
+      <p className="text-sm text-muted-foreground">
+        Every new opportunity starts with a copy of these emails (a course
+        edition with these switches, anything else with every email off) and
+        edits its copy in its Emails tab. Saving here changes no opportunity
+        that already exists; each can bring the new text in with &quot;Revert to
+        canonical&quot;.
+      </p>
       <FooterCard orgId={orgId} footer={canonical.footer} />
       {canonical.emails.map((email) => (
         <CanonicalEmailCard key={email.kind} orgId={orgId} email={email} />

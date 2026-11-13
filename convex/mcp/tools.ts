@@ -360,8 +360,8 @@ export const TOOL_DEFS = [
     name: 'astn_duplicate_opportunity',
     description:
       'Duplicate an opportunity, e.g. to open the next edition of a course. The copy is a draft ' +
-      'titled "<title> (copy)" with the same description, type, tags and EOI flag; its form and, ' +
-      'for a course edition, its decision emails come from the canonicals; it gets a fresh ' +
+      'titled "<title> (copy)" with the same description, type, tags and EOI flag; its form and ' +
+      'its emails come from the canonicals (an EOI starts with every email off); it gets a fresh ' +
       'availability poll and no applications, surveys, deadline or redirect. Rename it and set ' +
       'the deadline with astn_update, then set status to active when it is ready.',
     inputSchema: {
@@ -561,8 +561,9 @@ const PLATFORM_FIELD_HINTS: Record<string, string> = {
     'create requires: title, description, type (course|fellowship|job|other). optional: status ' +
     '(defaults to draft), deadline (ms), externalUrl, featured, tags, isEOI, formSource (course|eoi|custom; ' +
     'defaults to eoi when isEOI, else course). The application form is a copy of the org canonical form (the EOI ' +
-    'one when isEOI) and cannot be passed. A readable slug and the default availability poll are ' +
-    'created for you.',
+    'one when isEOI) and cannot be passed; its six emails are a copy of the canonical emails, on for a ' +
+    'course edition and off otherwise, edited in the web admin. A readable slug and the default ' +
+    'availability poll are created for you.',
   surveys:
     "create requires: opportunityId. Without formFields it starts from the org's canonical " +
     'feedback survey (course or anonymous), title and intro included, filled for the course — ' +

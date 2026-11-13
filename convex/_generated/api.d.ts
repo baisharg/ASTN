@@ -129,6 +129,7 @@ import type * as lib_debouncer from "../lib/debouncer.js";
 import type * as lib_emailLinks from "../lib/emailLinks.js";
 import type * as lib_formFieldChanges from "../lib/formFieldChanges.js";
 import type * as lib_formFields from "../lib/formFields.js";
+import type * as lib_inboundMail from "../lib/inboundMail.js";
 import type * as lib_limits from "../lib/limits.js";
 import type * as lib_llmUsage from "../lib/llmUsage.js";
 import type * as lib_logging from "../lib/logging.js";
@@ -336,6 +337,7 @@ declare const fullApi: ApiFromModules<{
   "lib/emailLinks": typeof lib_emailLinks;
   "lib/formFieldChanges": typeof lib_formFieldChanges;
   "lib/formFields": typeof lib_formFields;
+  "lib/inboundMail": typeof lib_inboundMail;
   "lib/limits": typeof lib_limits;
   "lib/llmUsage": typeof lib_llmUsage;
   "lib/logging": typeof lib_logging;

@@ -14,7 +14,7 @@ import { rateLimiter } from './lib/rateLimiter'
 import { internal } from './_generated/api'
 import type { MutationCtx } from './_generated/server'
 import type { Id } from './_generated/dataModel'
-import { isOutboxActive, syncOutboxOnStatusChange } from './emails/outbox'
+import { syncOutboxOnStatusChange } from './emails/outbox'
 import { maybeAutoAcceptFromNextEdition } from './lib/nextEdition'
 import {
   assertAvailabilityGiven,
@@ -163,7 +163,7 @@ export const submit = mutation({
           slots: availability,
         })
       }
-      if (existing.availabilityOnly && isOutboxActive(opportunity)) {
+      if (existing.availabilityOnly) {
         await ctx.scheduler.runAfter(
           0,
           internal.emails.outboxSend.sendApplicationReceivedEmail,
@@ -203,15 +203,13 @@ export const submit = mutation({
       })
     }
     await maybeAutoAcceptFromNextEdition(ctx, applicationId)
-    if (isOutboxActive(opportunity)) {
-      // On-apply confirmation (issue #20). All preconditions (kill switch,
-      // template enabled, idempotency) are re-checked in the action.
-      await ctx.scheduler.runAfter(
-        0,
-        internal.emails.outboxSend.sendApplicationReceivedEmail,
-        { applicationId },
-      )
-    }
+    // On-apply confirmation. Whether it goes out (the email on, an address,
+    // not sent before) is decided in the action.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.emails.outboxSend.sendApplicationReceivedEmail,
+      { applicationId },
+    )
 
     return applicationId
   },
@@ -295,13 +293,11 @@ export const submitGuest = mutation({
           })
         }
       }
-      if (isOutboxActive(opportunity)) {
-        await ctx.scheduler.runAfter(
-          0,
-          internal.emails.outboxSend.sendApplicationReceivedEmail,
-          { applicationId: existing._id },
-        )
-      }
+      await ctx.scheduler.runAfter(
+        0,
+        internal.emails.outboxSend.sendApplicationReceivedEmail,
+        { applicationId: existing._id },
+      )
       return existing._id
     }
 
@@ -327,14 +323,11 @@ export const submitGuest = mutation({
       })
     }
     await maybeAutoAcceptFromNextEdition(ctx, applicationId)
-    if (isOutboxActive(opportunity)) {
-      // On-apply confirmation (issue #20): see the authenticated path above.
-      await ctx.scheduler.runAfter(
-        0,
-        internal.emails.outboxSend.sendApplicationReceivedEmail,
-        { applicationId },
-      )
-    }
+    await ctx.scheduler.runAfter(
+      0,
+      internal.emails.outboxSend.sendApplicationReceivedEmail,
+      { applicationId },
+    )
 
     return applicationId
   },
@@ -961,14 +954,13 @@ export const updateStatus = mutation({
       ...(reviewNotes !== undefined ? { reviewNotes } : {}),
     })
 
-    // Opportunities that use the canonical emails get a pending decision-email
-    // draft.
+    // The decision gets a pending draft of the opportunity's email for it.
     // Deciding never sends — admins review and send from the outbox.
     const opportunity = await ctx.db.get(
       'orgOpportunities',
       application.opportunityId,
     )
-    if (opportunity && isOutboxActive(opportunity)) {
+    if (opportunity) {
       const updated = await ctx.db.get('opportunityApplications', applicationId)
       if (updated) {
         await syncOutboxOnStatusChange(ctx, {

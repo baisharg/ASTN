@@ -17,13 +17,14 @@ import { replyToFor, withOrgFooter } from './replyTo'
 
 // Outbox for applicant decision emails. Changing an application's status
 // never sends anything — it enqueues a pending draft prefilled from the
-// opportunity's emails (its overrides, else the canonical). Admins review drafts and send explicitly
-// (convex/emails/outboxSend.ts). Design invariants:
+// opportunity's own email for that decision (convex/emails/templateLibrary.ts).
+// Admins review drafts and send explicitly (convex/emails/outboxSend.ts).
+// Design invariants:
 //   - at most one pending draft per application (a status change replaces it)
 //   - hard idempotency: one 'sent' emailLog row per (application, kind)
 //   - the text variables are {{applicant_name}} (always resolvable) and
-//     {{course}}/{{area}}, filled from the opportunity's course tag (linking a
-//     set that uses them to an opportunity without one is refused);
+//     {{course}}/{{area}}, filled from the opportunity's course tag (an email
+//     that still names a course the opportunity lacks is refused at send time);
 //     poll/survey links are system-managed blocks, never failable variables
 
 const FROM_ADDRESS = 'ASTN <notifications@safetytalent.org>'
@@ -90,9 +91,15 @@ export function fillCourseVariables(
   return fillText(text, coursePlaceholderValues(opportunity?.tags))
 }
 
-// An opportunity sends decision emails only when it uses the canonical emails.
-export function isOutboxActive(opportunity: Doc<'orgOpportunities'>): boolean {
-  return opportunity.emailTemplateSetId != null
+/**
+ * Whether the opportunity's emails are its own rows (every opportunity, once
+ * the one-off in templateLibrary has run). Before that, an opportunity reads
+ * the canonical set it linked, and one that linked nothing sends nothing.
+ */
+export function usesOwnEmails(
+  opportunity: Pick<Doc<'orgOpportunities'>, 'emailsCopiedAt'>,
+): boolean {
+  return opportunity.emailsCopiedAt != null
 }
 
 async function hasSentKind(
@@ -109,21 +116,27 @@ async function hasSentKind(
   return rows.some((r) => r.status === 'sent')
 }
 
-// Per-opportunity override first, then the linked set's template.
+// The opportunity's own email for a kind. Null means "no email for this
+// decision" (an opportunity that never got its emails, or a legacy one that
+// linked no set).
 async function resolveTemplate(
   ctx: QueryCtx | MutationCtx,
   opportunity: Doc<'orgOpportunities'>,
   kind: Doc<'emailTemplates'>['kind'],
 ): Promise<Doc<'emailTemplates'> | null> {
-  const override = await ctx.db
+  const own = await ctx.db
     .query('emailTemplates')
     .withIndex('by_opportunity_and_kind', (q) =>
       q.eq('opportunityId', opportunity._id).eq('kind', kind),
     )
     .first()
-  if (override) return override
+  if (usesOwnEmails(opportunity)) return own
+  // Legacy, until the one-off in templateLibrary runs: a row of its own only
+  // counts for an opportunity that linked the canonical set, which also
+  // answers for the kinds it has no row for.
   const setId = opportunity.emailTemplateSetId
   if (!setId) return null
+  if (own) return own
   return await ctx.db
     .query('emailTemplates')
     .withIndex('by_set_and_kind', (q) => q.eq('setId', setId).eq('kind', kind))
@@ -145,7 +158,6 @@ export async function syncOutboxOnStatusChange(
   },
 ): Promise<void> {
   const { application, status, opportunity } = opts
-  if (!isOutboxActive(opportunity)) return
 
   const kind = KIND_BY_STATUS[status] ?? null
   const existing = await ctx.db
@@ -171,16 +183,9 @@ export async function syncOutboxOnStatusChange(
   if (await hasSentKind(ctx, application._id, kind)) return
 
   const template = await resolveTemplate(ctx, opportunity, kind)
-  if (!template) {
-    // Sets are created with every kind, so this is an invariant violation —
-    // log loudly rather than fail the status change.
-    console.error(
-      `emailOutbox: no '${kind}' template for opportunity ${opportunity._id} (set ${opportunity.emailTemplateSetId})`,
-    )
-    return
-  }
-  // enabled: false is the explicit "this decision sends no email" choice.
-  if (template.enabled === false) return
+  // No email for this decision: either switched off, the explicit choice, or
+  // an opportunity that never got its emails.
+  if (!template || template.enabled === false) return
 
   const now = Date.now()
   await ctx.db.insert('emailOutbox', {
@@ -213,58 +218,43 @@ export async function refreshPendingDraftsForTemplate(
   ctx: MutationCtx,
   opts: {
     kind: Doc<'emailTemplates'>['kind']
-    /** Limit to one opportunity (an override was edited). */
-    opportunityId?: Doc<'orgOpportunities'>['_id']
-    /** Every opportunity linked to this set (a set template was edited). */
-    setId?: Doc<'emailTemplateSets'>['_id']
+    opportunityId: Doc<'orgOpportunities'>['_id']
   },
 ): Promise<number> {
-  const { kind, opportunityId, setId } = opts
+  const { kind, opportunityId } = opts
+  const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+  if (!opportunity) return 0
+  const template = await resolveTemplate(ctx, opportunity, kind)
+  if (!template || template.enabled === false) return 0
 
-  const opportunities: Array<Doc<'orgOpportunities'>> = []
-  if (opportunityId) {
-    const opp = await ctx.db.get('orgOpportunities', opportunityId)
-    if (opp) opportunities.push(opp)
-  } else if (setId) {
-    const set = await ctx.db.get('emailTemplateSets', setId)
-    if (!set) return 0
-    const linked = await ctx.db
-      .query('orgOpportunities')
-      .withIndex('by_org_and_status', (q) => q.eq('orgId', set.orgId))
-      .collect()
-    opportunities.push(...linked.filter((o) => o.emailTemplateSetId === setId))
-  }
+  const drafts = await ctx.db
+    .query('emailOutbox')
+    .withIndex('by_opportunity', (q) => q.eq('opportunityId', opportunity._id))
+    .collect()
 
   let refreshed = 0
-  for (const opportunity of opportunities) {
-    // resolveTemplate applies the same override-then-set precedence the drafts
-    // were built with, so editing a set template correctly skips opportunities
-    // that have their own override for this kind.
-    const template = await resolveTemplate(ctx, opportunity, kind)
-    if (!template || template.enabled === false) continue
+  for (const draft of drafts) {
+    if (draft.kind !== kind) continue
+    if (draft.editedByAdmin) continue
+    if (
+      draft.subject === template.subject &&
+      draft.markdownBody === template.markdownBody &&
+      (draft.includePollLink ?? false) ===
+        (template.includePollLink ?? false) &&
+      (draft.includeSurveyLink ?? false) ===
+        (template.includeSurveyLink ?? false)
+    )
+      continue
 
-    const drafts = await ctx.db
-      .query('emailOutbox')
-      .withIndex('by_opportunity', (q) =>
-        q.eq('opportunityId', opportunity._id),
-      )
-      .collect()
-
-    for (const draft of drafts) {
-      if (draft.kind !== kind) continue
-      if (draft.editedByAdmin) continue
-
-      await ctx.db.patch('emailOutbox', draft._id, {
-        subject: template.subject,
-        markdownBody: template.markdownBody,
-        includePollLink: template.includePollLink ?? false,
-        includeSurveyLink: template.includeSurveyLink ?? false,
-        updatedAt: Date.now(),
-      })
-      refreshed++
-    }
+    await ctx.db.patch('emailOutbox', draft._id, {
+      subject: template.subject,
+      markdownBody: template.markdownBody,
+      includePollLink: template.includePollLink ?? false,
+      includeSurveyLink: template.includeSurveyLink ?? false,
+      updatedAt: Date.now(),
+    })
+    refreshed++
   }
-
   return refreshed
 }
 
@@ -288,11 +278,10 @@ export async function enqueueMissingDraftsForKind(
   ctx: MutationCtx,
   opts: {
     kind: Doc<'emailTemplates'>['kind']
-    opportunityId?: Doc<'orgOpportunities'>['_id']
-    setId?: Doc<'emailTemplateSets'>['_id']
+    opportunityId: Doc<'orgOpportunities'>['_id']
   },
 ): Promise<number> {
-  const { kind, opportunityId, setId } = opts
+  const { kind, opportunityId } = opts
 
   // The on-apply confirmation fires at submission time and never retroactively,
   // by design — backfilling it would mail people who applied months ago.
@@ -304,64 +293,48 @@ export async function enqueueMissingDraftsForKind(
     .map(([status]) => status)
   if (statuses.length === 0) return 0
 
-  const opportunities: Array<Doc<'orgOpportunities'>> = []
-  if (opportunityId) {
-    const opp = await ctx.db.get('orgOpportunities', opportunityId)
-    if (opp) opportunities.push(opp)
-  } else if (setId) {
-    const set = await ctx.db.get('emailTemplateSets', setId)
-    if (!set) return 0
-    const linked = await ctx.db
-      .query('orgOpportunities')
-      .withIndex('by_org_and_status', (q) => q.eq('orgId', set.orgId))
-      .collect()
-    opportunities.push(...linked.filter((o) => o.emailTemplateSetId === setId))
-  }
+  const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+  if (!opportunity) return 0
+  const template = await resolveTemplate(ctx, opportunity, decisionKind)
+  if (!template || template.enabled === false) return 0
+
+  const applications = await ctx.db
+    .query('opportunityApplications')
+    .withIndex('by_opportunity_and_status', (q) =>
+      q.eq('opportunityId', opportunity._id),
+    )
+    .collect()
 
   let queued = 0
-  for (const opportunity of opportunities) {
-    if (!isOutboxActive(opportunity)) continue
-    const template = await resolveTemplate(ctx, opportunity, decisionKind)
-    if (!template || template.enabled === false) continue
+  for (const application of applications) {
+    if (!statuses.includes(application.status)) continue
+    if (await hasSentKind(ctx, application._id, decisionKind)) continue
 
-    const applications = await ctx.db
-      .query('opportunityApplications')
-      .withIndex('by_opportunity_and_status', (q) =>
-        q.eq('opportunityId', opportunity._id),
+    // At most one pending draft per application is the standing invariant;
+    // if one is already queued, this decision is already represented.
+    const pending = await ctx.db
+      .query('emailOutbox')
+      .withIndex('by_application', (q) =>
+        q.eq('applicationId', application._id),
       )
       .collect()
+    if (pending.length > 0) continue
 
-    for (const application of applications) {
-      if (!statuses.includes(application.status)) continue
-      if (await hasSentKind(ctx, application._id, decisionKind)) continue
-
-      // At most one pending draft per application is the standing invariant;
-      // if one is already queued, this decision is already represented.
-      const pending = await ctx.db
-        .query('emailOutbox')
-        .withIndex('by_application', (q) =>
-          q.eq('applicationId', application._id),
-        )
-        .collect()
-      if (pending.length > 0) continue
-
-      const now = Date.now()
-      await ctx.db.insert('emailOutbox', {
-        orgId: opportunity.orgId,
-        opportunityId: opportunity._id,
-        applicationId: application._id,
-        kind: decisionKind,
-        subject: template.subject,
-        markdownBody: template.markdownBody,
-        includePollLink: template.includePollLink ?? false,
-        includeSurveyLink: template.includeSurveyLink ?? false,
-        createdAt: now,
-        updatedAt: now,
-      })
-      queued++
-    }
+    const now = Date.now()
+    await ctx.db.insert('emailOutbox', {
+      orgId: opportunity.orgId,
+      opportunityId: opportunity._id,
+      applicationId: application._id,
+      kind: decisionKind,
+      subject: template.subject,
+      markdownBody: template.markdownBody,
+      includePollLink: template.includePollLink ?? false,
+      includeSurveyLink: template.includeSurveyLink ?? false,
+      createdAt: now,
+      updatedAt: now,
+    })
+    queued++
   }
-
   return queued
 }
 
@@ -384,52 +357,32 @@ export async function discardPendingDraftsForKind(
   ctx: MutationCtx,
   opts: {
     kind: Doc<'emailTemplates'>['kind']
-    opportunityId?: Doc<'orgOpportunities'>['_id']
-    setId?: Doc<'emailTemplateSets'>['_id']
+    opportunityId: Doc<'orgOpportunities'>['_id']
   },
 ): Promise<{ discarded: number; keptEdited: number }> {
-  const { kind, opportunityId, setId } = opts
+  const { kind, opportunityId } = opts
+  const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+  if (!opportunity) return { discarded: 0, keptEdited: 0 }
+  const template = await resolveTemplate(ctx, opportunity, kind)
+  if (template && template.enabled !== false)
+    return { discarded: 0, keptEdited: 0 }
 
-  const opportunities: Array<Doc<'orgOpportunities'>> = []
-  if (opportunityId) {
-    const opp = await ctx.db.get('orgOpportunities', opportunityId)
-    if (opp) opportunities.push(opp)
-  } else if (setId) {
-    const set = await ctx.db.get('emailTemplateSets', setId)
-    if (!set) return { discarded: 0, keptEdited: 0 }
-    const linked = await ctx.db
-      .query('orgOpportunities')
-      .withIndex('by_org_and_status', (q) => q.eq('orgId', set.orgId))
-      .collect()
-    opportunities.push(...linked.filter((o) => o.emailTemplateSetId === setId))
-  }
+  const drafts = await ctx.db
+    .query('emailOutbox')
+    .withIndex('by_opportunity', (q) => q.eq('opportunityId', opportunity._id))
+    .collect()
 
   let discarded = 0
   let keptEdited = 0
-  for (const opportunity of opportunities) {
-    // Precedence matters in both directions: switching a set template off must
-    // leave alone the opportunities that override this kind with an enabled one.
-    const template = await resolveTemplate(ctx, opportunity, kind)
-    if (template && template.enabled !== false) continue
-
-    const drafts = await ctx.db
-      .query('emailOutbox')
-      .withIndex('by_opportunity', (q) =>
-        q.eq('opportunityId', opportunity._id),
-      )
-      .collect()
-
-    for (const draft of drafts) {
-      if (draft.kind !== kind) continue
-      if (draft.editedByAdmin) {
-        keptEdited++
-        continue
-      }
-      await ctx.db.delete('emailOutbox', draft._id)
-      discarded++
+  for (const draft of drafts) {
+    if (draft.kind !== kind) continue
+    if (draft.editedByAdmin) {
+      keptEdited++
+      continue
     }
+    await ctx.db.delete('emailOutbox', draft._id)
+    discarded++
   }
-
   return { discarded, keptEdited }
 }
 
@@ -440,14 +393,12 @@ export async function discardPendingDraftsForKind(
 export const backfillDraftsForKind = internalMutation({
   args: {
     kind: decisionKindValidator,
-    setId: v.optional(v.id('emailTemplateSets')),
-    opportunityId: v.optional(v.id('orgOpportunities')),
+    opportunityId: v.id('orgOpportunities'),
   },
   returns: v.object({ queued: v.number() }),
-  handler: async (ctx, { kind, setId, opportunityId }) => {
+  handler: async (ctx, { kind, opportunityId }) => {
     const queued = await enqueueMissingDraftsForKind(ctx, {
       kind,
-      setId,
       opportunityId,
     })
     return { queued }
@@ -886,21 +837,23 @@ export const finalizeDraftSend = internalMutation({
 // ── On-apply confirmation (application_received) ────────────────────────────
 
 // The single truly-automatic email: sent right after a first submission when
-// the opportunity uses the outbox system and the kill switch is on. The switch
-// defaults ON, except EOIs (explicit isEOI flag) which default OFF. Because it
-// only ever fires at submission time, toggling it can never send retroactively.
-export function shouldSendApplicationReceived(
+// the opportunity's "Application received" email is on. Because it only ever
+// fires at submission time, switching it can never send retroactively.
+function shouldSendApplicationReceived(
   opportunity: Doc<'orgOpportunities'>,
 ): boolean {
-  if (!isOutboxActive(opportunity)) return false
+  if (usesOwnEmails(opportunity)) return true
+  // Legacy, until the one-off in templateLibrary runs: the opportunity's
+  // switch, on by default except for EOIs.
+  if (opportunity.emailTemplateSetId == null) return false
   return (
     opportunity.sendApplicationReceivedEmail ?? !(opportunity.isEOI ?? false)
   )
 }
 
 // Everything the send action needs, or null when the email shouldn't go out
-// (switch off, template disabled, no email, already sent). All checks re-run
-// here so the scheduled action is race-safe.
+// (email off, no address, already sent). All checks re-run here so the
+// scheduled action is race-safe.
 export const getApplicationReceivedPayload = internalQuery({
   args: { applicationId: v.id('opportunityApplications') },
   returns: v.union(

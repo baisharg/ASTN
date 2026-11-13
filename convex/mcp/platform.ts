@@ -3,7 +3,7 @@ import { internalMutation, internalQuery } from '../_generated/server'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc, Id } from '../_generated/dataModel'
 import { requireOrgAdminFor } from '../lib/auth'
-import { isOutboxActive, syncOutboxOnStatusChange } from '../emails/outbox'
+import { syncOutboxOnStatusChange } from '../emails/outbox'
 import {
   assertFormFieldsShape,
   fillFormPlaceholders,
@@ -905,15 +905,15 @@ export const update = internalMutation({
     // every table in UPDATE_FIELDS has the column.
     await ctx.db.patch(id, { ...patch, updatedAt: Date.now() } as any)
 
-    // Outbox: a status change on an opportunity that uses the canonical emails
-    // replaces/enqueues the pending decision-email draft. Still
-    // no email is ever sent from this path.
+    // Outbox: a status change replaces/enqueues the pending draft of the
+    // opportunity's email for that decision. Still no email is ever sent from
+    // this path.
     if (args.resource === 'applications' && 'status' in patch) {
       const updated: any = await ctx.db.get(id)
       const opportunity: any = updated
         ? await ctx.db.get(updated.opportunityId)
         : null
-      if (updated && opportunity && isOutboxActive(opportunity)) {
+      if (updated && opportunity) {
         await syncOutboxOnStatusChange(ctx, {
           application: updated,
           status: patch.status as string,
