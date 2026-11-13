@@ -9,9 +9,13 @@ import {
   DEFAULT_MEETING_MINUTES,
   MAX_PREAPPROVED_GUESTS_PER_ADD,
   PREAPPROVED_ADD_APPROVED_LIMIT,
+  accountReplacedOnRelink,
+  bookingOpen,
   looksLikeEmail,
+  reservedSpotsRemoved,
   planPreapprovedAdd,
   showsMyMeetings,
+  spotNumbersDropped,
 } from './constants'
 import {
   addToAllowlist,
@@ -28,7 +32,9 @@ import {
   normalizeEmail,
   profileMissingForMatching,
   requireEventAdmin,
+  reservationsStillOnPlaces,
   safeLinkedinUrl,
+  scheduleBookingCleanup,
   shouldAutoApprove,
   updateGuestAndSync,
 } from './lib'
@@ -64,6 +70,9 @@ const eventPublicValidator = v.object({
   meetingsOpenAt: v.number(),
   meetingsCloseAt: v.number(),
   meetingMinutes: v.number(),
+  // Whether attendees can book 1:1s for a set time at this event: the
+  // setting is on and the event is not a draft.
+  bookingEnabled: v.boolean(),
   focus: v.union(v.string(), v.null()),
   // Whether attendees see "Mis reuniones" (see showsMyMeetings).
   myMeetingsEnabled: v.boolean(),
@@ -202,6 +211,7 @@ export const getEventPage = query({
       meetingsOpenAt: meetingsWindow(event).openAt,
       meetingsCloseAt: meetingsWindow(event).closeAt,
       meetingMinutes: event.meetingMinutes,
+      bookingEnabled: bookingOpen(event),
       focus: focusFromPrompt(event.matchingPrompt),
       myMeetingsEnabled: showsMyMeetings(event),
       viewerIsAdmin,
@@ -330,6 +340,8 @@ export const register = mutation({
           linkedinUrl: existing.linkedinUrl ?? cleanLinkedin,
           updatedAt: now,
         })
+        const replaced = accountReplacedOnRelink(event, existing.userId, userId)
+        if (replaced) await scheduleBookingCleanup(ctx, eventId, replaced)
       }
       return { guestId: existing._id, status: existing.status }
     }
@@ -382,6 +394,16 @@ export const linkMyGuest = mutation({
       userId: identity.subject,
       updatedAt: Date.now(),
     })
+    // The row was another account's: at an event with booking on, that
+    // account's proposals and booked 1:1s close. The event is only read in
+    // this case.
+    if (guest.userId) {
+      const event = await ctx.db.get('socialEvents', eventId)
+      const replaced = event
+        ? accountReplacedOnRelink(event, guest.userId, identity.subject)
+        : null
+      if (replaced) await scheduleBookingCleanup(ctx, eventId, replaced)
+    }
     return true
   },
 })
@@ -558,6 +580,8 @@ export const updateEvent = mutation({
     // name, time or place. Left out, Luma is told not to.
     notifyGuests: v.optional(v.boolean()),
     autoApproveKnown: v.optional(v.boolean()),
+    // Whether attendees can book 1:1s for a set time.
+    bookingEnabled: v.optional(v.boolean()),
     myMeetingsEnabled: v.optional(v.boolean()),
   },
   returns: v.null(),
@@ -609,10 +633,24 @@ export const updateEvent = mutation({
     if (fields.autoApproveKnown !== undefined) {
       patch.autoApproveKnown = fields.autoApproveKnown
     }
+    if (fields.bookingEnabled !== undefined) {
+      // Off is stored as no field at all (see the schema).
+      patch.bookingEnabled = fields.bookingEnabled ? true : undefined
+    }
     if (fields.myMeetingsEnabled !== undefined) {
       patch.myMeetingsEnabled = fields.myMeetingsEnabled
     }
     await ctx.db.patch('socialEvents', eventId, patch)
+
+    // Booking switched on: the proposals and bookings kept from an earlier
+    // time it was on are brought up to date (see bookingAfterPause).
+    if (event.bookingEnabled !== true && patch.bookingEnabled === true) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.social.bookings.reconcileAfterSwitchOn,
+        { eventId, status: 'proposed', cursor: null },
+      )
+    }
 
     // Publishing a draft, or switching auto-approval on for a published
     // event, approves the allowlisted guests who were waiting.
@@ -1103,7 +1141,7 @@ export const setSpots = mutation({
   },
   returns: v.null(),
   handler: async (ctx, { eventId, spots }) => {
-    await requireEventAdmin(ctx, eventId)
+    const { event } = await requireEventAdmin(ctx, eventId)
     if (spots.length > 200) throw new ConvexError('At most 200 spots')
     const numbers = new Set(spots.map((s) => s.number))
     if (numbers.size !== spots.length) {
@@ -1118,11 +1156,34 @@ export const setSpots = mutation({
     if (active) {
       throw new ConvexError("Spots can't change while meetings are in progress")
     }
-
     const existing = await ctx.db
       .query('socialEventSpots')
       .withIndex('by_eventId_and_number', (q) => q.eq('eventId', eventId))
       .take(500)
+    // With booking on, a place that a booked 1:1 still to come has reserved
+    // can be moved or renamed but not removed: two people were told to meet
+    // there. Only the numbers this save drops are looked up.
+    if (event.bookingEnabled === true) {
+      const newNumbers = spots.map((s) => s.number)
+      const dropped = spotNumbersDropped(
+        existing.map((s) => s.number),
+        newNumbers,
+      )
+      if (dropped.length > 0) {
+        const now = Date.now()
+        const removed = reservedSpotsRemoved(
+          newNumbers,
+          await reservationsStillOnPlaces(ctx, eventId, dropped, now),
+          now,
+        )
+        if (removed.length > 0) {
+          throw new ConvexError(
+            `Booked 1:1s have these places reserved, so they can't be removed: ${removed.join(', ')}. Keep those numbers, or wait until those 1:1s are over.`,
+          )
+        }
+      }
+    }
+
     for (const spot of existing)
       await ctx.db.delete('socialEventSpots', spot._id)
     for (const spot of spots) {

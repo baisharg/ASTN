@@ -17,9 +17,11 @@ import {
   keepsStatusOverLuma,
   lumaStatusToPush,
   normalizeEmail,
+  scheduleBookingCleanup,
   shouldAutoApprove,
   updateGuestAndSync,
 } from './lib'
+import { statusChangeClosesBookings } from './constants'
 import { guestSourceValidator, guestStatusValidator } from './validators'
 import {
   LumaApiError,
@@ -255,6 +257,9 @@ async function applyLumaGuest(
   if (Object.keys(patch).length === 0) return 'unchanged'
   patch.updatedAt = now
   await ctx.db.patch('socialEventGuests', existing._id, patch)
+  if (statusChangeClosesBookings(event, patch.status) && existing.userId) {
+    await scheduleBookingCleanup(ctx, event._id, existing.userId)
+  }
   return 'updated'
 }
 

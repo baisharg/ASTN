@@ -66,6 +66,7 @@ import { Route as OrgSlugAdminMembersUserIdRouteImport } from './routes/org/$slu
 import { Route as OrgSlugAdminOpportunitiesIndexRouteImport } from './routes/org/$slug/admin/opportunities/index'
 import { Route as OrgSlugAdminProgramsIndexRouteImport } from './routes/org/$slug/admin/programs/index'
 import { Route as OrgSlugEEventSlugIndexRouteImport } from './routes/org/$slug/e/$eventSlug/index'
+import { Route as OrgSlugEEventSlugAgendaRouteImport } from './routes/org/$slug/e/$eventSlug/agenda'
 import { Route as OrgSlugEEventSlugMeetingRouteImport } from './routes/org/$slug/e/$eventSlug/meeting'
 import { Route as OrgSlugEEventSlugMeetingsRouteImport } from './routes/org/$slug/e/$eventSlug/meetings'
 import { Route as OrgSlugEEventSlugProfileRouteImport } from './routes/org/$slug/e/$eventSlug/profile'
@@ -378,6 +379,11 @@ const OrgSlugEEventSlugIndexRoute = OrgSlugEEventSlugIndexRouteImport.update({
   path: '/',
   getParentRoute: () => OrgSlugEEventSlugRouteRoute,
 } as any)
+const OrgSlugEEventSlugAgendaRoute = OrgSlugEEventSlugAgendaRouteImport.update({
+  id: '/agenda',
+  path: '/agenda',
+  getParentRoute: () => OrgSlugEEventSlugRouteRoute,
+} as any)
 const OrgSlugEEventSlugMeetingRoute =
   OrgSlugEEventSlugMeetingRouteImport.update({
     id: '/meeting',
@@ -532,6 +538,7 @@ export interface FileRoutesByFullPath {
   '/org/$slug/space/': typeof OrgSlugSpaceIndexRoute
   '/org/$slug/admin/events/$eventId': typeof OrgSlugAdminEventsEventIdRoute
   '/org/$slug/admin/members/$userId': typeof OrgSlugAdminMembersUserIdRoute
+  '/org/$slug/e/$eventSlug/agenda': typeof OrgSlugEEventSlugAgendaRoute
   '/org/$slug/e/$eventSlug/meeting': typeof OrgSlugEEventSlugMeetingRoute
   '/org/$slug/e/$eventSlug/meetings': typeof OrgSlugEEventSlugMeetingsRoute
   '/org/$slug/e/$eventSlug/profile': typeof OrgSlugEEventSlugProfileRoute
@@ -601,6 +608,7 @@ export interface FileRoutesByTo {
   '/org/$slug/space': typeof OrgSlugSpaceIndexRoute
   '/org/$slug/admin/events/$eventId': typeof OrgSlugAdminEventsEventIdRoute
   '/org/$slug/admin/members/$userId': typeof OrgSlugAdminMembersUserIdRoute
+  '/org/$slug/e/$eventSlug/agenda': typeof OrgSlugEEventSlugAgendaRoute
   '/org/$slug/e/$eventSlug/meeting': typeof OrgSlugEEventSlugMeetingRoute
   '/org/$slug/e/$eventSlug/meetings': typeof OrgSlugEEventSlugMeetingsRoute
   '/org/$slug/e/$eventSlug/profile': typeof OrgSlugEEventSlugProfileRoute
@@ -678,6 +686,7 @@ export interface FileRoutesById {
   '/org/$slug/space/': typeof OrgSlugSpaceIndexRoute
   '/org/$slug/admin/events/$eventId': typeof OrgSlugAdminEventsEventIdRoute
   '/org/$slug/admin/members/$userId': typeof OrgSlugAdminMembersUserIdRoute
+  '/org/$slug/e/$eventSlug/agenda': typeof OrgSlugEEventSlugAgendaRoute
   '/org/$slug/e/$eventSlug/meeting': typeof OrgSlugEEventSlugMeetingRoute
   '/org/$slug/e/$eventSlug/meetings': typeof OrgSlugEEventSlugMeetingsRoute
   '/org/$slug/e/$eventSlug/profile': typeof OrgSlugEEventSlugProfileRoute
@@ -756,6 +765,7 @@ export interface FileRouteTypes {
     | '/org/$slug/space/'
     | '/org/$slug/admin/events/$eventId'
     | '/org/$slug/admin/members/$userId'
+    | '/org/$slug/e/$eventSlug/agenda'
     | '/org/$slug/e/$eventSlug/meeting'
     | '/org/$slug/e/$eventSlug/meetings'
     | '/org/$slug/e/$eventSlug/profile'
@@ -825,6 +835,7 @@ export interface FileRouteTypes {
     | '/org/$slug/space'
     | '/org/$slug/admin/events/$eventId'
     | '/org/$slug/admin/members/$userId'
+    | '/org/$slug/e/$eventSlug/agenda'
     | '/org/$slug/e/$eventSlug/meeting'
     | '/org/$slug/e/$eventSlug/meetings'
     | '/org/$slug/e/$eventSlug/profile'
@@ -901,6 +912,7 @@ export interface FileRouteTypes {
     | '/org/$slug/space/'
     | '/org/$slug/admin/events/$eventId'
     | '/org/$slug/admin/members/$userId'
+    | '/org/$slug/e/$eventSlug/agenda'
     | '/org/$slug/e/$eventSlug/meeting'
     | '/org/$slug/e/$eventSlug/meetings'
     | '/org/$slug/e/$eventSlug/profile'
@@ -1362,6 +1374,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrgSlugEEventSlugIndexRouteImport
       parentRoute: typeof OrgSlugEEventSlugRouteRoute
     }
+    '/org/$slug/e/$eventSlug/agenda': {
+      id: '/org/$slug/e/$eventSlug/agenda'
+      path: '/agenda'
+      fullPath: '/org/$slug/e/$eventSlug/agenda'
+      preLoaderRoute: typeof OrgSlugEEventSlugAgendaRouteImport
+      parentRoute: typeof OrgSlugEEventSlugRouteRoute
+    }
     '/org/$slug/e/$eventSlug/meeting': {
       id: '/org/$slug/e/$eventSlug/meeting'
       path: '/meeting'
@@ -1623,6 +1642,7 @@ const OrgSlugAdminRouteRouteWithChildren =
   OrgSlugAdminRouteRoute._addFileChildren(OrgSlugAdminRouteRouteChildren)
 
 interface OrgSlugEEventSlugRouteRouteChildren {
+  OrgSlugEEventSlugAgendaRoute: typeof OrgSlugEEventSlugAgendaRoute
   OrgSlugEEventSlugMeetingRoute: typeof OrgSlugEEventSlugMeetingRoute
   OrgSlugEEventSlugMeetingsRoute: typeof OrgSlugEEventSlugMeetingsRoute
   OrgSlugEEventSlugProfileRoute: typeof OrgSlugEEventSlugProfileRoute
@@ -1634,6 +1654,7 @@ interface OrgSlugEEventSlugRouteRouteChildren {
 
 const OrgSlugEEventSlugRouteRouteChildren: OrgSlugEEventSlugRouteRouteChildren =
   {
+    OrgSlugEEventSlugAgendaRoute: OrgSlugEEventSlugAgendaRoute,
     OrgSlugEEventSlugMeetingRoute: OrgSlugEEventSlugMeetingRoute,
     OrgSlugEEventSlugMeetingsRoute: OrgSlugEEventSlugMeetingsRoute,
     OrgSlugEEventSlugProfileRoute: OrgSlugEEventSlugProfileRoute,

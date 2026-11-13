@@ -4,7 +4,8 @@ import { Clock3, MapPin } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../convex/_generated/api'
 import type { LiveState } from '~/components/social/live'
-import { useNow } from '~/components/social/SocialEventContext'
+import { useNow, useSocialEvent } from '~/components/social/SocialEventContext'
+import { IncomingProposals } from '~/components/social/booking'
 import {
   ArrivalCard,
   AttendeeGate,
@@ -109,6 +110,7 @@ function RequestsPage() {
 
 function RequestsContent({ live }: { live: LiveState }) {
   const { slug, eventSlug } = Route.useParams()
+  const event = useSocialEvent()
   const t = useCopy(copy)
   const { lang } = useSocialLang()
   const now = useNow(15_000)
@@ -140,6 +142,8 @@ function RequestsContent({ live }: { live: LiveState }) {
           </Link>
         </Panel>
       )}
+
+      {event.bookingEnabled && <IncomingProposals />}
 
       <section aria-labelledby="incoming-title" className="flex flex-col gap-3">
         <h2

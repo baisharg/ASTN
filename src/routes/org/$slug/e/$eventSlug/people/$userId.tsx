@@ -14,6 +14,7 @@ import type { LiveState } from '~/components/social/live'
 import type { AttendeeState } from '~/components/social/ui'
 import type { Id } from '../../../../../../../convex/_generated/dataModel'
 import { useNow, useSocialEvent } from '~/components/social/SocialEventContext'
+import { ProposeSlot } from '~/components/social/booking'
 import {
   PageSpinner,
   RequestOutcomes,
@@ -311,15 +312,20 @@ function PersonContent() {
           </Link>
         </Panel>
       ) : attendeeLive ? (
-        <RequestCard
-          live={attendeeLive}
-          userId={userId}
-          firstName={firstName}
-          state={person.state}
-          here={person.here}
-          pendingRequestId={person.pendingRequestId}
-          theyRequestedMe={person.theyRequestedMe}
-        />
+        <>
+          <RequestCard
+            live={attendeeLive}
+            userId={userId}
+            firstName={firstName}
+            state={person.state}
+            here={person.here}
+            pendingRequestId={person.pendingRequestId}
+            theyRequestedMe={person.theyRequestedMe}
+          />
+          {event.bookingEnabled && (
+            <ProposeSlot userId={userId} firstName={firstName} />
+          )}
+        </>
       ) : live === undefined ? (
         <PageSpinner />
       ) : null}

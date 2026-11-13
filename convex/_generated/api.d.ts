@@ -191,6 +191,7 @@ import type * as push from "../push.js";
 import type * as pushTokens from "../pushTokens.js";
 import type * as skills from "../skills.js";
 import type * as social_agentContext from "../social/agentContext.js";
+import type * as social_bookings from "../social/bookings.js";
 import type * as social_checkin from "../social/checkin.js";
 import type * as social_constants from "../social/constants.js";
 import type * as social_events from "../social/events.js";
@@ -399,6 +400,7 @@ declare const fullApi: ApiFromModules<{
   pushTokens: typeof pushTokens;
   skills: typeof skills;
   "social/agentContext": typeof social_agentContext;
+  "social/bookings": typeof social_bookings;
   "social/checkin": typeof social_checkin;
   "social/constants": typeof social_constants;
   "social/events": typeof social_events;
