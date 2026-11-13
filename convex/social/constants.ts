@@ -277,3 +277,251 @@ export function planPreapprovedAdd(input: {
     overLimitBy: Math.max(0, toAdd.length - room),
   }
 }
+
+// ── Personal links ──────────────────────────────────────────────────────
+// A personal link is the event page's address with a Clerk sign-in token in
+// its fragment. Whoever opens it is signed in as the guest it was made for,
+// so the token is a credential: single-use, short-lived, never stored.
+
+/** The key of the sign-in token in a personal link's fragment. */
+export const SIGN_IN_TICKET_PARAM = 'ticket'
+
+/** How many guests one call may make personal links for. */
+export const PERSONAL_LINKS_PER_CALL = 10
+
+const HOUR_SECONDS = 3600
+// A link made shortly before the 1:1s close still works this long. (Once
+// they have closed, no link is made for the event.)
+export const PERSONAL_LINK_MIN_SECONDS = HOUR_SECONDS
+// A link never works longer than this, however far away the event is.
+export const PERSONAL_LINK_MAX_SECONDS = 7 * 24 * HOUR_SECONDS
+
+/**
+ * How long a personal link made at `now` works, in seconds: until the event's
+ * 1:1s close, but at least PERSONAL_LINK_MIN_SECONDS and at most
+ * PERSONAL_LINK_MAX_SECONDS. A link sent two days before the event is still
+ * good on the day, and none outlives the 1:1s by more than the minimum.
+ */
+export function personalLinkLifetimeSeconds(
+  now: number,
+  meetingsCloseAt: number,
+): number {
+  const untilClose = Math.ceil((meetingsCloseAt - now) / 1000)
+  return Math.min(
+    PERSONAL_LINK_MAX_SECONDS,
+    Math.max(PERSONAL_LINK_MIN_SECONDS, untilClose),
+  )
+}
+
+/** The address of an event's page. */
+export function eventPageUrl(
+  baseUrl: string,
+  orgSlug: string,
+  eventSlug: string,
+): string {
+  const base = baseUrl.replace(/\/+$/, '')
+  return `${base}/org/${encodeURIComponent(orgSlug)}/e/${encodeURIComponent(eventSlug)}`
+}
+
+/**
+ * The event page's address carrying a sign-in token. The token goes in the
+ * fragment, which browsers send neither to the server nor in a referrer.
+ */
+export function personalEventLink(eventUrl: string, ticket: string): string {
+  return `${eventUrl}#${SIGN_IN_TICKET_PARAM}=${encodeURIComponent(ticket)}`
+}
+
+/**
+ * Why a guest gets no personal link:
+ * - `account_in_use`: Clerk has a sign-in, activity or a session on record
+ *   for the account with their email, or the site holds data for it (see
+ *   `getAccountFacts` in convex/social/events.ts for which). It is theirs;
+ *   nobody else is given a way in. This includes an account a personal link
+ *   was already used on.
+ * - `email_not_primary`: an account has their email, but not as its verified
+ *   primary address, which is the one the site knows an account by.
+ * - `account_has_role`: the account administers an organization or the
+ *   platform.
+ * - `email_has_other_data`: signing in with their email for the first time
+ *   would attach data from outside this event's organization to the account
+ *   (an account from before the move to Clerk, or applications sent to
+ *   another organization without an account).
+ */
+export type PersonalLinkRefusal =
+  | 'account_in_use'
+  | 'email_not_primary'
+  | 'account_has_role'
+  | 'email_has_other_data'
+
+/** What is known about the account a personal link would sign in to. */
+export type PersonalLinkAccount =
+  // No account has the guest's email: one is created.
+  | { kind: 'none' }
+  | {
+      kind: 'existing'
+      // The guest's email is the account's primary address and is verified.
+      emailIsVerifiedPrimary: boolean
+      // Clerk has a sign-in, activity or a session on record for the account.
+      hasSignedIn: boolean
+      // The site holds data keyed by the account.
+      hasAstnData: boolean
+      // The account is an admin of any organization or of the platform.
+      hasAdminRole: boolean
+    }
+
+/**
+ * Whether a guest may get a personal link, as the reason they may not, or
+ * null when they may. A link is only ever made for an account nobody has
+ * signed in to, holding nothing from outside the event's organization: an
+ * event admin chooses who is on the guest list, so being on it proves
+ * nothing about who owns the email.
+ */
+export function personalLinkRefusal(input: {
+  account: PersonalLinkAccount
+  emailHasOtherData: boolean
+}): PersonalLinkRefusal | null {
+  const { account } = input
+  if (account.kind === 'existing') {
+    if (!account.emailIsVerifiedPrimary) return 'email_not_primary'
+    if (account.hasAdminRole) return 'account_has_role'
+    if (account.hasSignedIn || account.hasAstnData) return 'account_in_use'
+  }
+  if (input.emailHasOtherData) return 'email_has_other_data'
+  return null
+}
+
+/** What the personal link log holds about one attempt to make a link. */
+type PersonalLinkLogRow<LogId> = {
+  _id: LogId
+  createdAt: number
+  expiresAt: number
+  finishedAt?: number
+  signInTokenId?: string
+  tokenClosedAt?: number
+}
+
+// How long an attempt that has not ended keeps a second one for the same
+// email from starting. One guest's link takes a few requests to Clerk, well
+// under this. An attempt older than this is ended by the next one.
+export const PERSONAL_LINK_IN_FLIGHT_MS = 2 * 60 * 1000
+
+/** How many attempts one email may have within PERSONAL_LINK_MAX_SECONDS. */
+export const PERSONAL_LINK_ATTEMPTS_BOUND = 200
+
+/**
+ * How long after an attempt starts it is settled (see
+ * `personalLinkSettlement`). A call makes links for at most
+ * PERSONAL_LINKS_PER_CALL guests and normally ends within seconds. An
+ * attempt whose link has not been released by this time is ended, so a call
+ * still running then does not get to release it.
+ */
+export const PERSONAL_LINK_SETTLE_AFTER_MS = 12 * 60 * 1000
+
+/**
+ * Why a new attempt for an email does not start, or null when it does:
+ * another one is in flight, or the email has had as many attempts as the log
+ * is read for (the earlier links could not all be found and revoked).
+ */
+export function personalLinkStartRefusal<LogId>(
+  rows: ReadonlyArray<PersonalLinkLogRow<LogId>>,
+  now: number,
+): 'link_in_progress' | 'too_many_links' | null {
+  if (rows.length >= PERSONAL_LINK_ATTEMPTS_BOUND) return 'too_many_links'
+  return personalLinkInFlight(rows, now) ? 'link_in_progress' : null
+}
+
+/**
+ * Whether an attempt ended with its link released to the admin. Only such an
+ * attempt's token is meant to keep working.
+ */
+export function personalLinkWasReleased(row: {
+  finishedAt?: number
+  noLinkReason?: string
+}): boolean {
+  return row.finishedAt !== undefined && row.noLinkReason === undefined
+}
+
+/**
+ * What is left to do for an attempt once the call that started it is over.
+ * - `withdraw`: its link was not released, because it was refused, its call
+ *   failed or died, or a later attempt ended it. Nobody holds the link: the
+ *   attempt is ended if it is still open, and its token revoked if it has
+ *   one that may work.
+ * - `findAccount`: it asked Clerk to create an account and never recorded
+ *   which one, so Clerk is asked whether the email has an account now.
+ */
+export function personalLinkSettlement(row: {
+  finishedAt?: number
+  noLinkReason?: string
+  accountCreationStartedAt?: number
+  accountUserId?: string
+}): { withdraw: boolean; findAccount: boolean } {
+  return {
+    withdraw: !personalLinkWasReleased(row),
+    findAccount:
+      row.accountCreationStartedAt !== undefined &&
+      row.accountUserId === undefined,
+  }
+}
+
+/**
+ * Why no personal link is made for an event right now, or null: guests can't
+ * open a draft's page, and an event whose 1:1s have closed has nothing left
+ * to sign in for.
+ */
+export function personalLinkEventRefusal(
+  event: { status: string },
+  meetingsCloseAt: number,
+  now: number,
+): 'draft' | 'meetings_closed' | null {
+  if (event.status === 'draft') return 'draft'
+  return now >= meetingsCloseAt ? 'meetings_closed' : null
+}
+
+/**
+ * Whether a link for the same email is being made right now, by this or
+ * another admin. While one is, no second one is started, so an account never
+ * gets two links from calls that overlap.
+ */
+export function personalLinkInFlight<LogId>(
+  rows: ReadonlyArray<PersonalLinkLogRow<LogId>>,
+  now: number,
+): boolean {
+  return rows.some(
+    (row) =>
+      row.finishedAt === undefined &&
+      now - row.createdAt < PERSONAL_LINK_IN_FLIGHT_MS,
+  )
+}
+
+/**
+ * The sign-in tokens among `rows` that may still work: made, not expired,
+ * and not known to be used or revoked. These are revoked before a new link
+ * is made for the same email, and when the account's owner signs in.
+ */
+export function openPersonalLinkTokens<LogId>(
+  rows: ReadonlyArray<PersonalLinkLogRow<LogId>>,
+  now: number,
+): Array<{ logId: LogId; signInTokenId: string }> {
+  return rows.flatMap((row) =>
+    row.signInTokenId !== undefined &&
+    row.tokenClosedAt === undefined &&
+    row.expiresAt > now
+      ? [{ logId: row._id, signInTokenId: row.signInTokenId }]
+      : [],
+  )
+}
+
+/**
+ * A guest's name as the first and last name of a new account: the first word
+ * and the rest. No name gives no names.
+ */
+export function splitGuestName(name: string | undefined | null): {
+  firstName?: string
+  lastName?: string
+} {
+  const words = (name ?? '').trim().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return {}
+  if (words.length === 1) return { firstName: words[0] }
+  return { firstName: words[0], lastName: words.slice(1).join(' ') }
+}

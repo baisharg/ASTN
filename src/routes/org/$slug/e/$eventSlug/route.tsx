@@ -15,6 +15,7 @@ import { toast } from 'sonner'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
 import type { AlertsSeen } from '~/lib/social-live'
+import { PersonalLinkSignIn } from '~/components/social/PersonalLinkSignIn'
 import { SocialEventProvider } from '~/components/social/SocialEventContext'
 import { MeetingBanner, useLiveState } from '~/components/social/live'
 import { useHaptic } from '~/hooks/use-haptic'
@@ -152,6 +153,7 @@ function EventLayoutInner() {
         )}
       </header>
       <div className="mx-auto max-w-xl">
+        <PersonalLinkSignIn />
         <Outlet />
         <EventMeetingBanner />
       </div>

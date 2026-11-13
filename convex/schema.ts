@@ -2319,6 +2319,63 @@ export default defineSchema({
     // Luma
     .index('by_eventId_and_lumaCheckInCode', ['eventId', 'lumaCheckInCode']),
 
+  // One row per attempt to make a personal (already signed in) link for a
+  // guest, written as the attempt goes: started, account found or created,
+  // token made, finished. A record for the org and the means to revoke a
+  // link. Never the link or its token: those are not stored.
+  socialPersonalLinkLog: defineTable({
+    eventId: v.id('socialEvents'),
+    orgId: v.id('organizations'),
+    guestId: v.id('socialEventGuests'),
+    email: v.string(),
+    // The admin who asked for the link.
+    createdBy: v.string(),
+    createdAt: v.number(),
+    // When a link made by this attempt stops working.
+    expiresAt: v.number(),
+    // Set when the attempt ended: with a link, at the moment the link was
+    // released to the admin, or without one. A row without it is an attempt
+    // in flight, or one whose call died and has not been settled yet.
+    finishedAt: v.optional(v.number()),
+    // Set just before Clerk is asked to create an account for the email, so
+    // an account whose creation was never confirmed can still be found.
+    // Removed again when Clerk refuses to create one.
+    accountCreationStartedAt: v.optional(v.number()),
+    // The Clerk account the link signs in to, once known. Absent on an
+    // attempt that started creating one and has been settled: Clerk had no
+    // account with the email as its verified primary address.
+    accountUserId: v.optional(v.string()),
+    // True when this attempt created that account. For an account found
+    // after a creation with no answer, true when nobody had used it yet.
+    accountCreated: v.boolean(),
+    // Clerk's id of the link's sign-in token ("sit_..."), set when a token
+    // was made. Clerk revokes a token by this id; it signs nobody in.
+    signInTokenId: v.optional(v.string()),
+    // When the token was revoked, or found to be used or revoked already.
+    tokenClosedAt: v.optional(v.number()),
+    // Why a finished attempt made no link (see `createPersonalLinks`).
+    // Absent on an attempt that made one.
+    noLinkReason: v.optional(
+      v.union(
+        v.literal('account_in_use'),
+        v.literal('email_not_primary'),
+        v.literal('account_has_role'),
+        v.literal('email_has_other_data'),
+        v.literal('not_approved'),
+        v.literal('link_in_progress'),
+        v.literal('too_many_links'),
+        v.literal('changed_meanwhile'),
+        v.literal('clerk_error'),
+        // A later attempt for the same email ended this one.
+        v.literal('superseded'),
+        v.literal('unexpected_error'),
+      ),
+    ),
+  })
+    .index('by_eventId_and_createdAt', ['eventId', 'createdAt'])
+    .index('by_email_and_createdAt', ['email', 'createdAt'])
+    .index('by_accountUserId_and_createdAt', ['accountUserId', 'createdAt']),
+
   // Whether an attendee is taking 1:1 requests right now. Kept apart from
   // the guest row because it changes often during the event.
   socialAttendeeStatus: defineTable({
