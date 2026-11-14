@@ -105,7 +105,11 @@ export function useMeetingsOpen(): boolean {
   )
 }
 
-/** A card with a title, a body and a Clerk sign-in button. */
+/**
+ * A card with a title, a body and a Clerk button. The dialog it opens takes an
+ * email and signs the person in or creates their account, whichever applies:
+ * most guests arrive from Luma without an account.
+ */
 export function SignInPanel({
   title,
   body,
@@ -134,6 +138,7 @@ export function SignInPanel({
       </div>
       <SignInButton
         mode="modal"
+        withSignUp
         forceRedirectUrl={redirect}
         signUpForceRedirectUrl={redirect}
       >
