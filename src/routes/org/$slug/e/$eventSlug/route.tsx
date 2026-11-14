@@ -10,7 +10,7 @@ import { useAuth } from '@clerk/clerk-react'
 import { convexQuery } from '@convex-dev/react-query'
 import { useConvexAuth, useMutation } from 'convex/react'
 import { CalendarClock, Inbox } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { toast } from 'sonner'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
@@ -223,11 +223,28 @@ function LinkGuestOnLoad({ eventId }: { eventId: Id<'socialEvents'> }) {
   return null
 }
 
+function subscribeToVisibility(onChange: () => void): () => void {
+  document.addEventListener('visibilitychange', onChange)
+  return () => document.removeEventListener('visibilitychange', onChange)
+}
+
+/** Whether the page is on screen, as opposed to a background tab. */
+function usePageVisible(): boolean {
+  return useSyncExternalStore(
+    subscribeToVisibility,
+    () => document.visibilityState === 'visible',
+    () => true,
+  )
+}
+
 /**
  * Alerts for the signed-in attendee on every page of the event: a toast, a
  * vibration (where the browser has one) and a count in the tab title for new
  * 1:1 requests, and a jump to the meeting page when a meeting starts. Nothing
  * alerts for what was already there when the page loaded.
+ *
+ * While the page is on screen it also tells the backend which requests it
+ * has shown, so the person isn't emailed about those (markRequestsSeen).
  */
 function LiveAlerts({
   eventId,
@@ -247,6 +264,22 @@ function LiveAlerts({
   // Null at an event with booking off, where no meeting comes from a booking.
   const agenda = useAgenda()
   const seen = useRef<AlertsSeen | null>(null)
+  const markRequestsSeen = useMutation(api.social.meetings.markRequestsSeen)
+  const pageVisible = usePageVisible()
+  const reportedSeen = useRef<ReadonlySet<string>>(new Set())
+
+  useEffect(() => {
+    if (!pageVisible || !live?.isAttendee) return
+    const shown = live.incoming.map((request) => request._id)
+    if (shown.every((id) => reportedSeen.current.has(id))) return
+    const before = reportedSeen.current
+    reportedSeen.current = new Set([...before, ...shown])
+    markRequestsSeen({ eventId }).catch((error: unknown) => {
+      // Not recorded: report them again with the next change.
+      reportedSeen.current = before
+      console.error(error)
+    })
+  }, [live, pageVisible, eventId, markRequestsSeen])
 
   useEffect(() => {
     // Still loading: keep the baseline from before.

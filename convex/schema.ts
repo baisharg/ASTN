@@ -2425,6 +2425,11 @@ export default defineSchema({
     // When the requester dismissed the notice that it was declined or
     // expired, or asked or met the same person again.
     acknowledgedAt: v.optional(v.number()),
+    // When a page of the person asked first showed the request while it was
+    // pending. Unset: they haven't had the app open since it was sent.
+    seenAt: v.optional(v.number()),
+    // When the person asked was emailed about the request (requestEmail.ts).
+    emailedAt: v.optional(v.number()),
     // Whether each side had the other among their suggestions when they
     // acted: the requester when they asked, the recipient when they
     // accepted. Suggestions are replaced over time, so this is the only
