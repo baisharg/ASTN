@@ -12,10 +12,18 @@ import { api } from '../../../../convex/_generated/api'
 import { AuthHeader } from '~/components/layout/auth-header'
 import { GradientBg } from '~/components/layout/GradientBg'
 import { formatEventDate } from '~/lib/format-event-date'
+import { orgPageHead } from '~/lib/orgPageHead'
+import { lookUpOrgForHead } from '~/lib/orgPageLookup'
 import { Card } from '~/components/ui/card'
 import { Button } from '~/components/ui/button'
 
 export const Route = createFileRoute('/org/$slug/events')({
+  // Only the head uses the loader. The page below fetches its own data in
+  // the browser.
+  loader: async ({ context, params }) => ({
+    orgLookup: await lookUpOrgForHead(context.queryClient, params.slug),
+  }),
+  head: ({ loaderData }) => orgPageHead('events', loaderData?.orgLookup),
   component: OrgEventsPage,
 })
 

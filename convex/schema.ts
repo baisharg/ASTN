@@ -3,6 +3,7 @@ import { v } from 'convex/values'
 import {
   allowlistSourceValidator,
   availabilityValidator,
+  bookingStatusValidator,
   eventStatusValidator,
   guestSourceValidator,
   guestStatusValidator,
@@ -1480,12 +1481,13 @@ export default defineSchema({
     formSource: v.optional(
       v.union(v.literal('course'), v.literal('eoi'), v.literal('custom')),
     ),
-    // The canonical email set, when this opportunity uses the canonical emails.
-    // Only then does it draft decision emails and send the confirmation.
+    // When the opportunity got its own six emails, copied from the canonical
+    // (emailTemplates rows keyed by opportunityId). Set at creation.
+    emailsCopiedAt: v.optional(v.number()),
+    // Legacy, until emails/templateLibrary:giveOpportunitiesTheirEmails runs:
+    // the canonical set an opportunity read its emails from, and its on-apply
+    // confirmation switch. Both fold into its own emails.
     emailTemplateSetId: v.optional(v.id('emailTemplateSets')),
-    // On-apply confirmation email kill switch (outbox system only). undefined
-    // defaults to ON, except EOIs which default OFF. Toggling never sends
-    // retroactively — it only affects future submissions.
     sendApplicationReceivedEmail: v.optional(v.boolean()),
     redirectOpportunityId: v.optional(v.id('orgOpportunities')),
     sourceOpportunityId: v.optional(v.id('orgOpportunities')),
@@ -1674,21 +1676,20 @@ export default defineSchema({
 
   // ── Emails: canonical templates, outbox, unified log ──────────────────────
 
-  // The org's canonical emails (isCanonical). It always holds one template per
-  // kind, so a linked opportunity can never hit a missing template.
+  // The org's canonical emails: one set per org (isCanonical), holding one
+  // template per kind. Every new opportunity copies them.
   emailTemplateSets: defineTable({
     orgId: v.id('organizations'),
     name: v.string(),
-    // The org's canonical emails (at most one set per org): new course
-    // editions link it, and {{course}}/{{area}} fill from their course tag.
     isCanonical: v.optional(v.boolean()),
     createdBy: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index('by_org', ['orgId']),
 
-  // Templates. Library templates carry setId; per-opportunity overrides carry
-  // opportunityId instead (exactly one of the two is set). Every kind always
+  // Templates. The canonical's carry setId; an opportunity's own six carry
+  // opportunityId instead (exactly one of the two is set), copied from the
+  // canonical when it is created and edited there since. Every kind always
   // has a row; `enabled: false` is the explicit "this decision sends no email"
   // choice (never a missing template). Poll/survey links are system-managed
   // blocks toggled per template — never text variables that can break.
@@ -2018,17 +2019,6 @@ export default defineSchema({
       'targetOpportunityId',
     ]),
 
-  formTemplates: defineTable({
-    orgId: v.id('organizations'),
-    name: v.string(),
-    // Which editor offers it: application forms or feedback surveys.
-    kind: v.union(v.literal('application'), v.literal('feedback')),
-    formFields: v.any(), // Array<FormField> — see convex/lib/formFields.ts
-    createdBy: v.string(),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  }).index('by_org_and_kind', ['orgId', 'kind']),
-
   // Answers to an anonymous survey. Deliberately has no respondentId, name or
   // userId column: the anonymity is a property of the schema, not of what the
   // admin UI chooses to display, so there is nothing to correlate even with
@@ -2261,6 +2251,11 @@ export default defineSchema({
     // attendees as the focus of the event.
     matchingPrompt: v.optional(v.string()),
     floorPlanStorageId: v.optional(v.id('_storage')),
+    // Whether attendees can book 1:1s for a set time (socialBookings), on
+    // top of asking to meet now. Present only while an admin has it switched
+    // on: switching it off removes the field, so an event that doesn't use
+    // booking is stored exactly as it was before the setting existed.
+    bookingEnabled: v.optional(v.literal(true)),
     // Whether attendees see "Mis reuniones" (the 1:1s they had, with a
     // private note per person). Unset means no.
     myMeetingsEnabled: v.optional(v.boolean()),
@@ -2481,6 +2476,60 @@ export default defineSchema({
     'userId',
     'aboutUserId',
   ]),
+
+  // A 1:1 for a set time at an event with `bookingEnabled`: one row from
+  // the proposal to its end. `fromUserId` proposed the slot to `toUserId`.
+  // Once both say they are there, the meeting itself is a socialMeetings row.
+  socialBookings: defineTable({
+    eventId: v.id('socialEvents'),
+    fromUserId: v.string(),
+    toUserId: v.string(),
+    // The slot, as absolute times, so a booking keeps its time when the
+    // event's 1:1 window or meeting length changes.
+    slotStart: v.number(),
+    slotEnd: v.number(),
+    note: v.optional(v.string()),
+    status: bookingStatusValidator,
+    // The number of the place reserved once booked (socialEventSpots.number,
+    // which survives the admin saving the places again). None when the
+    // event had no places.
+    spotNumber: v.optional(v.number()),
+    createdAt: v.number(),
+    // When the proposal left 'proposed', whatever the outcome.
+    respondedAt: v.optional(v.number()),
+    // When each person said, during the slot, that they are there.
+    fromReadyAt: v.optional(v.number()),
+    toReadyAt: v.optional(v.number()),
+    meetingId: v.optional(v.id('socialMeetings')),
+    // Who declined, cancelled or released it, and when.
+    closedBy: v.optional(v.string()),
+    closedAt: v.optional(v.number()),
+    // When the person told about the outcome dismissed the notice.
+    acknowledgedAt: v.optional(v.number()),
+  })
+    .index('by_eventId_and_fromUserId_and_status_and_slotStart', [
+      'eventId',
+      'fromUserId',
+      'status',
+      'slotStart',
+    ])
+    .index('by_eventId_and_toUserId_and_status_and_slotStart', [
+      'eventId',
+      'toUserId',
+      'status',
+      'slotStart',
+    ])
+    .index('by_eventId_and_status_and_slotStart', [
+      'eventId',
+      'status',
+      'slotStart',
+    ])
+    .index('by_eventId_and_status_and_spotNumber_and_slotStart', [
+      'eventId',
+      'status',
+      'spotNumber',
+      'slotStart',
+    ]),
 
   // Who an attendee is suggested to meet: the picks the event-wide assignment
   // made from each attendee's ranked candidates (socialSuggestionCandidates).

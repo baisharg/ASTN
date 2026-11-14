@@ -88,6 +88,7 @@ const copy = {
     buildProfile: 'Armar perfil',
     profileReady: 'Tu perfil está listo para el matching.',
     seePeople: 'Ver quiénes van',
+    seeAgenda: 'Tu agenda de 1:1',
     editProfile: 'Editar perfil',
     pending: 'Inscripción pendiente',
     pendingBody: (org: string, byEmail: boolean) =>
@@ -179,6 +180,7 @@ const copy = {
     buildProfile: 'Set up profile',
     profileReady: 'Your profile is ready for matching.',
     seePeople: "See who's coming",
+    seeAgenda: 'Your 1:1 agenda',
     editProfile: 'Edit profile',
     pending: 'Registration pending',
     pendingBody: (org: string, byEmail: boolean) =>
@@ -523,6 +525,15 @@ function RegistrationCard() {
             >
               {t.seePeople}
             </Link>
+            {event.bookingEnabled && (
+              <Link
+                to="/org/$slug/e/$eventSlug/agenda"
+                params={{ slug, eventSlug }}
+                className={secondaryButtonClass}
+              >
+                {t.seeAgenda}
+              </Link>
+            )}
             {profileLink(!profileReady)}
           </>
         ) : (

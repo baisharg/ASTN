@@ -688,8 +688,9 @@ function AdminOpportunitiesPage() {
                     </p>
                     <p>
                       <strong className="text-foreground">Copied:</strong> the
-                      description, type, tags and the EOI flag. The form and,
-                      for a course edition, the emails come from the canonicals.
+                      description, type, tags and the EOI flag. The form and the
+                      emails come from the canonicals; an EOI starts with every
+                      email off.
                     </p>
                     <p>
                       <strong className="text-foreground">Not copied:</strong>{' '}

@@ -4,22 +4,26 @@ import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc, Id } from '../_generated/dataModel'
 import { getUserId, requireOrgAdminFor } from '../lib/auth'
 import { requireOpportunityAccess } from '../lib/courseAccess'
-import { courseOf } from '../lib/courses'
 import type { AccessLevel } from '../lib/courseAccess'
+import { coursePlaceholderValues, fillText } from '../canonicalForms'
+import type { FormSource } from '../canonicalForms'
 import {
   assertOnlyKnownVariables,
   discardPendingDraftsForKind,
-  usesCourseVariables,
   enqueueMissingDraftsForKind,
   refreshPendingDraftsForTemplate,
-  syncOutboxOnStatusChange,
+  usesOwnEmails,
 } from './outbox'
 
-// Decision emails. Each opportunity that sends them links the org's canonical
-// set (emailTemplateSetId), which holds exactly one template per kind, so a
-// decision never hits a *missing* template: one that should send no email is
-// `enabled: false`, an explicit choice. An opportunity customizes a kind for
-// itself with an override, a row in the same table keyed by opportunityId.
+// Each opportunity owns its six emails: rows in emailTemplates keyed by
+// opportunityId, one per kind, copied from the org's canonical emails when the
+// opportunity is created, with {{course}} and {{area}} filled from its course
+// tag. From then on the copy is the opportunity's, like its form: editing it
+// never touches the canonical, editing the canonical never reaches it, and
+// "Revert to canonical" brings the canonical's current text back. A kind that
+// sends no email is `enabled: false`, an explicit choice, never a missing row.
+// The canonical itself lives in the org's one emailTemplateSets row (rows
+// keyed by setId) and is edited only in Canonicals.
 
 export const EMAIL_KINDS = [
   'application_received',
@@ -83,6 +87,24 @@ const DISABLED_BY_DEFAULT: ReadonlySet<EmailKind> = new Set([
   'next_edition',
 ])
 
+type EmailContent = {
+  kind: EmailKind
+  enabled: boolean
+  subject: string
+  markdownBody: string
+  includePollLink: boolean
+  includeSurveyLink: boolean
+}
+
+const emailContentValidator = v.object({
+  kind: emailKindValidator,
+  enabled: v.boolean(),
+  subject: v.string(),
+  markdownBody: v.string(),
+  includePollLink: v.boolean(),
+  includeSurveyLink: v.boolean(),
+})
+
 async function requireAdmin(
   ctx: QueryCtx | MutationCtx,
   orgId: Doc<'organizations'>['_id'],
@@ -104,463 +126,20 @@ async function requireAccess(
   return await requireOpportunityAccess(ctx, opportunity, level)
 }
 
-const updateResultValidator = v.object({
-  queued: v.number(),
-  discarded: v.number(),
-  keptEdited: v.number(),
-})
-
-type TemplateUpdate = {
-  subject: string
-  markdownBody: string
-  enabled?: boolean
-  includePollLink?: boolean
-  includeSurveyLink?: boolean
-}
-
-// Saves a template and keeps the outbox in step. Returns what the change did
-// to the pending queue, so the UI can say it out loud instead of silently
-// adding or removing a dozen drafts.
-async function applyTemplateUpdate(
-  ctx: MutationCtx,
-  template: Doc<'emailTemplates'>,
-  {
-    subject,
-    markdownBody,
-    enabled,
-    includePollLink,
-    includeSurveyLink,
-  }: TemplateUpdate,
-): Promise<{ queued: number; discarded: number; keptEdited: number }> {
-  if (!subject.trim()) throw new ConvexError('Subject cannot be empty')
-  // A typo'd {{variable}} is rejected here — it can never reach an applicant.
-  assertOnlyKnownVariables(subject)
-  assertOnlyKnownVariables(markdownBody)
-
-  // A template that was off and is now on has a backlog: every decision of
-  // this kind made while it was off queued nothing. Enabling it looks back.
-  const turnedOn = template.enabled === false && enabled === true
-  let queued = 0
-  let discarded = 0
-  let keptEdited = 0
-
-  const now = Date.now()
-  await ctx.db.patch('emailTemplates', template._id, {
-    subject,
-    markdownBody,
-    ...(enabled !== undefined ? { enabled } : {}),
-    ...(includePollLink !== undefined ? { includePollLink } : {}),
-    ...(includeSurveyLink !== undefined ? { includeSurveyLink } : {}),
-    updatedAt: now,
-  })
-  const scope = template.setId
-    ? { setId: template.setId }
-    : template.opportunityId
-      ? { opportunityId: template.opportunityId }
-      : null
-  if (!scope) return { queued, discarded, keptEdited }
-  if (template.setId) {
-    await ctx.db.patch('emailTemplateSets', template.setId, { updatedAt: now })
-  }
-  // Bring already-queued drafts up to the new wording. Hand-edited ones are
-  // left alone; nothing is sent.
-  await refreshPendingDraftsForTemplate(ctx, { kind: template.kind, ...scope })
-  if (turnedOn) {
-    queued = await enqueueMissingDraftsForKind(ctx, {
-      kind: template.kind,
-      ...scope,
-    })
-  }
-  // And the reverse: a kind that is off must not leave queued drafts behind.
-  ;({ discarded, keptEdited } = await discardPendingDraftsForKind(ctx, {
-    kind: template.kind,
-    ...scope,
-  }))
-  return { queued, discarded, keptEdited }
-}
-
-// ── Per-opportunity view (Emails tab) ───────────────────────────────────────
-
-// The effective templates (one per kind) for an opportunity: its override, else
-// the canonical. Null when it does not use the canonical emails.
-export const getEffectiveTemplates = query({
-  args: { opportunityId: v.id('orgOpportunities') },
-  returns: v.union(
-    v.null(),
-    v.object({
-      templates: v.array(
-        v.object({
-          kind: emailKindValidator,
-          enabled: v.boolean(),
-          subject: v.string(),
-          markdownBody: v.string(),
-          includePollLink: v.boolean(),
-          includeSurveyLink: v.boolean(),
-          overridden: v.boolean(),
-        }),
-      ),
-    }),
-  ),
-  handler: async (ctx, { opportunityId }) => {
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireAccess(ctx, opportunity._id, 'read')
-
-    const setId = opportunity.emailTemplateSetId
-    if (!setId) return null
-
-    const templates = []
-    for (const kind of EMAIL_KINDS) {
-      const override = await ctx.db
-        .query('emailTemplates')
-        .withIndex('by_opportunity_and_kind', (q) =>
-          q.eq('opportunityId', opportunityId).eq('kind', kind),
-        )
-        .first()
-      const base = override
-        ? null
-        : await ctx.db
-            .query('emailTemplates')
-            .withIndex('by_set_and_kind', (q) =>
-              q.eq('setId', setId).eq('kind', kind),
-            )
-            .first()
-      const t = override ?? base
-      if (!t) continue
-      templates.push({
-        kind,
-        enabled: t.enabled ?? true,
-        subject: t.subject,
-        markdownBody: t.markdownBody,
-        includePollLink: t.includePollLink ?? false,
-        includeSurveyLink: t.includeSurveyLink ?? false,
-        overridden: override != null,
-      })
-    }
-    return { templates }
-  },
-})
-
-// Customize one template for this opportunity without touching the canonical.
-export const upsertOpportunityTemplate = mutation({
-  args: {
-    opportunityId: v.id('orgOpportunities'),
-    kind: emailKindValidator,
-    subject: v.string(),
-    markdownBody: v.string(),
-    enabled: v.boolean(),
-    includePollLink: v.boolean(),
-    includeSurveyLink: v.boolean(),
-  },
-  // What the toggle did to the pending queue, so the UI can say it out loud
-  // instead of silently adding or removing a dozen drafts.
-  returns: v.object({
-    queued: v.number(),
-    discarded: v.number(),
-    keptEdited: v.number(),
-  }),
-  handler: async (ctx, args) => {
-    const opportunity = await ctx.db.get('orgOpportunities', args.opportunityId)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireAccess(ctx, opportunity._id, 'edit')
-
-    if (!args.subject.trim()) throw new ConvexError('Subject cannot be empty')
-    assertOnlyKnownVariables(args.subject)
-    assertOnlyKnownVariables(args.markdownBody)
-
-    const now = Date.now()
-    const existing = await ctx.db
-      .query('emailTemplates')
-      .withIndex('by_opportunity_and_kind', (q) =>
-        q.eq('opportunityId', args.opportunityId).eq('kind', args.kind),
-      )
-      .first()
-    const fields = {
-      enabled: args.enabled,
-      subject: args.subject,
-      markdownBody: args.markdownBody,
-      includePollLink: args.includePollLink,
-      includeSurveyLink: args.includeSurveyLink,
-      updatedAt: now,
-    }
-    if (existing) {
-      await ctx.db.patch('emailTemplates', existing._id, fields)
-    } else {
-      await ctx.db.insert('emailTemplates', {
-        orgId: opportunity.orgId,
-        opportunityId: args.opportunityId,
-        kind: args.kind,
-        ...fields,
-      })
-    }
-    await refreshPendingDraftsForTemplate(ctx, {
-      kind: args.kind,
-      opportunityId: args.opportunityId,
-    })
-    // Same look-back when an override goes from off to on. `existing` being
-    // absent counts as off only if the set template it inherited was off too,
-    // which resolveTemplate inside the helper takes care of.
-    let queued = 0
-    if (args.enabled && existing?.enabled === false)
-      queued = await enqueueMissingDraftsForKind(ctx, {
-        kind: args.kind,
-        opportunityId: args.opportunityId,
-      })
-    const { discarded, keptEdited } = await discardPendingDraftsForKind(ctx, {
-      kind: args.kind,
-      opportunityId: args.opportunityId,
-    })
-    return { queued, discarded, keptEdited }
-  },
-})
-
-// Remove this opportunity's customization for a kind (revert to the canonical).
-export const clearOpportunityTemplate = mutation({
-  args: {
-    opportunityId: v.id('orgOpportunities'),
-    kind: emailKindValidator,
-  },
-  returns: v.null(),
-  handler: async (ctx, { opportunityId, kind }) => {
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireAccess(ctx, opportunity._id, 'edit')
-
-    const existing = await ctx.db
-      .query('emailTemplates')
-      .withIndex('by_opportunity_and_kind', (q) =>
-        q.eq('opportunityId', opportunityId).eq('kind', kind),
-      )
-      .first()
-    if (existing) await ctx.db.delete('emailTemplates', existing._id)
-    // Reverting to the canonical changes the effective wording, so the drafts
-    // that were tracking the override need to follow it back.
-    await refreshPendingDraftsForTemplate(ctx, { kind, opportunityId })
-    // Dropping an enabled override for a disabled canonical template flips the
-    // effective answer to off, which the drafts have to follow.
-    await discardPendingDraftsForKind(ctx, { kind, opportunityId })
-    return null
-  },
-})
-
-// On-apply confirmation kill switch. Never sends retroactively — the email
-// only ever fires at submission time, so toggling has no effect on existing
-// applications by construction.
-export const setSendApplicationReceivedEmail = mutation({
-  args: {
-    opportunityId: v.id('orgOpportunities'),
-    enabled: v.boolean(),
-  },
-  returns: v.null(),
-  handler: async (ctx, { opportunityId, enabled }) => {
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireAccess(ctx, opportunity._id, 'edit')
-    await ctx.db.patch('orgOpportunities', opportunityId, {
-      sendApplicationReceivedEmail: enabled,
-      updatedAt: Date.now(),
-    })
-    return null
-  },
-})
-
-// Turn the canonical emails on or off for an opportunity. Turning them on
-// backfills drafts for decisions already made; idempotency (one sent email
-// per application and kind) makes that safe to repeat, and nothing is sent
-// without an explicit Send from the Outbox.
-export const setUseCanonicalEmails = mutation({
-  args: { opportunityId: v.id('orgOpportunities'), enabled: v.boolean() },
-  returns: v.null(),
-  handler: async (ctx, { opportunityId, enabled }) => {
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireAccess(ctx, opportunity._id, 'edit')
-
-    let setId: Id<'emailTemplateSets'> | undefined
-    if (enabled) {
-      const set = await canonicalSetOf(ctx, opportunity.orgId)
-      if (!set) {
-        throw new ConvexError(
-          'There are no canonical emails yet. Save them in Canonicals first.',
-        )
-      }
-      if (
-        !courseOf(opportunity.tags) &&
-        (await setUsesCourseVariables(ctx, set._id))
-      ) {
-        throw new ConvexError(
-          'These emails name the course ({{course}}). Choose the opportunity’s course first.',
-        )
-      }
-      setId = set._id
-    }
-    await ctx.db.patch('orgOpportunities', opportunityId, {
-      emailTemplateSetId: setId,
-      updatedAt: Date.now(),
-    })
-    if (setId) await syncAllApplications(ctx, opportunityId)
-    return null
-  },
-})
-
-async function syncAllApplications(
-  ctx: MutationCtx,
-  opportunityId: Id<'orgOpportunities'>,
-): Promise<void> {
-  const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-  if (!opportunity) return
-  const applications = await ctx.db
-    .query('opportunityApplications')
-    .withIndex('by_opportunity_and_status', (q) =>
-      q.eq('opportunityId', opportunityId),
-    )
-    .collect()
-  for (const application of applications) {
-    await syncOutboxOnStatusChange(ctx, {
-      application,
-      status: application.status,
-      opportunity,
-    })
-  }
-}
-
-/**
- * One-off: retire every set that is not the canonical. Each opportunity that
- * linked one keeps its emails as its own overrides (kinds it had already
- * customized stay as they were) and links the canonical instead; those in
- * `fromCanonical` take the canonical as is, with no overrides. Then the
- * retired sets and their templates are deleted. Idempotent. With `dryRun`,
- * only reports.
- */
-export const retireLibrarySets = internalMutation({
-  args: {
-    orgId: v.id('organizations'),
-    fromCanonical: v.array(v.id('orgOpportunities')),
-    dryRun: v.boolean(),
-  },
-  returns: v.any(),
-  handler: async (ctx, { orgId, fromCanonical, dryRun }) => {
-    const canonical = await canonicalSetOf(ctx, orgId)
-    if (!canonical) throw new ConvexError('The org has no canonical emails')
-    const sets = await ctx.db
-      .query('emailTemplateSets')
-      .withIndex('by_org', (q) => q.eq('orgId', orgId))
-      .collect()
-    const retired = sets.filter((s) => s._id !== canonical._id)
-    const retiredIds = new Set<string>(retired.map((s) => s._id))
-    const opportunities = await ctx.db
-      .query('orgOpportunities')
-      .withIndex('by_org_and_status', (q) => q.eq('orgId', orgId))
-      .collect()
-    const fresh = new Set<string>(fromCanonical)
-    const report: Array<{ title: string; from: string; copied: number }> = []
-
-    for (const opportunity of opportunities) {
-      const setId = opportunity.emailTemplateSetId
-      if (!setId || !retiredIds.has(setId)) continue
-      let copied = 0
-      if (!fresh.has(opportunity._id)) {
-        const templates = await ctx.db
-          .query('emailTemplates')
-          .withIndex('by_set_and_kind', (q) => q.eq('setId', setId))
-          .collect()
-        for (const t of templates) {
-          const override = await ctx.db
-            .query('emailTemplates')
-            .withIndex('by_opportunity_and_kind', (q) =>
-              q.eq('opportunityId', opportunity._id).eq('kind', t.kind),
-            )
-            .first()
-          if (override) continue
-          copied++
-          if (dryRun) continue
-          await ctx.db.insert('emailTemplates', {
-            orgId,
-            opportunityId: opportunity._id,
-            kind: t.kind,
-            enabled: t.enabled,
-            subject: t.subject,
-            markdownBody: t.markdownBody,
-            includePollLink: t.includePollLink,
-            includeSurveyLink: t.includeSurveyLink,
-            updatedAt: Date.now(),
-          })
-        }
-      }
-      report.push({
-        title: opportunity.title,
-        from: retired.find((s) => s._id === setId)?.name ?? '',
-        copied,
-      })
-      if (dryRun) continue
-      await ctx.db.patch('orgOpportunities', opportunity._id, {
-        emailTemplateSetId: canonical._id,
-      })
-      if (fresh.has(opportunity._id)) {
-        // Its pending drafts follow the new wording, and kinds the old set
-        // had off get drafts for decisions already made.
-        for (const kind of EMAIL_KINDS) {
-          await refreshPendingDraftsForTemplate(ctx, {
-            kind,
-            opportunityId: opportunity._id,
-          })
-        }
-        await syncAllApplications(ctx, opportunity._id)
-      }
-    }
-
-    let templatesDeleted = 0
-    for (const set of retired) {
-      const templates = await ctx.db
-        .query('emailTemplates')
-        .withIndex('by_set_and_kind', (q) => q.eq('setId', set._id))
-        .collect()
-      templatesDeleted += templates.length
-      if (dryRun) continue
-      for (const t of templates) await ctx.db.delete('emailTemplates', t._id)
-      await ctx.db.delete('emailTemplateSets', set._id)
-    }
-
-    const savedForms = await ctx.db
-      .query('formTemplates')
-      .withIndex('by_org_and_kind', (q) => q.eq('orgId', orgId))
-      .collect()
-    if (!dryRun) {
-      for (const f of savedForms) await ctx.db.delete('formTemplates', f._id)
-    }
-
-    return {
-      dryRun,
-      opportunities: report,
-      setsDeleted: retired.map((s) => s.name),
-      templatesDeleted,
-      savedFormsDeleted: savedForms.length,
-    }
-  },
-})
-
-async function setUsesCourseVariables(
+async function ownTemplate(
   ctx: QueryCtx | MutationCtx,
-  setId: Id<'emailTemplateSets'>,
-): Promise<boolean> {
-  const templates = await ctx.db
+  opportunityId: Id<'orgOpportunities'>,
+  kind: EmailKind,
+): Promise<Doc<'emailTemplates'> | null> {
+  return await ctx.db
     .query('emailTemplates')
-    .withIndex('by_set_and_kind', (q) => q.eq('setId', setId))
-    .collect()
-  return templates.some(
-    (t) =>
-      t.enabled !== false &&
-      (usesCourseVariables(t.subject) || usesCourseVariables(t.markdownBody)),
-  )
+    .withIndex('by_opportunity_and_kind', (q) =>
+      q.eq('opportunityId', opportunityId).eq('kind', kind),
+    )
+    .first()
 }
 
 // ── Canonical emails ────────────────────────────────────────────────────────
-//
-// One set per org is the canonical: Canonicals → Emails edits it, and every
-// new course edition links it (createOpportunityFor), with {{course}} and
-// {{area}} filled from its course tag. An edition still customizes a single
-// email for itself from its Emails tab. The org's footer, appended to every
-// email it sends, is edited on the same page.
 
 export async function canonicalSetOf(
   ctx: QueryCtx | MutationCtx,
@@ -573,75 +152,105 @@ export async function canonicalSetOf(
   return sets.find((s) => s.isCanonical === true) ?? null
 }
 
-/**
- * The set a new opportunity links: the canonical, for course editions whose
- * course fills its variables. Nothing for EOIs and custom forms, which have no
- * decisions to announce.
- */
-export async function canonicalSetFor(
+/** The canonical emails, one per kind: the org's rows, or the defaults. */
+async function canonicalEmailsOf(
   ctx: QueryCtx | MutationCtx,
-  opts: {
-    orgId: Id<'organizations'>
-    formSource: 'course' | 'eoi' | 'custom'
-    tags: ReadonlyArray<string> | undefined
-  },
-): Promise<Id<'emailTemplateSets'> | undefined> {
-  if (opts.formSource !== 'course') return undefined
-  const set = await canonicalSetOf(ctx, opts.orgId)
-  if (!set) return undefined
-  if (!courseOf(opts.tags) && (await setUsesCourseVariables(ctx, set._id))) {
-    return undefined
-  }
-  return set._id
+  orgId: Id<'organizations'>,
+): Promise<Array<EmailContent>> {
+  const set = await canonicalSetOf(ctx, orgId)
+  const rows = set
+    ? await ctx.db
+        .query('emailTemplates')
+        .withIndex('by_set_and_kind', (q) => q.eq('setId', set._id))
+        .collect()
+    : []
+  return EMAIL_KINDS.map((kind) => {
+    const row = rows.find((t) => t.kind === kind)
+    return {
+      kind,
+      enabled: row ? (row.enabled ?? true) : !DISABLED_BY_DEFAULT.has(kind),
+      subject: row?.subject ?? DEFAULT_TEMPLATES[kind].subject,
+      markdownBody: row?.markdownBody ?? DEFAULT_TEMPLATES[kind].markdownBody,
+      includePollLink: row?.includePollLink ?? false,
+      includeSurveyLink: row?.includeSurveyLink ?? false,
+    }
+  })
 }
 
-const canonicalEmailValidator = v.object({
-  kind: emailKindValidator,
-  enabled: v.boolean(),
-  subject: v.string(),
-  markdownBody: v.string(),
-  includePollLink: v.boolean(),
-  includeSurveyLink: v.boolean(),
-})
+/** The canonical emails as an opportunity receives them: its course filled in. */
+async function canonicalEmailsFor(
+  ctx: QueryCtx | MutationCtx,
+  opportunity: {
+    orgId: Id<'organizations'>
+    tags?: ReadonlyArray<string> | undefined
+  },
+): Promise<Array<EmailContent>> {
+  const values = coursePlaceholderValues(opportunity.tags)
+  return (await canonicalEmailsOf(ctx, opportunity.orgId)).map((email) => ({
+    ...email,
+    subject: fillText(email.subject, values),
+    markdownBody: fillText(email.markdownBody, values),
+  }))
+}
+
+/**
+ * Give a new opportunity its six emails: a copy of the canonical with its
+ * course filled in. A course edition starts with the canonical's switches; an
+ * expression of interest or a custom form starts with every email off, so it
+ * announces nothing until someone turns an email on. Kinds that already have a
+ * row are left alone.
+ */
+export async function copyCanonicalEmails(
+  ctx: MutationCtx,
+  opts: {
+    opportunityId: Id<'orgOpportunities'>
+    orgId: Id<'organizations'>
+    tags: ReadonlyArray<string> | undefined
+    formSource: FormSource
+  },
+): Promise<void> {
+  const emails = await canonicalEmailsFor(ctx, {
+    orgId: opts.orgId,
+    tags: opts.tags,
+  })
+  const now = Date.now()
+  for (const email of emails) {
+    if (await ownTemplate(ctx, opts.opportunityId, email.kind)) continue
+    await ctx.db.insert('emailTemplates', {
+      orgId: opts.orgId,
+      opportunityId: opts.opportunityId,
+      kind: email.kind,
+      enabled: opts.formSource === 'course' ? email.enabled : false,
+      subject: email.subject,
+      markdownBody: email.markdownBody,
+      includePollLink: email.includePollLink,
+      includeSurveyLink: email.includeSurveyLink,
+      updatedAt: now,
+    })
+  }
+}
 
 /** The canonical emails, one per kind, and the footer. */
 export const getCanonical = query({
   args: { orgId: v.id('organizations') },
   returns: v.object({
     footer: v.string(),
-    emails: v.array(canonicalEmailValidator),
+    emails: v.array(emailContentValidator),
   }),
   handler: async (ctx, { orgId }) => {
     await requireAdmin(ctx, orgId)
-    const set = await canonicalSetOf(ctx, orgId)
-    const rows = set
-      ? await ctx.db
-          .query('emailTemplates')
-          .withIndex('by_set_and_kind', (q) => q.eq('setId', set._id))
-          .collect()
-      : []
     const org = await ctx.db.get('organizations', orgId)
     return {
       footer: org?.emailFooter ?? '',
-      emails: EMAIL_KINDS.map((kind) => {
-        const row = rows.find((t) => t.kind === kind)
-        return {
-          kind,
-          enabled: row ? (row.enabled ?? true) : !DISABLED_BY_DEFAULT.has(kind),
-          subject: row?.subject ?? DEFAULT_TEMPLATES[kind].subject,
-          markdownBody:
-            row?.markdownBody ?? DEFAULT_TEMPLATES[kind].markdownBody,
-          includePollLink: row?.includePollLink ?? false,
-          includeSurveyLink: row?.includeSurveyLink ?? false,
-        }
-      }),
+      emails: await canonicalEmailsOf(ctx, orgId),
     }
   },
 })
 
 /**
  * Save one canonical email. The org's canonical set is created on the first
- * save, so new course editions only start linking it once someone wrote it.
+ * save. Opportunities keep the copy they already have; a new one copies the
+ * saved text, and an existing one takes it with "Revert to canonical".
  */
 export const saveCanonicalEmail = mutation({
   args: {
@@ -653,12 +262,18 @@ export const saveCanonicalEmail = mutation({
     includePollLink: v.boolean(),
     includeSurveyLink: v.boolean(),
   },
-  returns: updateResultValidator,
-  handler: async (ctx, { orgId, kind, ...update }) => {
+  returns: v.null(),
+  handler: async (ctx, { orgId, kind, ...content }) => {
     const userId = await requireAdmin(ctx, orgId)
+    if (!content.subject.trim())
+      throw new ConvexError('Subject cannot be empty')
+    // A typo'd {{variable}} is rejected here — it can never reach an applicant.
+    assertOnlyKnownVariables(content.subject)
+    assertOnlyKnownVariables(content.markdownBody)
+
+    const now = Date.now()
     let setId = (await canonicalSetOf(ctx, orgId))?._id
     if (!setId) {
-      const now = Date.now()
       setId = await ctx.db.insert('emailTemplateSets', {
         orgId,
         name: 'Canonical',
@@ -688,7 +303,12 @@ export const saveCanonicalEmail = mutation({
       )
       .first()
     if (!template) throw new ConvexError('Template not found')
-    return await applyTemplateUpdate(ctx, template, update)
+    await ctx.db.patch('emailTemplates', template._id, {
+      ...content,
+      updatedAt: now,
+    })
+    await ctx.db.patch('emailTemplateSets', setId, { updatedAt: now })
+    return null
   },
 })
 
@@ -704,5 +324,317 @@ export const saveFooter = mutation({
       emailFooter: footer.trim() || undefined,
     })
     return null
+  },
+})
+
+// ── An opportunity's emails (Emails tab) ────────────────────────────────────
+
+const queueEffectValidator = v.object({
+  queued: v.number(),
+  discarded: v.number(),
+  keptEdited: v.number(),
+})
+
+/**
+ * The six emails of an opportunity. `differsFromCanonical` says whether its
+ * text or links moved away from what the canonical says today, so the tab
+ * can offer to bring the canonical back.
+ */
+export const getOpportunityEmails = query({
+  args: { opportunityId: v.id('orgOpportunities') },
+  returns: v.array(
+    v.object({
+      ...emailContentValidator.fields,
+      differsFromCanonical: v.boolean(),
+      updatedAt: v.number(),
+    }),
+  ),
+  handler: async (ctx, { opportunityId }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) throw new ConvexError('Opportunity not found')
+    await requireAccess(ctx, opportunity._id, 'read')
+
+    const canonical = await canonicalEmailsFor(ctx, opportunity)
+    const out = []
+    for (const base of canonical) {
+      const own = await ownTemplate(ctx, opportunityId, base.kind)
+      // Until the one-off below runs, an opportunity may still read its emails
+      // from the canonical set it linked.
+      const linked = opportunity.emailTemplateSetId
+      const legacy =
+        !own && !usesOwnEmails(opportunity) && linked
+          ? await ctx.db
+              .query('emailTemplates')
+              .withIndex('by_set_and_kind', (q) =>
+                q.eq('setId', linked).eq('kind', base.kind),
+              )
+              .first()
+          : null
+      const row = own ?? legacy
+      const email: EmailContent = row
+        ? {
+            kind: base.kind,
+            enabled: row.enabled ?? true,
+            subject: row.subject,
+            markdownBody: row.markdownBody,
+            includePollLink: row.includePollLink ?? false,
+            includeSurveyLink: row.includeSurveyLink ?? false,
+          }
+        : { ...base, enabled: false }
+      out.push({
+        ...email,
+        differsFromCanonical: !sameText(email, base),
+        updatedAt: row?.updatedAt ?? 0,
+      })
+    }
+    return out
+  },
+})
+
+function sameText(a: EmailContent, b: EmailContent): boolean {
+  return (
+    a.subject === b.subject &&
+    a.markdownBody === b.markdownBody &&
+    a.includePollLink === b.includePollLink &&
+    a.includeSurveyLink === b.includeSurveyLink
+  )
+}
+
+/**
+ * Write one of the opportunity's emails and keep its Outbox in step: untouched
+ * pending drafts of that kind follow the new wording, turning the email on
+ * queues a draft for every decision of that kind already made, turning it off
+ * drops the untouched drafts. Says what it did to the queue so the tab can say
+ * it out loud. Nothing is sent.
+ */
+async function writeOpportunityEmail(
+  ctx: MutationCtx,
+  opportunity: Doc<'orgOpportunities'>,
+  content: EmailContent,
+): Promise<{ queued: number; discarded: number; keptEdited: number }> {
+  if (!content.subject.trim()) throw new ConvexError('Subject cannot be empty')
+  assertOnlyKnownVariables(content.subject)
+  assertOnlyKnownVariables(content.markdownBody)
+
+  // An opportunity still on the canonical set takes all six as its own first,
+  // so this write never leaves the other five without an email.
+  if (!usesOwnEmails(opportunity)) {
+    await adoptOwnEmails(ctx, opportunity, {
+      canonical: await canonicalEmailsOf(ctx, opportunity.orgId),
+      dryRun: false,
+    })
+  }
+  const existing = await ownTemplate(ctx, opportunity._id, content.kind)
+  const wasOn = existing ? existing.enabled !== false : false
+  const { kind, ...fields } = content
+  const now = Date.now()
+  if (existing) {
+    await ctx.db.patch('emailTemplates', existing._id, {
+      ...fields,
+      updatedAt: now,
+    })
+  } else {
+    await ctx.db.insert('emailTemplates', {
+      orgId: opportunity.orgId,
+      opportunityId: opportunity._id,
+      kind,
+      ...fields,
+      updatedAt: now,
+    })
+  }
+
+  await refreshPendingDraftsForTemplate(ctx, {
+    kind,
+    opportunityId: opportunity._id,
+  })
+  let queued = 0
+  if (content.enabled && !wasOn) {
+    queued = await enqueueMissingDraftsForKind(ctx, {
+      kind,
+      opportunityId: opportunity._id,
+    })
+  }
+  const { discarded, keptEdited } = await discardPendingDraftsForKind(ctx, {
+    kind,
+    opportunityId: opportunity._id,
+  })
+  return { queued, discarded, keptEdited }
+}
+
+/** Save one of the opportunity's emails as written in its Emails tab. */
+export const saveOpportunityEmail = mutation({
+  args: {
+    opportunityId: v.id('orgOpportunities'),
+    ...emailContentValidator.fields,
+  },
+  returns: queueEffectValidator,
+  handler: async (ctx, { opportunityId, ...content }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) throw new ConvexError('Opportunity not found')
+    await requireAccess(ctx, opportunity._id, 'edit')
+    return await writeOpportunityEmail(ctx, opportunity, content)
+  },
+})
+
+/**
+ * Bring the canonical's current text and links back into one of the
+ * opportunity's emails. Whether that email sends stays as the opportunity
+ * had it: reverting the wording never turns an email on.
+ */
+export const revertOpportunityEmail = mutation({
+  args: {
+    opportunityId: v.id('orgOpportunities'),
+    kind: emailKindValidator,
+  },
+  returns: queueEffectValidator,
+  handler: async (ctx, { opportunityId, kind }) => {
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity) throw new ConvexError('Opportunity not found')
+    await requireAccess(ctx, opportunity._id, 'edit')
+
+    const base = (await canonicalEmailsFor(ctx, opportunity)).find(
+      (e) => e.kind === kind,
+    )
+    if (!base) throw new ConvexError('Unknown email')
+    const own = await ownTemplate(ctx, opportunityId, kind)
+    return await writeOpportunityEmail(ctx, opportunity, {
+      ...base,
+      enabled: own ? own.enabled !== false : false,
+    })
+  },
+})
+
+/**
+ * Make an opportunity's emails its own rows. One that linked the canonical
+ * set keeps exactly the emails it sent (its own rows, else the set's, with
+ * its course filled in), and its on-apply switch folds into the "Application
+ * received" email. One that sent no emails gets its six with every email off,
+ * so it keeps sending nothing until someone turns an email on. Untouched
+ * pending drafts take the copied wording; nothing is queued or sent.
+ */
+async function adoptOwnEmails(
+  ctx: MutationCtx,
+  opportunity: Doc<'orgOpportunities'>,
+  opts: { canonical: Array<EmailContent>; dryRun: boolean },
+): Promise<{
+  from: 'own and canonical set' | 'canonical set' | 'nothing'
+  copied: number
+  switchedOff: number
+}> {
+  const { canonical, dryRun } = opts
+  const linked = opportunity.emailTemplateSetId
+  const sentEmails = linked != null
+  const confirmationOn =
+    sentEmails &&
+    (opportunity.sendApplicationReceivedEmail ?? !(opportunity.isEOI ?? false))
+  const values = coursePlaceholderValues(opportunity.tags)
+  const now = Date.now()
+  let copied = 0
+  let switchedOff = 0
+  let hadOwn = false
+
+  for (const base of canonical) {
+    const own = await ownTemplate(ctx, opportunity._id, base.kind)
+    if (own) {
+      hadOwn = true
+      const wasOn = own.enabled !== false
+      const on =
+        wasOn &&
+        sentEmails &&
+        (base.kind !== 'application_received' || confirmationOn)
+      if (wasOn && !on) {
+        switchedOff++
+        if (!dryRun) {
+          await ctx.db.patch('emailTemplates', own._id, {
+            enabled: false,
+            updatedAt: now,
+          })
+        }
+      }
+      continue
+    }
+    const setRow = linked
+      ? await ctx.db
+          .query('emailTemplates')
+          .withIndex('by_set_and_kind', (q) =>
+            q.eq('setId', linked).eq('kind', base.kind),
+          )
+          .first()
+      : null
+    const source: EmailContent = setRow
+      ? {
+          kind: base.kind,
+          enabled: setRow.enabled ?? true,
+          subject: setRow.subject,
+          markdownBody: setRow.markdownBody,
+          includePollLink: setRow.includePollLink ?? false,
+          includeSurveyLink: setRow.includeSurveyLink ?? false,
+        }
+      : base
+    const enabled =
+      sentEmails &&
+      source.enabled &&
+      (base.kind !== 'application_received' || confirmationOn)
+    copied++
+    if (dryRun) continue
+    await ctx.db.insert('emailTemplates', {
+      orgId: opportunity.orgId,
+      opportunityId: opportunity._id,
+      kind: base.kind,
+      enabled,
+      subject: fillText(source.subject, values),
+      markdownBody: fillText(source.markdownBody, values),
+      includePollLink: source.includePollLink,
+      includeSurveyLink: source.includeSurveyLink,
+      updatedAt: now,
+    })
+  }
+  if (!dryRun) {
+    await ctx.db.patch('orgOpportunities', opportunity._id, {
+      emailsCopiedAt: now,
+      emailTemplateSetId: undefined,
+      sendApplicationReceivedEmail: undefined,
+    })
+    for (const kind of EMAIL_KINDS) {
+      await refreshPendingDraftsForTemplate(ctx, {
+        kind,
+        opportunityId: opportunity._id,
+      })
+    }
+  }
+  return {
+    from: sentEmails
+      ? hadOwn
+        ? 'own and canonical set'
+        : 'canonical set'
+      : 'nothing',
+    copied,
+    switchedOff,
+  }
+}
+
+/**
+ * One-off: give every opportunity of the org its own six emails, so none
+ * reads the canonical set any more. Idempotent; with `dryRun`, only reports.
+ */
+export const giveOpportunitiesTheirEmails = internalMutation({
+  args: { orgId: v.id('organizations'), dryRun: v.boolean() },
+  returns: v.any(),
+  handler: async (ctx, { orgId, dryRun }) => {
+    const canonical = await canonicalEmailsOf(ctx, orgId)
+    const opportunities = await ctx.db
+      .query('orgOpportunities')
+      .withIndex('by_org_and_status', (q) => q.eq('orgId', orgId))
+      .collect()
+    const report = []
+    for (const opportunity of opportunities) {
+      if (usesOwnEmails(opportunity)) continue
+      const result = await adoptOwnEmails(ctx, opportunity, {
+        canonical,
+        dryRun,
+      })
+      report.push({ title: opportunity.title, ...result })
+    }
+    return { dryRun, opportunities: report }
   },
 })
