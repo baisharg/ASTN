@@ -64,16 +64,28 @@ export function requestPastExpiry(
 }
 
 /**
- * When a pending request expires. Its time to be answered starts once the
- * person asked is free: at `now`, or when the meeting they are in is due to
- * end (`busyUntil`), so a request waiting behind a meeting isn't lost while
- * that meeting runs.
+ * When a pending request expires. Its time to be answered starts once both
+ * people are free to meet: at `now`, or when the meeting either of them is
+ * in is due to end (`busyUntil`, see latestMeetingEnd), so a request that
+ * can't be accepted while a meeting runs isn't lost to it.
  */
 export function requestExpiryTime(
   now: number,
   busyUntil: number | null,
 ): number {
   return Math.max(now, busyUntil ?? now) + REQUEST_EXPIRY_MS
+}
+
+/**
+ * Until when a request between two people can't be accepted: the later end
+ * of the meetings they are in right now (`null` for someone in none). Null
+ * when neither is in a meeting.
+ */
+export function latestMeetingEnd(
+  meetingEnds: ReadonlyArray<number | null>,
+): number | null {
+  const ends = meetingEnds.filter((end) => end !== null)
+  return ends.length === 0 ? null : Math.max(...ends)
 }
 
 /** Why a 1:1 action was refused. Sent as ConvexError data `{ code }`. */

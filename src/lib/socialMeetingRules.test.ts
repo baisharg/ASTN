@@ -2,6 +2,7 @@ import {
   MAX_MEETING_EXTENSION_MINUTES,
   compareAttendees,
   extensionMinutesGranted,
+  latestMeetingEnd,
   meetingsOpenNow,
   requestExpiryTime,
   requestPastExpiry,
@@ -113,6 +114,24 @@ describe('requestExpiryTime', () => {
 
   test('a meeting that is already over time does not shorten the 10 minutes', () => {
     expect(requestExpiryTime(1_000_000, 900_000)).toBe(1_000_000 + TEN_MINUTES)
+  })
+})
+
+describe('latestMeetingEnd: until when a request between two people waits', () => {
+  test('nobody in a meeting: the request does not wait', () => {
+    expect(latestMeetingEnd([null, null])).toBe(null)
+  })
+
+  test('the person asked is in a meeting: it waits for that meeting', () => {
+    expect(latestMeetingEnd([null, 900_000])).toBe(900_000)
+  })
+
+  test('the person who asked is in a meeting: it waits for that meeting too', () => {
+    expect(latestMeetingEnd([900_000, null])).toBe(900_000)
+  })
+
+  test('both are in meetings: it waits for the one that ends later', () => {
+    expect(latestMeetingEnd([900_000, 1_200_000])).toBe(1_200_000)
   })
 })
 
