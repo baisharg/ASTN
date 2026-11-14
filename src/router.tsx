@@ -15,10 +15,18 @@ import type { ErrorComponentProps } from '@tanstack/react-router'
 import { ErrorDisplay } from '~/components/ErrorDisplay'
 import { LocalizedClerkProvider } from '~/lib/clerk-language'
 import { useConvexAuthFromClerk } from '~/lib/convex-clerk-auth'
+import {
+  captureSignInTicket,
+  redactSignInTicketDeep,
+  redactSignInTicketInBreadcrumb,
+} from '~/lib/signInTicket'
 
 function UserMigration() {
   const migrateUser = useMutation(api.userMigration.migrateUserIfNeeded)
   const ensureIdentity = useMutation(api.profiles.ensureIdentityFields)
+  const closeUnusedPersonalLinks = useMutation(
+    api.social.events.closeMyUnusedPersonalLinks,
+  )
   const didRun = useRef(false)
 
   useEffect(() => {
@@ -30,7 +38,12 @@ function UserMigration() {
     ensureIdentity().catch(() => {
       // Silent failure — backfill is best-effort
     })
-  }, [migrateUser, ensureIdentity])
+    // Now that the account's owner is signed in, personal event links made
+    // for the account earlier stop working. Does nothing for other accounts.
+    closeUnusedPersonalLinks().catch(() => {
+      // It runs again the next time the site loads signed in.
+    })
+  }, [migrateUser, ensureIdentity, closeUnusedPersonalLinks])
 
   return null
 }
@@ -40,6 +53,10 @@ function DefaultErrorComponent({ error, reset }: ErrorComponentProps) {
 }
 
 export function getRouter() {
+  // A personal event link carries a sign-in token in its address. It comes
+  // out of the address here, before the router, Sentry or analytics read it.
+  captureSignInTicket()
+
   const CONVEX_URL = (import.meta as any).env.VITE_CONVEX_URL as string
   if (!CONVEX_URL) {
     throw new Error(
@@ -94,8 +111,28 @@ export function getRouter() {
       tunnel: '/tunnel',
       integrations: [
         Sentry.tanstackRouterBrowserTracingIntegration(router),
-        Sentry.replayIntegration(),
+        // Replay's own events (navigation, network) are redacted here; its
+        // DOM snapshots read the address directly and can't be.
+        Sentry.replayIntegration({
+          beforeAddRecordingEvent: (event) => redactSignInTicketDeep(event),
+        }),
       ],
+      // A personal event link's sign-in token is taken out of the address
+      // before Sentry starts (captureSignInTicket). These redact it from
+      // anything Sentry sends should it ever be in an address anyway.
+      beforeBreadcrumb: (breadcrumb) =>
+        redactSignInTicketInBreadcrumb(breadcrumb),
+      beforeSend: (event) => redactSignInTicketDeep(event),
+      beforeSendTransaction: (event) => redactSignInTicketDeep(event),
+      // A span can't be dropped: one that could not be redacted is sent
+      // without the fields that hold text.
+      beforeSendSpan: (span) =>
+        redactSignInTicketDeep(span) ?? {
+          ...span,
+          description: undefined,
+          data: {},
+        },
+      beforeSendLog: (log) => redactSignInTicketDeep(log),
       tracesSampleRate: 1.0,
       replaysSessionSampleRate: 0.1,
       replaysOnErrorSampleRate: 1.0,

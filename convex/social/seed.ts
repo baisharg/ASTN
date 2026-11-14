@@ -501,6 +501,7 @@ export const clearDemoEvent = internalMutation({
         'socialSuggestions',
         'socialSuggestionCandidates',
         'socialSuggestionRuns',
+        'socialPersonalLinkLog',
       ] as const
       for (const table of byEvent) {
         const rows = await ctx.db

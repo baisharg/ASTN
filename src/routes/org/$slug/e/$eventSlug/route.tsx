@@ -15,6 +15,7 @@ import { toast } from 'sonner'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
 import type { AgendaSeen, AlertsSeen } from '~/lib/social-live'
+import { PersonalLinkSignIn } from '~/components/social/PersonalLinkSignIn'
 import {
   SocialEventProvider,
   useNow,
@@ -193,6 +194,7 @@ function EventLayoutInner() {
         )}
       </header>
       <div className="mx-auto max-w-xl">
+        <PersonalLinkSignIn />
         <Outlet />
         <EventMeetingBanner />
         {event.bookingEnabled && <EventBookingBanner />}

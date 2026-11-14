@@ -1,9 +1,10 @@
 import { useMutation, useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
-import { Check, Linkedin, Loader2, Search, X } from 'lucide-react'
+import { Check, Link2, Linkedin, Loader2, Search, X } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
+import { CopyPersonalLinkDialog, PersonalLinksCard } from './PersonalLinks'
 import { GUEST_STATUS_COLORS, GUEST_STATUS_LABELS, toastError } from './shared'
 import type { GuestStatus } from './shared'
 import {
@@ -71,6 +72,9 @@ export function GuestsTab({
   // so its text doesn't empty out mid-animation.
   const [declineTarget, setDeclineTarget] = useState<Guest | null>(null)
   const [declineOpen, setDeclineOpen] = useState(false)
+  // The guest whose personal link dialog is open; stays set while it closes.
+  const [linkTarget, setLinkTarget] = useState<Guest | null>(null)
+  const [linkOpen, setLinkOpen] = useState(false)
   const { busy, run } = useBusyAction()
 
   if (guests === undefined) {
@@ -109,6 +113,8 @@ export function GuestsTab({
     .filter((g) => statusFilter === 'all' || g.status === statusFilter)
     .filter((g) => matchesSearch(search, [g.name, g.email]))
     .sort((a, b) => (a.name ?? a.email).localeCompare(b.name ?? b.email, 'es'))
+
+  const approved = guests.filter((g) => g.status === 'approved')
 
   const statusCounts = new Map<GuestStatus, number>()
   for (const g of guests) {
@@ -189,6 +195,8 @@ export function GuestsTab({
           )}
         </CardContent>
       </Card>
+
+      <PersonalLinksCard eventId={eventId} approvedGuests={approved} />
 
       <Card>
         <CardHeader>
@@ -325,6 +333,22 @@ export function GuestsTab({
                       </td>
                       <td className="py-1">
                         <div className="flex justify-end gap-1">
+                          {g.status === 'approved' && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="min-h-11"
+                              disabled={busy !== null}
+                              onClick={() => {
+                                setLinkTarget(g)
+                                setLinkOpen(true)
+                              }}
+                              aria-label={`Copiar link personal de ${g.name ?? g.email}`}
+                            >
+                              <Link2 className="size-4 mr-1.5" />
+                              Copiar link personal
+                            </Button>
+                          )}
                           {g.status !== 'approved' && (
                             <Button
                               variant="ghost"
@@ -365,6 +389,13 @@ export function GuestsTab({
           )}
         </CardContent>
       </Card>
+
+      <CopyPersonalLinkDialog
+        eventId={eventId}
+        guest={linkTarget}
+        open={linkOpen}
+        onOpenChange={setLinkOpen}
+      />
 
       <AlertDialog
         open={declineOpen}
