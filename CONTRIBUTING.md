@@ -79,7 +79,7 @@ Application forms, polls, surveys and any public page. The people using them can
 - **Two emails do go out on their own:**
   - the confirmation when someone applies;
   - the availability emails from a poll's shared link.
-- **Check the Outbox before you press Send.** When an opportunity starts using email templates after decisions have already been made, ASTN creates a draft for each of those decisions. Make sure each one should go out.
+- **Check the Outbox before you press Send.** When one of an opportunity's emails is switched on after decisions of that kind have already been made, ASTN creates a draft for each of those decisions. Make sure each one should go out.
 
 ### Links already shared
 
