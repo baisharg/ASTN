@@ -61,7 +61,10 @@ export const MAX_SUGGESTIONS = 5
 export const SUGGESTION_CAP = 8
 // New attendees start an event run at most this often, counted from the
 // start of the last run.
-export const EVENT_RUN_INTERVAL_MS = 15 * 60 * 1000
+export const EVENT_RUN_INTERVAL_MS = 5 * 60 * 1000
+// How soon the check booked for a new attendee (runForNewAttendees) looks
+// again when the run it found under way has outlasted the interval.
+export const CATCH_UP_RETRY_MS = 60 * 1000
 // An attendee's own ranking is redone for a language switch at most this
 // often.
 export const RERANK_INTERVAL_MS = 10 * 60 * 1000
@@ -296,7 +299,9 @@ export type RefreshDecision =
  * - New attendees start a run at most every EVENT_RUN_INTERVAL_MS. One who
  *   arrives sooner than that after the last run, or while a run that doesn't
  *   include them is under way, is ranked on their own so they aren't left
- *   waiting; the next run then includes them for everyone else.
+ *   waiting; the next run then includes them for everyone else. That run
+ *   doesn't wait for a page: a check is booked for when it is due
+ *   (decideCatchUpRun).
  * - An attendee the last run covered but who has no ranking (it failed) is
  *   ranked on their own, never through a whole new run.
  * - Once the event's 1:1s have closed, nobody is ranked: the suggestions an
@@ -342,6 +347,49 @@ export function decideRefresh(input: {
     return { kind: 'ownRank', reason: 'language' }
   }
   return runDue ? { kind: 'checkAttendance' } : { kind: 'none' }
+}
+
+export type CatchUpDecision =
+  // Rank everyone at the event, then assign.
+  | { kind: 'eventRun' }
+  // Too soon, or a run is still under way: check again at `runAt`.
+  | { kind: 'later'; runAt: number }
+  | { kind: 'none' }
+
+/**
+ * What the check booked for a new attendee does (runForNewAttendees). The
+ * new attendee was ranked on their own, so they have suggestions, but nobody
+ * else's ranking knows about them until a run ranks everyone again. The
+ * check starts that run as soon as the last one is over and
+ * EVENT_RUN_INTERVAL_MS old, whether or not anyone has a page open.
+ *
+ * Nothing happens when the last run already covers every attendee with a
+ * ready profile (another check or a page got there first), or once the
+ * event's 1:1s have closed.
+ */
+export function decideCatchUpRun(input: {
+  now: number
+  /** Whether the event's 1:1 window has closed. */
+  meetingsOver: boolean
+  /** Whether an attendee with a ready profile is missing from the last run. */
+  someoneNotCovered: boolean
+  eventRunInProgress: boolean
+  /** When the event's last run started (running or finished), if any. */
+  lastEventRunStartedAt: number | undefined
+}): CatchUpDecision {
+  if (input.meetingsOver || !input.someoneNotCovered) return { kind: 'none' }
+  if (input.lastEventRunStartedAt === undefined) return { kind: 'eventRun' }
+  const dueAt = input.lastEventRunStartedAt + EVENT_RUN_INTERVAL_MS
+  if (input.eventRunInProgress) {
+    return {
+      kind: 'later',
+      runAt: Math.max(dueAt, input.now + CATCH_UP_RETRY_MS),
+    }
+  }
+  // The scheduler can run a moment early.
+  return input.now + 1000 >= dueAt
+    ? { kind: 'eventRun' }
+    : { kind: 'later', runAt: dueAt }
 }
 
 /**
@@ -1227,6 +1275,15 @@ export const refreshMySuggestions = mutation({
       case 'ownRank': {
         if (decision.reason === 'missing') {
           await startOwnRank(ctx, { eventId, userId, row, now, language })
+          // New to the event: the last run didn't rank them, so no one
+          // else's ranking includes them. Book the run that will.
+          if (run && !run.attendeeUserIds.includes(userId)) {
+            await ctx.scheduler.runAt(
+              Math.max(now, run.startedAt + EVENT_RUN_INTERVAL_MS),
+              internal.social.suggestions.runForNewAttendees,
+              { eventId },
+            )
+          }
           return 'scheduled'
         }
         const timing = decideRerankTiming({
@@ -1283,6 +1340,47 @@ export const refreshMySuggestions = mutation({
       )
     }
     return 'recent'
+  },
+})
+
+/**
+ * Booked when a new attendee is ranked on their own: start the run that puts
+ * them in everyone else's ranking, or book itself again when it is too soon
+ * (decideCatchUpRun).
+ */
+export const runForNewAttendees = internalMutation({
+  args: { eventId: v.id('socialEvents') },
+  returns: v.null(),
+  handler: async (ctx, { eventId }) => {
+    const now = Date.now()
+    const [event, run, ready] = await Promise.all([
+      ctx.db.get('socialEvents', eventId),
+      latestRun(ctx, eventId),
+      readyAttendeeIds(ctx, eventId),
+    ])
+    const covered = new Set(run?.attendeeUserIds)
+    const decision = decideCatchUpRun({
+      now,
+      meetingsOver: event === null || now >= meetingsWindow(event).closeAt,
+      someoneNotCovered: ready.some((id) => !covered.has(id)),
+      eventRunInProgress: isRunning(run, now),
+      lastEventRunStartedAt: run?.startedAt,
+    })
+    if (decision.kind === 'eventRun') {
+      await startEventRun(ctx, {
+        eventId,
+        trigger: 'attendance',
+        now,
+        attendeeUserIds: ready,
+      })
+    } else if (decision.kind === 'later') {
+      await ctx.scheduler.runAt(
+        decision.runAt,
+        internal.social.suggestions.runForNewAttendees,
+        { eventId },
+      )
+    }
+    return null
   },
 })
 

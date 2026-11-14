@@ -11,6 +11,7 @@ import {
   compareAttendees,
   extensionBeforeBooking,
   extensionMinutesGranted,
+  latestMeetingEnd,
   latestMeetingsFirst,
   meetingNoteToStore,
   meetNowWindow,
@@ -78,6 +79,23 @@ export async function activeMeetingFor(
       q.eq('eventId', eventId).eq('userB', userId).eq('status', 'active'),
     )
     .first()
+}
+
+/**
+ * Until when a request between `fromUserId` and `toUserId` can't be accepted
+ * because one of them is in a meeting: when the later of those meetings is
+ * due to end. Null when both are free.
+ */
+async function requestBusyUntil(
+  ctx: QueryCtx | MutationCtx,
+  eventId: Id<'socialEvents'>,
+  request: { fromUserId: string; toUserId: string },
+): Promise<number | null> {
+  const meetings = await Promise.all([
+    activeMeetingFor(ctx, eventId, request.fromUserId),
+    activeMeetingFor(ctx, eventId, request.toUserId),
+  ])
+  return latestMeetingEnd(meetings.map((meeting) => meeting?.endsAt ?? null))
 }
 
 /**
@@ -968,8 +986,10 @@ export const requestMeeting = mutation({
     await recordArrival(ctx, eventId, userId)
     // A new request replaces the notice about the last one to this person.
     await acknowledgeOutcomes(ctx, eventId, userId, toUserId)
-    const theirMeeting = await activeMeetingFor(ctx, eventId, toUserId)
-    const expiresAt = requestExpiryTime(now, theirMeeting?.endsAt ?? null)
+    const expiresAt = requestExpiryTime(
+      now,
+      await requestBusyUntil(ctx, eventId, { fromUserId: userId, toUserId }),
+    )
     const requestId = await ctx.db.insert('socialMeetingRequests', {
       eventId,
       fromUserId: userId,
@@ -1070,14 +1090,11 @@ export const expireRequestIfDue = internalMutation({
     const now = Date.now()
     // The scheduler can run a moment early.
     if (!requestPastExpiry(request, now + 1000)) return null
-    // The person asked is in a meeting: the request waits for it to end.
-    const theirMeeting = await activeMeetingFor(
-      ctx,
-      request.eventId,
-      request.toUserId,
-    )
-    if (theirMeeting) {
-      const expiresAt = requestExpiryTime(now, theirMeeting.endsAt)
+    // One of the two is in a meeting, so the request can't be accepted yet:
+    // it waits for that meeting to end.
+    const busyUntil = await requestBusyUntil(ctx, request.eventId, request)
+    if (busyUntil !== null) {
+      const expiresAt = requestExpiryTime(now, busyUntil)
       await ctx.db.patch('socialMeetingRequests', requestId, { expiresAt })
       await ctx.scheduler.runAt(
         expiresAt,

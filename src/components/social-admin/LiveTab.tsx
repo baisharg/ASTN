@@ -185,7 +185,7 @@ export function LiveTab({ eventId }: { eventId: Id<'socialEvents'> }) {
             Cada asistente recibe sugerencias de a quién conocer y de qué
             hablar, según los perfiles y la guía de la pestaña Configuración. Se
             generan para todos a la vez: cuando el primer asistente abre la app,
-            y de nuevo (como mucho cada 15 minutos) cuando se suma gente con el
+            y de nuevo (como mucho cada 5 minutos) cuando se suma gente con el
             perfil completo. Usá el botón después de cambiar la guía o antes de
             abrir los 1:1. Solo cuenta a quienes están aprobados y tienen el
             perfil completo.

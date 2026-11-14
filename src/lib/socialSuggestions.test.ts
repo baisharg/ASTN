@@ -1,8 +1,10 @@
 import {
+  CATCH_UP_RETRY_MS,
   EVENT_RUN_INTERVAL_MS,
   GENERATING_STALE_MS,
   RERANK_INTERVAL_MS,
   cleanSuggestionPicks,
+  decideCatchUpRun,
   decideRefresh,
   decideRerankTiming,
   isRankInProgress,
@@ -30,7 +32,7 @@ const SETTLED: Parameters<typeof decideRefresh>[0] = {
   now: NOW,
   meetingsOver: false,
   eventRunInProgress: false,
-  lastEventRunStartedAt: NOW - 5 * MINUTE,
+  lastEventRunStartedAt: NOW - 2 * MINUTE,
   coveredByLastEventRun: true,
   rankInProgress: false,
   hasRanking: true,
@@ -164,6 +166,82 @@ describe('decideRefresh: what opening the people page sets in motion', () => {
       decideRefresh({
         ...SETTLED,
         lastEventRunStartedAt: NOW - EVENT_RUN_INTERVAL_MS + 1,
+      }),
+    ).toEqual({ kind: 'none' })
+  })
+})
+
+describe('decideCatchUpRun: the run booked for a new attendee', () => {
+  /** Someone new was ranked on their own two minutes after the last run. */
+  const NEWCOMER: Parameters<typeof decideCatchUpRun>[0] = {
+    now: NOW,
+    meetingsOver: false,
+    someoneNotCovered: true,
+    eventRunInProgress: false,
+    lastEventRunStartedAt: NOW - 2 * MINUTE,
+  }
+
+  test('too soon after the last run: checks again when the interval ends', () => {
+    expect(decideCatchUpRun(NEWCOMER)).toEqual({
+      kind: 'later',
+      runAt: NOW - 2 * MINUTE + EVENT_RUN_INTERVAL_MS,
+    })
+  })
+
+  test('once the interval has passed, ranks everyone', () => {
+    expect(
+      decideCatchUpRun({
+        ...NEWCOMER,
+        lastEventRunStartedAt: NOW - EVENT_RUN_INTERVAL_MS,
+      }),
+    ).toEqual({ kind: 'eventRun' })
+  })
+
+  test('a check the scheduler runs a moment early still ranks everyone', () => {
+    expect(
+      decideCatchUpRun({
+        ...NEWCOMER,
+        lastEventRunStartedAt: NOW - EVENT_RUN_INTERVAL_MS + 200,
+      }),
+    ).toEqual({ kind: 'eventRun' })
+  })
+
+  test('a run still under way when the interval ends: checks again shortly', () => {
+    expect(
+      decideCatchUpRun({
+        ...NEWCOMER,
+        eventRunInProgress: true,
+        lastEventRunStartedAt: NOW - EVENT_RUN_INTERVAL_MS,
+      }),
+    ).toEqual({ kind: 'later', runAt: NOW + CATCH_UP_RETRY_MS })
+  })
+
+  test('a run that just started: checks again when its interval ends', () => {
+    expect(
+      decideCatchUpRun({
+        ...NEWCOMER,
+        eventRunInProgress: true,
+        lastEventRunStartedAt: NOW - MINUTE,
+      }),
+    ).toEqual({ kind: 'later', runAt: NOW - MINUTE + EVENT_RUN_INTERVAL_MS })
+  })
+
+  test('nothing when the last run already covers everyone', () => {
+    expect(
+      decideCatchUpRun({
+        ...NEWCOMER,
+        someoneNotCovered: false,
+        lastEventRunStartedAt: NOW - EVENT_RUN_INTERVAL_MS,
+      }),
+    ).toEqual({ kind: 'none' })
+  })
+
+  test("nothing once the event's 1:1s have closed", () => {
+    expect(
+      decideCatchUpRun({
+        ...NEWCOMER,
+        meetingsOver: true,
+        lastEventRunStartedAt: NOW - EVENT_RUN_INTERVAL_MS,
       }),
     ).toEqual({ kind: 'none' })
   })
