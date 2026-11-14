@@ -200,6 +200,7 @@ import type * as social_luma from "../social/luma.js";
 import type * as social_lumaCrm from "../social/lumaCrm.js";
 import type * as social_lumaSync from "../social/lumaSync.js";
 import type * as social_meetings from "../social/meetings.js";
+import type * as social_requestEmail from "../social/requestEmail.js";
 import type * as social_seed from "../social/seed.js";
 import type * as social_suggestions from "../social/suggestions.js";
 import type * as social_suggestionsAction from "../social/suggestionsAction.js";
@@ -409,6 +410,7 @@ declare const fullApi: ApiFromModules<{
   "social/lumaCrm": typeof social_lumaCrm;
   "social/lumaSync": typeof social_lumaSync;
   "social/meetings": typeof social_meetings;
+  "social/requestEmail": typeof social_requestEmail;
   "social/seed": typeof social_seed;
   "social/suggestions": typeof social_suggestions;
   "social/suggestionsAction": typeof social_suggestionsAction;

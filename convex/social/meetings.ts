@@ -8,6 +8,7 @@ import {
   MAX_MY_MEETINGS,
   MAX_NOTE_LENGTH,
   MAX_OUTGOING_PENDING,
+  REQUEST_EMAIL_DELAY_MS,
   compareAttendees,
   extensionBeforeBooking,
   extensionMinutesGranted,
@@ -1006,7 +1007,37 @@ export const requestMeeting = mutation({
       internal.social.meetings.expireRequestIfDue,
       { requestId },
     )
+    // The app only alerts on an open page: email them if none shows it.
+    await ctx.scheduler.runAfter(
+      REQUEST_EMAIL_DELAY_MS,
+      internal.social.requestEmail.sendIfUnseen,
+      { requestId },
+    )
     return { requestId, meetingId: null }
+  },
+})
+
+/**
+ * A page of the caller is showing their incoming requests: record it on the
+ * ones not seen before, so they aren't emailed about them (requestEmail.ts).
+ */
+export const markRequestsSeen = mutation({
+  args: { eventId: v.id('socialEvents') },
+  returns: v.null(),
+  handler: async (ctx, { eventId }) => {
+    const userId = await requireAuth(ctx)
+    const pending = await ctx.db
+      .query('socialMeetingRequests')
+      .withIndex('by_eventId_and_toUserId_and_status', (q) =>
+        q.eq('eventId', eventId).eq('toUserId', userId).eq('status', 'pending'),
+      )
+      .take(50)
+    const now = Date.now()
+    for (const request of pending) {
+      if (request.seenAt !== undefined) continue
+      await ctx.db.patch('socialMeetingRequests', request._id, { seenAt: now })
+    }
+    return null
   },
 })
 

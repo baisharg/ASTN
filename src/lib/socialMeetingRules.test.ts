@@ -1,10 +1,12 @@
 import {
   MAX_MEETING_EXTENSION_MINUTES,
+  REQUEST_EMAIL_GAP_MS,
   compareAttendees,
   extensionMinutesGranted,
   latestMeetingEnd,
   meetingsOpenNow,
   requestExpiryTime,
+  requestNeedsEmail,
   requestPastExpiry,
   suggestionOutcome,
 } from '../../convex/social/constants'
@@ -132,6 +134,67 @@ describe('latestMeetingEnd: until when a request between two people waits', () =
 
   test('both are in meetings: it waits for the one that ends later', () => {
     expect(latestMeetingEnd([900_000, 1_200_000])).toBe(1_200_000)
+  })
+})
+
+describe('requestNeedsEmail: emailing someone about a request no page showed', () => {
+  const NOW = 1_700_000_000_000
+  const waiting = { status: 'pending', expiresAt: NOW + 60_000 }
+
+  test('a request still waiting that no page has shown gets an email', () => {
+    expect(
+      requestNeedsEmail({
+        now: NOW,
+        request: waiting,
+        lastEmailedAt: undefined,
+      }),
+    ).toBe(true)
+  })
+
+  test('no email once a page of the person asked has shown it', () => {
+    expect(
+      requestNeedsEmail({
+        now: NOW,
+        request: { ...waiting, seenAt: NOW - 5_000 },
+        lastEmailedAt: undefined,
+      }),
+    ).toBe(false)
+  })
+
+  test('no email for a request that was answered, cancelled or expired', () => {
+    for (const status of ['accepted', 'declined', 'cancelled', 'expired']) {
+      expect(
+        requestNeedsEmail({
+          now: NOW,
+          request: { ...waiting, status },
+          lastEmailedAt: undefined,
+        }),
+      ).toBe(false)
+    }
+    expect(
+      requestNeedsEmail({
+        now: NOW,
+        request: { status: 'pending', expiresAt: NOW - 1 },
+        lastEmailedAt: undefined,
+      }),
+    ).toBe(false)
+  })
+
+  test('someone emailed a moment ago is not emailed again until the gap has passed', () => {
+    expect(
+      requestNeedsEmail({
+        now: NOW,
+        request: waiting,
+        lastEmailedAt: NOW - REQUEST_EMAIL_GAP_MS + 1,
+      }),
+    ).toBe(false)
+    expect(
+      requestNeedsEmail({
+        now: NOW,
+        request: waiting,
+        lastEmailedAt: NOW - REQUEST_EMAIL_GAP_MS,
+      }),
+    ).toBe(true)
   })
 })
 

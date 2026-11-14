@@ -88,6 +88,37 @@ export function latestMeetingEnd(
   return ends.length === 0 ? null : Math.max(...ends)
 }
 
+// How long after a request is sent the person asked is emailed about it,
+// unless one of their pages showed it first.
+export const REQUEST_EMAIL_DELAY_MS = 20 * 1000
+// A person is emailed about requests at most once in this long, however
+// many people ask; the email links to the list of all of them.
+export const REQUEST_EMAIL_GAP_MS = 3 * 60 * 1000
+
+/**
+ * Whether the person asked for a 1:1 is emailed about it. The app only
+ * alerts (toast, vibration, tab title) on a page that is open, so a request
+ * to someone with the app closed would otherwise expire unseen. No email
+ * when the request was answered or cancelled, when one of their pages
+ * already showed it (`seenAt`), or when they were emailed about another
+ * request less than REQUEST_EMAIL_GAP_MS ago.
+ */
+export function requestNeedsEmail(input: {
+  now: number
+  request: { status: string; seenAt?: number; expiresAt?: number }
+  /** When the person was last emailed about a request still waiting. */
+  lastEmailedAt: number | undefined
+}): boolean {
+  const { now, request, lastEmailedAt } = input
+  if (request.status !== 'pending' || requestPastExpiry(request, now)) {
+    return false
+  }
+  if (request.seenAt !== undefined) return false
+  return (
+    lastEmailedAt === undefined || now - lastEmailedAt >= REQUEST_EMAIL_GAP_MS
+  )
+}
+
 /** Why a 1:1 action was refused. Sent as ConvexError data `{ code }`. */
 export type MeetingErrorCode =
   | 'closed'
