@@ -87,3 +87,26 @@ export const suggestionRunTriggerValidator = v.union(
   v.literal('attendee'),
   v.literal('attendance'),
 )
+
+/**
+ * Where a proposed or booked 1:1 stands:
+ * - proposed: waiting for the other person's answer
+ * - booked: accepted; the two have the slot
+ * - started: both said they were there and the meeting began (`meetingId`)
+ * - declined, withdrawn, expired: a proposal the other person refused, its
+ *   author took back, or nobody answered before its slot (or before one of
+ *   the two booked that time with someone else)
+ * - cancelled: a booking one of the two called off
+ * - no_show: a booking the person who was there released because the other
+ *   never came
+ */
+export const bookingStatusValidator = v.union(
+  v.literal('proposed'),
+  v.literal('booked'),
+  v.literal('started'),
+  v.literal('declined'),
+  v.literal('withdrawn'),
+  v.literal('expired'),
+  v.literal('cancelled'),
+  v.literal('no_show'),
+)

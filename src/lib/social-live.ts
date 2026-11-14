@@ -237,3 +237,104 @@ export function watchTimeUp(
     meetingRanOut(ended)
   return { watch: null, timeUp }
 }
+
+// ── Booked 1:1s ─────────────────────────────────────────────────────────
+
+/**
+ * The booked 1:1s whose slot is on at `now` and that haven't started: the
+ * ones the viewer is asked to go to right now.
+ */
+export function bookingsDueNow<
+  T extends {
+    status: 'booked' | 'started'
+    slotStart: number
+    slotEnd: number
+  },
+>(bookings: ReadonlyArray<T>, now: number): Array<T> {
+  return bookings.filter(
+    (b) => b.status === 'booked' && b.slotStart <= now && now < b.slotEnd,
+  )
+}
+
+/**
+ * The proposals that can still be answered, by this device's clock: those
+ * whose slot hasn't started. The server expires them at that moment.
+ */
+export function openProposals<T extends { slotStart: number }>(
+  proposals: ReadonlyArray<T>,
+  now: number,
+): Array<T> {
+  return proposals.filter((p) => p.slotStart > now)
+}
+
+/**
+ * The time the slot picker asks the server for slots from: the start of the
+ * slot that is on at `now` (or the window's opening, before it). It stays
+ * the same for a whole slot, so the query isn't asked again every tick, and
+ * slots that are over are left out.
+ */
+export function slotPickerFrom(
+  openAt: number,
+  meetingMinutes: number,
+  now: number,
+): number {
+  const length = meetingMinutes * 60 * 1000
+  if (!(length > 0) || now <= openAt) return openAt
+  return openAt + Math.floor((now - openAt) / length) * length
+}
+
+/** What the event layout has already alerted about the viewer's agenda. */
+export type AgendaSeen = {
+  /** The event and account this belongs to. */
+  key: string
+  proposalIds: ReadonlyArray<string>
+  dueIds: ReadonlyArray<string>
+}
+
+/**
+ * Compare the viewer's agenda with what was seen before: which proposals
+ * arrived, and which booked 1:1s just reached their slot. The first agenda
+ * seen for a `key` sets the baseline for proposals, so the ones that were
+ * waiting when the page loaded don't alert; a booked 1:1 whose slot is on
+ * alerts even then, because the person has somewhere to be.
+ */
+export function agendaAlerts<
+  Proposal extends { _id: string; slotStart: number },
+  Booking extends {
+    _id: string
+    status: 'booked' | 'started'
+    slotStart: number
+    slotEnd: number
+  },
+>(
+  seen: AgendaSeen | null,
+  key: string,
+  agenda: {
+    incoming: ReadonlyArray<Proposal>
+    bookings: ReadonlyArray<Booking>
+  },
+  now: number,
+): { seen: AgendaSeen; newProposals: Array<Proposal>; due: Array<Booking> } {
+  const open = openProposals(agenda.incoming, now)
+  const first = !seen || seen.key !== key
+  const before: Pick<AgendaSeen, 'proposalIds' | 'dueIds'> = first
+    ? { proposalIds: [], dueIds: [] }
+    : seen
+  const newProposals = first
+    ? []
+    : open.filter((p) => !before.proposalIds.includes(p._id))
+  const due = bookingsDueNow(agenda.bookings, now).filter(
+    (b) => !before.dueIds.includes(b._id),
+  )
+  return {
+    seen: {
+      key,
+      proposalIds: first
+        ? open.map((p) => p._id)
+        : [...before.proposalIds, ...newProposals.map((p) => p._id)],
+      dueIds: [...before.dueIds, ...due.map((b) => b._id)],
+    },
+    newProposals,
+    due,
+  }
+}
