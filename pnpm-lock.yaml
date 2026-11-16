@@ -243,6 +243,9 @@ importers:
       concurrently:
         specifier: ~9.2.1
         version: 9.2.1
+      convex-test:
+        specifier: ^0.0.71
+        version: 0.0.71(convex@1.46.0(@clerk/clerk-react@5.61.3(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(bufferutil@4.1.0)(react@19.2.7)(utf-8-validate@6.0.6))
       eslint:
         specifier: ^10.11.0
         version: 10.11.0(jiti@2.7.0)
@@ -4527,6 +4530,11 @@ packages:
         optional: true
       zod:
         optional: true
+
+  convex-test@0.0.71:
+    resolution: {integrity: sha512-sHptDSWL0b2Og6to5R9/GoCHF7XGNXIAxQDJnA8UYYZa8yym9mfC03h3C47LS3Bj2BIO9lD0pKIv2H7dP+VKPA==}
+    peerDependencies:
+      convex: ^1.43.0
 
   convex@1.46.0:
     resolution: {integrity: sha512-dhBwDQTZDOhi5SUGAX17EWNehCdNq6/UFrSL0eLZuGfMkdsQbCVWVRZCzbZ5CF+/pgvoGxtApbEoTSipqL4JTw==}
@@ -11251,6 +11259,10 @@ snapshots:
       react: 19.2.7
       typescript: 5.9.3
       zod: 3.25.76
+
+  convex-test@0.0.71(convex@1.46.0(@clerk/clerk-react@5.61.3(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(bufferutil@4.1.0)(react@19.2.7)(utf-8-validate@6.0.6)):
+    dependencies:
+      convex: 1.46.0(@clerk/clerk-react@5.61.3(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(bufferutil@4.1.0)(react@19.2.7)(utf-8-validate@6.0.6)
 
   convex@1.46.0(@clerk/clerk-react@5.61.3(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(bufferutil@4.1.0)(react@19.2.7)(utf-8-validate@6.0.6):
     dependencies:
