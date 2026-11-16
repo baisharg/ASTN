@@ -153,7 +153,10 @@ describe('when nobody presses the button', () => {
       if (entry.isDirectory()) {
         return entry.name === '_generated' ? [] : sourceFiles(path)
       }
-      return /\.tsx?$/.test(entry.name) && !entry.name.endsWith('.test.ts')
+      // Tests and the permission tests' helpers name every function on purpose.
+      return /\.tsx?$/.test(entry.name) &&
+        !entry.name.endsWith('.test.ts') &&
+        !entry.name.endsWith('.helpers.ts')
         ? [path]
         : []
     })
