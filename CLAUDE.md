@@ -13,6 +13,7 @@ vp check --no-fmt            # fast frontend lint + types
 pnpm run lint && pnpm run lint:convex
 pnpm exec tsc -p convex/tsconfig.json --noEmit
 bun test src convex
+bun test convex/permissions   # only the permission matrix (also part of the line above)
 vp build
 npx convex codegen           # after adding a file under convex/
 ```
@@ -53,6 +54,7 @@ If a tool fails for reasons unrelated to the code (e.g. "Failed to convert napi 
 - Admin UI text is in English. Text applicants read (emails, apply-page messages) is in Spanish (Argentina).
 - Comments describe what the code does now. No history, no notes about removed features or past versions.
 - Tests are `*.test.ts` files under `src/` (mostly `src/lib/`) and run with `bun test`. They declare `describe`/`test`/`expect` themselves instead of importing `bun:test`, which the type check can't resolve.
+- Who may call what is a table in `convex/permissions/matrix.cases.helpers.ts`, run by `bun test` against an in-memory backend (`convex-test`). Adding or changing a public query, mutation or action means adding its row (or a reason in `coverage.helpers.ts`), or `coverage.test.ts` fails. `KNOWN HOLE` tests are `test.todo`: `bun test --todo convex/permissions` runs them.
 - Small conventional commits: `fix(polls): ...`, `feat(forms): ...`, `chore: ...`.
 
 <!-- convex-ai-start -->
