@@ -60,6 +60,27 @@ Fix it with `rm -rf node_modules && pnpm install`. If the error persists after r
 - **If something looks wrong, say so right away** in #astn-feedback, with what you saw and when. Website errors are recorded in Sentry, but backend errors are kept only for a short time, so the sooner someone looks, the more there is to see.
 - **A release that fails in about two seconds, before building, was probably blocked by Vercel.** Vercel refuses to publish when a package has a known security flaw. Ask someone with access to the Vercel project for the first line of the log.
 
+## Avoiding the mistakes that reach users
+
+Two kinds of mistakes have reached users: building something different from what was asked, and backend functions that forgot to check who is calling. These rules cover both.
+
+### Agree on what you build
+
+1. **Start from a request.** Every feature starts as a GitHub issue that says who asked for it and the problem it solves, in their words.
+2. **Write down what changes for each person.** Before writing code, add to the issue who uses the feature (applicants, course teams, admins, owners), what each of them can see and do before and after, and three to five checks in plain words that say when it is done. If it changes who can see or do something, add a table of roles and actions.
+3. **The person who asked agrees.** They read it and say yes in the issue before the code starts. If the request is unclear, ask them instead of filling the gap with a guess.
+4. **Show it before calling it done.** The person who asked tries it (on a draft opportunity, or on your own dev backend) and confirms it does what they meant. Then announce it in #astn-feedback: what changed, for whom, and how to undo it.
+
+### Write backend code that can't forget a check
+
+Every Convex query, mutation and action can be called by anyone on the internet, so each one has to decide who may call it.
+
+- **Check access first, from the record.** Load the opportunity, survey or poll and check its org and course against the caller. Never trust an `orgId` or `userId` that the caller passes in.
+- **Return only what the screen needs.** No access tokens, no other people's answers, no fields the page doesn't show.
+- **Public on purpose only.** A function that answers without a login (apply links, poll and survey pages by token, public listings) goes in the public allowlist in `convex/permissions/coverage.helpers.ts`, with one line saying why.
+- **Permissions change with their tests.** A change to who can see or do something updates the permission matrix (`convex/permissions/`) in the same commit. A new function that is neither in the matrix nor in the allowlist fails CI.
+- **A second reader for permissions, data and emails.** Those changes go through a pull request that someone else reviews before it is merged.
+
 ## Changes that need extra care
 
 If your change touches one of these areas, follow its rules on top of the steps above.
@@ -112,6 +133,6 @@ What still depends on someone noticing in time, roughly in order of impact for t
 - **Backend errors are not recorded anywhere lasting.** Convex can send them to Sentry automatically, next to the website errors.
 - **A release goes live even when the checks fail.** Vercel can be set to wait for the GitHub checks before publishing.
 - **There are no regular backups of production.** A copy is only made by hand before a data change. A scheduled backup would cover mistakes nobody planned for.
-- **The automatic checks miss pages and rules.** In October 2026 every check passed while all pages that load data were down for 18 hours. The page check now covers application links, but not polls, surveys or admin pages, and the tests cover helper functions, not permissions, form locking or emails.
+- **The automatic checks miss pages and rules.** In October 2026 every check passed while all pages that load data were down for 18 hours. The page check now covers application links, but not polls, surveys or admin pages, and the tests cover permissions (`convex/permissions/`) and helper functions, not form locking or emails.
 - **There is no shared test environment.** Previews have no backend of their own, and test opportunities live among the real ones. A test copy of the backend for previews, and a test course tag that the site recognizes everywhere, would keep testing away from applicants.
 - **Almost every change goes straight to `main` without a second reader.** A pull request for changes to data, permissions or emails would catch mistakes before they ship.
