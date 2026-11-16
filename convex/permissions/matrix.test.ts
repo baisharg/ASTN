@@ -37,7 +37,7 @@ async function attempt(
   actor: Actor,
 ): Promise<{ outcome: Outcome; detail: string }> {
   const as = asActor(t, actor)
-  const args = c.args(fx, k)
+  const args = c.args(fx, k, actor)
   try {
     const result =
       c.kind === 'query'

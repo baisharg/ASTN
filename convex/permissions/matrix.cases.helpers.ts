@@ -10,7 +10,7 @@
 import { getFunctionName } from 'convex/server'
 import type { FunctionReference } from 'convex/server'
 import { api } from '../_generated/api'
-import { stripOpportunity } from './harness.helpers'
+import { SUBJECT, stripOpportunity } from './harness.helpers'
 import type { Actor, Backend, Fixture } from './harness.helpers'
 
 export type OppKey = keyof Fixture['opp']
@@ -60,7 +60,7 @@ export interface Case {
   gate: Gate
   /** For read/edit gates: which opportunities to try. Default: all three. */
   targets?: Array<Target>
-  args: (fx: Fixture, k: OppKey) => any
+  args: (fx: Fixture, k: OppKey, actor: Actor) => any
   setup?: (t: Backend, fx: Fixture, k: OppKey) => Promise<void>
   /** Denial shows up as null / [] / 0 instead of an error. */
   silent?: boolean
@@ -362,46 +362,17 @@ const surveys: Array<Case> = [
   q(api.feedbackSurveys.getRespondentLinks, 'edit', (fx, k) => ({
     surveyId: fx.survey[k],
   })),
-  // KNOWN HOLE: no access check at all. It returns the survey with its
-  // generic access token and questions, and the email composer is the only
-  // caller (agent/tools/surveys.ts is the other). The matrix expects a course
-  // read grant, like the rest of the Emails tab.
+  // Returns the survey with its generic access token: a course read grant.
   q(api.feedbackSurveys.getSurveyByOpportunity, 'read', byOpp, {
     silent: true,
-    hole: {
-      actors: [
-        'platformAdmin',
-        'courseEditor',
-        'courseReader',
-        'member',
-        'outsider',
-        'otherOrgAdmin',
-        'anonymous',
-      ],
-      note: 'no access check: anyone, even logged out, gets the survey and its access token',
-    },
   }),
-  // KNOWN HOLE: only checks that the caller is logged in. Any user can read
-  // any other user's survey answers by passing their userId.
+  // Your own answers, or those of surveys in orgs you administer; the
+  // applicant's own read is in scenarios.test.ts.
   q(
     api.feedbackSurveys.getSurveyResponsesForUser,
     'admin',
     () => ({ userId: 'user_applicant' }),
-    {
-      silent: true,
-      targets: ['tais'],
-      hole: {
-        actors: [
-          'platformAdmin',
-          'courseEditor',
-          'courseReader',
-          'member',
-          'outsider',
-          'otherOrgAdmin',
-        ],
-        note: 'only "logged in" is checked: any account reads any user\'s survey answers',
-      },
-    },
+    { silent: true, targets: ['tais'] },
   ),
 ]
 
@@ -973,38 +944,21 @@ const events: Array<Case> = [
 ]
 
 // ── Agent action log ────────────────────────────────────────────────────────
-// KNOWN HOLE: a public mutation with no check at all (the comment says auth is
-// enforced by the agent server's websocket, but the Convex endpoint itself is
-// open). Anyone, even logged out, can write audit-log rows for any user and
-// org. The agent calls it with the signed-in admin's own Clerk token, so the
-// matrix expects an admin of the org.
+// The agent calls it with the signed-in admin's own Clerk token, so the caller
+// is an admin of the org and the logged userId is the caller.
 const agentLog: Array<Case> = [
   m(
     api.agentActionLog.logAgentAction,
     'admin',
-    (fx) => ({
-      userId: 'user_admin',
+    (fx, _k, actor) => ({
+      userId: actor === 'anonymous' ? 'user_admin' : SUBJECT[actor],
       orgId: fx.orgId,
       toolName: 'astn_update',
       params: '{}',
       result: '{}',
       approvalStatus: 'auto',
     }),
-    {
-      targets: ['tais'],
-      hole: {
-        actors: [
-          'platformAdmin',
-          'courseEditor',
-          'courseReader',
-          'member',
-          'outsider',
-          'otherOrgAdmin',
-          'anonymous',
-        ],
-        note: 'no check at all: anyone can write agent audit-log rows for any user and org',
-      },
-    },
+    { targets: ['tais'] },
   ),
 ]
 

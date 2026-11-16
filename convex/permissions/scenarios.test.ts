@@ -326,3 +326,43 @@ describe('nobody crosses into another org', () => {
     }
   })
 })
+
+describe('survey answers and the agent log', () => {
+  test("a person reads their own survey answers, not anyone else's", async () => {
+    const t = newBackend()
+    await seed(t)
+    const own = await t
+      .withIdentity({ subject: APPLICANT })
+      .query(api.feedbackSurveys.getSurveyResponsesForUser, {
+        userId: APPLICANT,
+      })
+    expect(own.length > 0).toBe(true)
+    const other = await asActor(t, 'outsider').query(
+      api.feedbackSurveys.getSurveyResponsesForUser,
+      { userId: APPLICANT },
+    )
+    expect(other).toEqual([])
+    const otherOrgAdmin = await asActor(t, 'otherOrgAdmin').query(
+      api.feedbackSurveys.getSurveyResponsesForUser,
+      { userId: APPLICANT },
+    )
+    expect(otherOrgAdmin).toEqual([])
+  })
+
+  test('the agent log refuses a userId that is not the caller', async () => {
+    const t = newBackend()
+    const fx = await seed(t)
+    expect(
+      await outcome(() =>
+        asActor(t, 'admin').mutation(api.agentActionLog.logAgentAction, {
+          userId: 'user_owner',
+          orgId: fx.orgId,
+          toolName: 'x',
+          params: '{}',
+          result: '{}',
+          approvalStatus: 'auto',
+        }),
+      ),
+    ).toBe('refused')
+  })
+})
