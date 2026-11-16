@@ -7,7 +7,11 @@ import {
 } from './_generated/server'
 import type { MutationCtx } from './_generated/server'
 import { getUserId, requireOrgAdmin } from './lib/auth'
-import { requireOpportunityAccess } from './lib/courseAccess'
+import {
+  getOrgAccess,
+  hasOpportunityAccess,
+  requireOpportunityAccess,
+} from './lib/courseAccess'
 import { resolveApplicantDisplayNameFromApplication } from './lib/applicantName'
 import {
   assertFormFieldsShape,
@@ -408,6 +412,11 @@ export const getSurveyByOpportunity = query({
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.union(surveyReturnValidator, v.null()),
   handler: async (ctx, { opportunityId }) => {
+    // The survey carries its generic access token and questions: admins and
+    // course readers only. Respondents use the token-based queries.
+    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
+    if (!opportunity || !(await hasOpportunityAccess(ctx, opportunity, 'read')))
+      return null
     const surveys = await ctx.db
       .query('feedbackSurveys')
       .withIndex('by_opportunity', (q) => q.eq('opportunityId', opportunityId))
@@ -989,8 +998,28 @@ export const getSurveyResponsesForUser = query({
     >()
     const oppCache = new Map<string, string>()
 
+    // Your own answers, or those of surveys in orgs you administer.
+    const adminOrgs = new Map<string, boolean>()
+    const visible = []
+    for (const r of userResponses) {
+      if (targetUserId === currentUserId) {
+        visible.push(r)
+        continue
+      }
+      const survey = await ctx.db.get('feedbackSurveys', r.surveyId)
+      if (!survey) continue
+      let isAdmin = adminOrgs.get(survey.orgId)
+      if (isAdmin === undefined) {
+        isAdmin =
+          (await getOrgAccess(ctx, currentUserId, survey.orgId))?.isAdmin ===
+          true
+        adminOrgs.set(survey.orgId, isAdmin)
+      }
+      if (isAdmin) visible.push(r)
+    }
+
     return await Promise.all(
-      userResponses.map(async (r) => {
+      visible.map(async (r) => {
         let surveyInfo = surveyCache.get(r.surveyId)
         if (!surveyInfo) {
           const survey = await ctx.db.get('feedbackSurveys', r.surveyId)
