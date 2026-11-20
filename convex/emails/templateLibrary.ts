@@ -1,10 +1,14 @@
 import { ConvexError, v } from 'convex/values'
-import { internalMutation, mutation, query } from '../_generated/server'
+import { internalMutation } from '../_generated/server'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc, Id } from '../_generated/dataModel'
-import { getUserId, requireOrgAdminFor } from '../lib/auth'
-import { requireOpportunityAccess } from '../lib/courseAccess'
-import type { AccessLevel } from '../lib/courseAccess'
+import {
+  courseMutation,
+  courseQuery,
+  loadOpportunity,
+  orgMutation,
+  orgQuery,
+} from '../lib/access'
 import { coursePlaceholderValues, fillText } from '../canonicalForms'
 import type { FormSource } from '../canonicalForms'
 import {
@@ -104,27 +108,6 @@ const emailContentValidator = v.object({
   includePollLink: v.boolean(),
   includeSurveyLink: v.boolean(),
 })
-
-async function requireAdmin(
-  ctx: QueryCtx | MutationCtx,
-  orgId: Doc<'organizations'>['_id'],
-): Promise<string> {
-  const userId = await getUserId(ctx)
-  if (!userId) throw new ConvexError('Not authenticated')
-  await requireOrgAdminFor(ctx, userId, orgId)
-  return userId
-}
-
-// Admins, or members with access to the opportunity's course.
-async function requireAccess(
-  ctx: QueryCtx | MutationCtx,
-  opportunityId: Id<'orgOpportunities'>,
-  level: AccessLevel,
-): Promise<string> {
-  const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-  if (!opportunity) throw new ConvexError('Opportunity not found')
-  return await requireOpportunityAccess(ctx, opportunity, level)
-}
 
 async function ownTemplate(
   ctx: QueryCtx | MutationCtx,
@@ -231,14 +214,15 @@ export async function copyCanonicalEmails(
 }
 
 /** The canonical emails, one per kind, and the footer. */
-export const getCanonical = query({
+export const getCanonical = orgQuery({
+  role: 'admin',
   args: { orgId: v.id('organizations') },
   returns: v.object({
     footer: v.string(),
     emails: v.array(emailContentValidator),
   }),
+  org: ({ orgId }) => orgId,
   handler: async (ctx, { orgId }) => {
-    await requireAdmin(ctx, orgId)
     const org = await ctx.db.get('organizations', orgId)
     return {
       footer: org?.emailFooter ?? '',
@@ -252,7 +236,8 @@ export const getCanonical = query({
  * save. Opportunities keep the copy they already have; a new one copies the
  * saved text, and an existing one takes it with "Revert to canonical".
  */
-export const saveCanonicalEmail = mutation({
+export const saveCanonicalEmail = orgMutation({
+  role: 'admin',
   args: {
     orgId: v.id('organizations'),
     kind: emailKindValidator,
@@ -263,8 +248,8 @@ export const saveCanonicalEmail = mutation({
     includeSurveyLink: v.boolean(),
   },
   returns: v.null(),
-  handler: async (ctx, { orgId, kind, ...content }) => {
-    const userId = await requireAdmin(ctx, orgId)
+  org: ({ orgId }) => orgId,
+  handler: async (ctx, { orgId, kind, ...content }, { userId }) => {
     if (!content.subject.trim())
       throw new ConvexError('Subject cannot be empty')
     // A typo'd {{variable}} is rejected here — it can never reach an applicant.
@@ -312,11 +297,12 @@ export const saveCanonicalEmail = mutation({
   },
 })
 
-export const saveFooter = mutation({
+export const saveFooter = orgMutation({
+  role: 'admin',
   args: { orgId: v.id('organizations'), footer: v.string() },
   returns: v.null(),
+  org: ({ orgId }) => orgId,
   handler: async (ctx, { orgId, footer }) => {
-    await requireAdmin(ctx, orgId)
     if (footer.length > 2000) {
       throw new ConvexError('Keep the footer under 2000 characters.')
     }
@@ -340,7 +326,8 @@ const queueEffectValidator = v.object({
  * text or links moved away from what the canonical says today, so the tab
  * can offer to bring the canonical back.
  */
-export const getOpportunityEmails = query({
+export const getOpportunityEmails = courseQuery({
+  level: 'read',
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.array(
     v.object({
@@ -349,11 +336,9 @@ export const getOpportunityEmails = query({
       updatedAt: v.number(),
     }),
   ),
-  handler: async (ctx, { opportunityId }) => {
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireAccess(ctx, opportunity._id, 'read')
-
+  load: (ctx, { opportunityId }) => loadOpportunity(ctx, opportunityId),
+  missing: 'Opportunity not found',
+  handler: async (ctx, { opportunityId }, { opportunity }) => {
     const canonical = await canonicalEmailsFor(ctx, opportunity)
     const out = []
     for (const base of canonical) {
@@ -462,16 +447,16 @@ async function writeOpportunityEmail(
 }
 
 /** Save one of the opportunity's emails as written in its Emails tab. */
-export const saveOpportunityEmail = mutation({
+export const saveOpportunityEmail = courseMutation({
+  level: 'edit',
   args: {
     opportunityId: v.id('orgOpportunities'),
     ...emailContentValidator.fields,
   },
   returns: queueEffectValidator,
-  handler: async (ctx, { opportunityId, ...content }) => {
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireAccess(ctx, opportunity._id, 'edit')
+  load: (ctx, { opportunityId }) => loadOpportunity(ctx, opportunityId),
+  missing: 'Opportunity not found',
+  handler: async (ctx, { opportunityId: _, ...content }, { opportunity }) => {
     return await writeOpportunityEmail(ctx, opportunity, content)
   },
 })
@@ -481,17 +466,16 @@ export const saveOpportunityEmail = mutation({
  * opportunity's emails. Whether that email sends stays as the opportunity
  * had it: reverting the wording never turns an email on.
  */
-export const revertOpportunityEmail = mutation({
+export const revertOpportunityEmail = courseMutation({
+  level: 'edit',
   args: {
     opportunityId: v.id('orgOpportunities'),
     kind: emailKindValidator,
   },
   returns: queueEffectValidator,
-  handler: async (ctx, { opportunityId, kind }) => {
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireAccess(ctx, opportunity._id, 'edit')
-
+  load: (ctx, { opportunityId }) => loadOpportunity(ctx, opportunityId),
+  missing: 'Opportunity not found',
+  handler: async (ctx, { opportunityId, kind }, { opportunity }) => {
     const base = (await canonicalEmailsFor(ctx, opportunity)).find(
       (e) => e.kind === kind,
     )

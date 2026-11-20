@@ -1,17 +1,16 @@
 import { ConvexError, v } from 'convex/values'
-import {
-  internalMutation,
-  internalQuery,
-  mutation,
-  query,
-} from './_generated/server'
+import { internalMutation, internalQuery } from './_generated/server'
 import type { MutationCtx } from './_generated/server'
-import { getUserId, requireOrgAdmin } from './lib/auth'
+import { getOrgAccess } from './lib/courseAccess'
 import {
-  getOrgAccess,
-  hasOpportunityAccess,
-  requireOpportunityAccess,
-} from './lib/courseAccess'
+  courseMutation,
+  courseQuery,
+  loadOpportunity,
+  loadSurvey,
+  memberQuery,
+  publicMutation,
+  publicQuery,
+} from './lib/access'
 import { resolveApplicantDisplayNameFromApplication } from './lib/applicantName'
 import {
   assertFormFieldsShape,
@@ -163,7 +162,8 @@ export async function createSurveyFor(
   return surveyId
 }
 
-export const createSurvey = mutation({
+export const createSurvey = courseMutation({
+  level: 'admin',
   args: {
     opportunityId: v.id('orgOpportunities'),
     title: v.string(),
@@ -174,12 +174,9 @@ export const createSurvey = mutation({
     anonymous: v.optional(v.boolean()), // no respondents, no personal links
   },
   returns: v.id('feedbackSurveys'),
-  handler: async (ctx, args) => {
-    const opportunity = await ctx.db.get('orgOpportunities', args.opportunityId)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-
-    const userId = await requireOrgAdmin(ctx, opportunity.orgId)
-
+  load: (ctx, args) => loadOpportunity(ctx, args.opportunityId),
+  missing: 'Opportunity not found',
+  handler: async (ctx, args, { opportunity, userId }) => {
     return await createSurveyFor(ctx, {
       ...args,
       orgId: opportunity.orgId,
@@ -188,7 +185,8 @@ export const createSurvey = mutation({
   },
 })
 
-export const updateSurvey = mutation({
+export const updateSurvey = courseMutation({
+  level: 'admin',
   args: {
     surveyId: v.id('feedbackSurveys'),
     title: v.optional(v.string()),
@@ -199,12 +197,9 @@ export const updateSurvey = mutation({
     confirmDiscardsAnswers: v.optional(v.boolean()),
   },
   returns: v.null(),
-  handler: async (ctx, { surveyId, ...updates }) => {
-    const survey = await ctx.db.get('feedbackSurveys', surveyId)
-    if (!survey) throw new ConvexError('Survey not found')
-
-    await requireOrgAdmin(ctx, survey.orgId)
-
+  load: (ctx, { surveyId }) => loadSurvey(ctx, surveyId),
+  missing: 'Survey not found',
+  handler: async (ctx, { surveyId, ...updates }, { survey }) => {
     const patch: Record<string, unknown> = { updatedAt: Date.now() }
     if (updates.title !== undefined) patch.title = updates.title
     if (updates.description !== undefined)
@@ -238,15 +233,13 @@ export const updateSurvey = mutation({
   },
 })
 
-export const deleteSurvey = mutation({
+export const deleteSurvey = courseMutation({
+  level: 'admin',
   args: { surveyId: v.id('feedbackSurveys') },
   returns: v.null(),
+  load: (ctx, { surveyId }) => loadSurvey(ctx, surveyId),
+  missing: 'Survey not found',
   handler: async (ctx, { surveyId }) => {
-    const survey = await ctx.db.get('feedbackSurveys', surveyId)
-    if (!survey) throw new ConvexError('Survey not found')
-
-    await requireOrgAdmin(ctx, survey.orgId)
-
     // Fetch responses and respondents in parallel
     const [responses, respondents, anonResponses] = await Promise.all([
       ctx.db
@@ -278,15 +271,13 @@ export const deleteSurvey = mutation({
   },
 })
 
-export const backfillRespondents = mutation({
+export const backfillRespondents = courseMutation({
+  level: 'admin',
   args: { surveyId: v.id('feedbackSurveys') },
   returns: v.number(),
-  handler: async (ctx, { surveyId }) => {
-    const survey = await ctx.db.get('feedbackSurveys', surveyId)
-    if (!survey) throw new ConvexError('Survey not found')
-
-    await requireOrgAdmin(ctx, survey.orgId)
-
+  load: (ctx, { surveyId }) => loadSurvey(ctx, surveyId),
+  missing: 'Survey not found',
+  handler: async (ctx, { surveyId }, { survey }) => {
     // Creating respondents for an anonymous survey would hand out personal
     // tokens and break the guarantee the survey was created under.
     if (survey.anonymous)
@@ -339,18 +330,16 @@ export const backfillRespondents = mutation({
   },
 })
 
-export const removeRespondent = mutation({
+export const removeRespondent = courseMutation({
+  level: 'admin',
   args: {
     surveyId: v.id('feedbackSurveys'),
     respondentId: v.id('surveyRespondents'),
   },
   returns: v.null(),
+  load: (ctx, { surveyId }) => loadSurvey(ctx, surveyId),
+  missing: 'Survey not found',
   handler: async (ctx, { surveyId, respondentId }) => {
-    const survey = await ctx.db.get('feedbackSurveys', surveyId)
-    if (!survey) throw new ConvexError('Survey not found')
-
-    await requireOrgAdmin(ctx, survey.orgId)
-
     const respondent = await ctx.db.get('surveyRespondents', respondentId)
     if (!respondent || respondent.surveyId !== surveyId)
       throw new ConvexError('Respondent not found')
@@ -377,18 +366,17 @@ export const removeRespondent = mutation({
  * Each side prefers its active (draft or open) survey and otherwise falls back
  * to the most recent closed one, so a finished cohort still shows its results.
  */
-export const getSurveysByOpportunity = query({
+export const getSurveysByOpportunity = courseQuery({
+  // Returns each survey's access token.
+  level: 'admin',
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.object({
     identified: v.union(surveyReturnValidator, v.null()),
     anonymous: v.union(surveyReturnValidator, v.null()),
   }),
+  load: (ctx, { opportunityId }) => loadOpportunity(ctx, opportunityId),
+  missing: () => ({ identified: null, anonymous: null }),
   handler: async (ctx, { opportunityId }) => {
-    // Returns each survey's access token: admins only (no check before
-    // 2026-10-30, and opportunity ids are public in application links).
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity) return { identified: null, anonymous: null }
-    await requireOrgAdmin(ctx, opportunity.orgId)
     const surveys = await ctx.db
       .query('feedbackSurveys')
       .withIndex('by_opportunity', (q) => q.eq('opportunityId', opportunityId))
@@ -408,15 +396,16 @@ export const getSurveysByOpportunity = query({
 })
 
 // Kept for callers that only care about the identified survey.
-export const getSurveyByOpportunity = query({
+// The survey carries its generic access token and questions, so it takes a
+// course read grant. Respondents use the token-based queries.
+export const getSurveyByOpportunity = courseQuery({
+  level: 'read',
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.union(surveyReturnValidator, v.null()),
+  load: (ctx, { opportunityId }) => loadOpportunity(ctx, opportunityId),
+  missing: () => null,
+  denied: () => null,
   handler: async (ctx, { opportunityId }) => {
-    // The survey carries its generic access token and questions: admins and
-    // course readers only. Respondents use the token-based queries.
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity || !(await hasOpportunityAccess(ctx, opportunity, 'read')))
-      return null
     const surveys = await ctx.db
       .query('feedbackSurveys')
       .withIndex('by_opportunity', (q) => q.eq('opportunityId', opportunityId))
@@ -430,7 +419,8 @@ export const getSurveyByOpportunity = query({
   },
 })
 
-export const getSurveyResults = query({
+export const getSurveyResults = courseQuery({
+  level: 'admin',
   args: { surveyId: v.id('feedbackSurveys') },
   returns: v.object({
     survey: surveyReturnValidator,
@@ -462,12 +452,9 @@ export const getSurveyResults = query({
     responseCount: v.number(),
     totalRespondents: v.number(),
   }),
-  handler: async (ctx, { surveyId }) => {
-    const survey = await ctx.db.get('feedbackSurveys', surveyId)
-    if (!survey) throw new ConvexError('Survey not found')
-
-    await requireOrgAdmin(ctx, survey.orgId)
-
+  load: (ctx, { surveyId }) => loadSurvey(ctx, surveyId),
+  missing: 'Survey not found',
+  handler: async (ctx, { surveyId }, { survey }) => {
     if (survey.anonymous) {
       const anonResponses = await ctx.db
         .query('anonymousSurveyResponses')
@@ -543,15 +530,13 @@ export const getSurveyResults = query({
  * Only ids that actually appear in this survey's responses are resolved, so an
  * arbitrary storage id passed in from elsewhere returns nothing.
  */
-export const getFormImageUrls = query({
+export const getFormImageUrls = courseQuery({
+  level: 'admin',
   args: { surveyId: v.id('feedbackSurveys') },
   returns: v.array(v.object({ storageId: v.string(), url: v.string() })),
-  handler: async (ctx, { surveyId }) => {
-    const survey = await ctx.db.get('feedbackSurveys', surveyId)
-    if (!survey) throw new ConvexError('Survey not found')
-
-    await requireOrgAdmin(ctx, survey.orgId)
-
+  load: (ctx, { surveyId }) => loadSurvey(ctx, surveyId),
+  missing: 'Survey not found',
+  handler: async (ctx, { surveyId }, { survey }) => {
     const formFields = Array.isArray(survey.formFields)
       ? (survey.formFields as Array<FormField>)
       : []
@@ -597,7 +582,10 @@ export const getFormImageUrls = query({
   },
 })
 
-export const getRespondentLinks = query({
+// Personal links let anyone answer as that person: a course edit grant,
+// which the broadcast needs.
+export const getRespondentLinks = courseQuery({
+  level: 'edit',
   args: { surveyId: v.id('feedbackSurveys') },
   returns: v.array(
     v.object({
@@ -606,17 +594,9 @@ export const getRespondentLinks = query({
       applicationId: v.id('opportunityApplications'),
     }),
   ),
+  load: (ctx, { surveyId }) => loadSurvey(ctx, surveyId),
+  missing: () => [],
   handler: async (ctx, { surveyId }) => {
-    // Personal links let anyone answer as that person: admins and course
-    // editors only, which the broadcast needs (no check before 2026-10-30).
-    const survey = await ctx.db.get('feedbackSurveys', surveyId)
-    if (!survey) return []
-    const surveyOpportunity = await ctx.db.get(
-      'orgOpportunities',
-      survey.opportunityId,
-    )
-    if (!surveyOpportunity) return []
-    await requireOpportunityAccess(ctx, surveyOpportunity, 'edit')
     // Use denormalized respondentName — no per-row name resolution
     const respondents = await ctx.db
       .query('surveyRespondents')
@@ -660,7 +640,7 @@ export const listSurveysByOrg = internalQuery({
 
 // ─── Public queries (no auth required, token-based) ───
 
-export const getSurveyByToken = query({
+export const getSurveyByToken = publicQuery({
   args: { accessToken: v.string() },
   returns: v.union(
     v.object({
@@ -700,7 +680,7 @@ export const getSurveyByToken = query({
   },
 })
 
-export const getSurveyByRespondentToken = query({
+export const getSurveyByRespondentToken = publicQuery({
   args: { respondentToken: v.string() },
   returns: v.union(
     v.object({
@@ -749,7 +729,7 @@ export const getSurveyByRespondentToken = query({
   },
 })
 
-export const getResponseByRespondent = query({
+export const getResponseByRespondent = publicQuery({
   args: {
     surveyId: v.id('feedbackSurveys'),
     respondentId: v.id('surveyRespondents'),
@@ -780,7 +760,7 @@ export const getResponseByRespondent = query({
 
 // ─── Public mutation (token-validated) ───
 
-export const submitResponse = mutation({
+export const submitResponse = publicMutation({
   args: {
     surveyId: v.id('feedbackSurveys'),
     respondentId: v.id('surveyRespondents'),
@@ -865,7 +845,7 @@ export const submitResponse = mutation({
  * and none of them is a person. There is deliberately no upsert: recognising a
  * returning submitter is exactly the capability this is meant not to have.
  */
-export const submitAnonymousResponse = mutation({
+export const submitAnonymousResponse = publicMutation({
   args: {
     accessToken: v.string(),
     responses: v.any(), // Record<string, unknown>
@@ -972,7 +952,8 @@ export const fixInvalidSurveyFieldKeys = internalMutation({
 
 // ─── Authenticated query (for admin cross-reference) ───
 
-export const getSurveyResponsesForUser = query({
+// Signed in: your own answers, or those of surveys in orgs you administer.
+export const getSurveyResponsesForUser = memberQuery({
   args: { userId: v.string() },
   returns: v.array(
     v.object({
@@ -982,10 +963,7 @@ export const getSurveyResponsesForUser = query({
       submittedAt: v.number(),
     }),
   ),
-  handler: async (ctx, { userId: targetUserId }) => {
-    const currentUserId = await getUserId(ctx)
-    if (!currentUserId) throw new ConvexError('Not authenticated')
-
+  handler: async (ctx, { userId: targetUserId }, { userId: currentUserId }) => {
     const userResponses = await ctx.db
       .query('surveyResponses')
       .withIndex('by_userId', (q) => q.eq('userId', targetUserId))

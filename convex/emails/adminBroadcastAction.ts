@@ -4,8 +4,8 @@ import { v } from 'convex/values'
 import { marked } from 'marked'
 import { emojify } from 'node-emoji'
 import { api, internal } from '../_generated/api'
-import { action } from '../_generated/server'
 import type { Id } from '../_generated/dataModel'
+import { courseAction } from '../lib/access'
 import { linkBareUrls } from '../lib/emailLinks'
 import { renderAdminBroadcast } from './templates'
 
@@ -18,7 +18,8 @@ import { renderAdminBroadcast } from './templates'
  * becomes each recipient's personal link to the course's open application,
  * pre-filled with their answers here (convex/applicationInvites.ts).
  */
-export const sendBroadcastToApplicants = action({
+export const sendBroadcastToApplicants = courseAction({
+  level: 'edit',
   args: {
     opportunityId: v.id('orgOpportunities'),
     applicationIds: v.array(v.id('opportunityApplications')),
@@ -33,6 +34,7 @@ export const sendBroadcastToApplicants = action({
     sent: v.number(),
     failed: v.number(),
   }),
+  target: ({ opportunityId }) => ({ opportunityId }),
   handler: async (
     ctx,
     {
@@ -45,20 +47,12 @@ export const sendBroadcastToApplicants = action({
       surveyId,
       surveyLinkBase,
     },
+    { userId },
   ) => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new Error('Not authenticated')
-
-    const isAdmin: boolean = await ctx.runQuery(
-      internal.emails.adminBroadcast.verifyOrgAdmin,
-      { userId: identity.subject, opportunityId },
-    )
-    if (!isAdmin) throw new Error('Admin access required')
-
     // Rate limit broadcast emails per admin
     await ctx.runMutation(
       internal.emails.adminBroadcast.checkBroadcastRateLimit,
-      { userId: identity.subject },
+      { userId },
     )
 
     const recipients: Array<{
@@ -194,7 +188,7 @@ export const sendBroadcastToApplicants = action({
           to: recipient.email,
           recipientName: recipient.name,
           subject,
-          sentBy: identity.subject,
+          sentBy: userId,
         })
         sent++
       } catch (err) {
@@ -205,7 +199,7 @@ export const sendBroadcastToApplicants = action({
           to: recipient.email,
           recipientName: recipient.name,
           subject,
-          sentBy: identity.subject,
+          sentBy: userId,
           error: err instanceof Error ? err.message : String(err),
         })
         failed++
@@ -224,7 +218,8 @@ export const sendBroadcastToApplicants = action({
  * illustrative example links computed on the client — no real respondent tokens
  * are generated. The subject is prefixed with `[TEST]`.
  */
-export const sendTestEmail = action({
+export const sendTestEmail = courseAction({
+  level: 'edit',
   args: {
     opportunityId: v.id('orgOpportunities'),
     subject: v.string(),
@@ -235,6 +230,7 @@ export const sendTestEmail = action({
     applyExampleLink: v.optional(v.string()),
   },
   returns: v.null(),
+  target: ({ opportunityId }) => ({ opportunityId }),
   handler: async (
     ctx,
     {
@@ -246,16 +242,8 @@ export const sendTestEmail = action({
       surveyExampleLink,
       applyExampleLink,
     },
+    { userId },
   ) => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new Error('Not authenticated')
-
-    const isAdmin: boolean = await ctx.runQuery(
-      internal.emails.adminBroadcast.verifyOrgAdmin,
-      { userId: identity.subject, opportunityId },
-    )
-    if (!isAdmin) throw new Error('Admin access required')
-
     const email = toEmail.trim()
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw new Error('Invalid email address')
@@ -263,7 +251,7 @@ export const sendTestEmail = action({
 
     await ctx.runMutation(
       internal.emails.adminBroadcast.checkTestEmailRateLimit,
-      { userId: identity.subject },
+      { userId },
     )
 
     let md = markdownBody

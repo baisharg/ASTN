@@ -1,14 +1,13 @@
 import { ConvexError, v } from 'convex/values'
-import {
-  internalMutation,
-  internalQuery,
-  mutation,
-  query,
-} from '../_generated/server'
+import { internalMutation, internalQuery } from '../_generated/server'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
-import type { Doc, Id } from '../_generated/dataModel'
-import { requireOpportunityAccess } from '../lib/courseAccess'
-import type { AccessLevel } from '../lib/courseAccess'
+import type { Doc } from '../_generated/dataModel'
+import {
+  courseMutation,
+  courseQuery,
+  loadDraft,
+  loadOpportunity,
+} from '../lib/access'
 import { resolveApplicantContact } from '../lib/applicantContact'
 import type { FormField } from '../lib/formFields'
 import { resend } from './send'
@@ -407,21 +406,11 @@ export const backfillDraftsForKind = internalMutation({
 
 // ── Admin queries/mutations (Emails tab) ────────────────────────────────────
 
-// Admins, or members with access to the opportunity's course.
-async function requireAccess(
-  ctx: QueryCtx | MutationCtx,
-  opportunityId: Id<'orgOpportunities'>,
-  level: AccessLevel,
-): Promise<string> {
-  const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-  if (!opportunity) throw new ConvexError('Opportunity not found')
-  return await requireOpportunityAccess(ctx, opportunity, level)
-}
-
 // Pending drafts of an opportunity with resolved recipients. Drafts without a
 // resolvable email surface with recipientEmail=null — the UI renders them in a
 // non-selectable "Needs email" group, and the send path guards them too.
-export const listForOpportunity = query({
+export const listForOpportunity = courseQuery({
+  level: 'read',
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.array(
     v.object({
@@ -442,11 +431,9 @@ export const listForOpportunity = query({
       updatedAt: v.number(),
     }),
   ),
-  handler: async (ctx, { opportunityId }) => {
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireAccess(ctx, opportunity._id, 'read')
-
+  load: (ctx, { opportunityId }) => loadOpportunity(ctx, opportunityId),
+  missing: 'Opportunity not found',
+  handler: async (ctx, { opportunityId }, { opportunity }) => {
     const formFields = opportunity.formFields as Array<FormField> | undefined
     const drafts = await ctx.db
       .query('emailOutbox')
@@ -502,7 +489,8 @@ export const listForOpportunity = query({
   },
 })
 
-export const updateDraft = mutation({
+export const updateDraft = courseMutation({
+  level: 'edit',
   args: {
     draftId: v.id('emailOutbox'),
     subject: v.optional(v.string()),
@@ -511,14 +499,12 @@ export const updateDraft = mutation({
     includeSurveyLink: v.optional(v.boolean()),
   },
   returns: v.null(),
+  load: (ctx, { draftId }) => loadDraft(ctx, draftId),
+  missing: 'Draft not found',
   handler: async (
     ctx,
     { draftId, subject, markdownBody, includePollLink, includeSurveyLink },
   ) => {
-    const draft = await ctx.db.get('emailOutbox', draftId)
-    if (!draft) throw new ConvexError('Draft not found')
-    await requireAccess(ctx, draft.opportunityId, 'edit')
-
     // Once touched by hand, a draft stops tracking its template.
     const patch: Record<string, unknown> = {
       updatedAt: Date.now(),
@@ -547,20 +533,13 @@ export const updateDraft = mutation({
  * explicit, because the edit is someone's work and losing it silently would be
  * worse than the staleness it fixes.
  */
-export const resetDraftToTemplate = mutation({
+export const resetDraftToTemplate = courseMutation({
+  level: 'edit',
   args: { draftId: v.id('emailOutbox') },
   returns: v.null(),
-  handler: async (ctx, { draftId }) => {
-    const draft = await ctx.db.get('emailOutbox', draftId)
-    if (!draft) throw new ConvexError('Draft not found')
-    await requireAccess(ctx, draft.opportunityId, 'edit')
-
-    const opportunity = await ctx.db.get(
-      'orgOpportunities',
-      draft.opportunityId,
-    )
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-
+  load: (ctx, { draftId }) => loadDraft(ctx, draftId),
+  missing: 'Draft not found',
+  handler: async (ctx, { draftId }, { draft, opportunity }) => {
     const template = await resolveTemplate(ctx, opportunity, draft.kind)
     if (!template)
       throw new ConvexError('There is no template for this decision any more')
@@ -588,14 +567,13 @@ export const resetDraftToTemplate = mutation({
  * address is stored on the application, so it also applies to every future
  * email to that person, not just this draft.
  */
-export const setRecipientEmail = mutation({
+export const setRecipientEmail = courseMutation({
+  level: 'edit',
   args: { draftId: v.id('emailOutbox'), email: v.string() },
   returns: v.null(),
-  handler: async (ctx, { draftId, email }) => {
-    const draft = await ctx.db.get('emailOutbox', draftId)
-    if (!draft) throw new ConvexError('Draft not found')
-    await requireAccess(ctx, draft.opportunityId, 'edit')
-
+  load: (ctx, { draftId }) => loadDraft(ctx, draftId),
+  missing: 'Draft not found',
+  handler: async (ctx, { email }, { draft }) => {
     const trimmed = email.trim()
     // Deliberately loose: catching a real typo is impossible, and a stricter
     // rule mostly just rejects addresses that work.
@@ -609,13 +587,13 @@ export const setRecipientEmail = mutation({
   },
 })
 
-export const deleteDraft = mutation({
+export const deleteDraft = courseMutation({
+  level: 'edit',
   args: { draftId: v.id('emailOutbox') },
   returns: v.null(),
+  load: (ctx, { draftId }) => loadDraft(ctx, draftId),
+  missing: () => null,
   handler: async (ctx, { draftId }) => {
-    const draft = await ctx.db.get('emailOutbox', draftId)
-    if (!draft) return null
-    await requireAccess(ctx, draft.opportunityId, 'edit')
     await ctx.db.delete('emailOutbox', draftId)
     return null
   },
@@ -1070,7 +1048,8 @@ export const logBroadcastSend = internalMutation({
 
 // ── History (unified log) ───────────────────────────────────────────────────
 
-export const listLogForOpportunity = query({
+export const listLogForOpportunity = courseQuery({
+  level: 'read',
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.array(
     v.object({
@@ -1087,11 +1066,9 @@ export const listLogForOpportunity = query({
       error: v.union(v.string(), v.null()),
     }),
   ),
+  load: (ctx, { opportunityId }) => loadOpportunity(ctx, opportunityId),
+  missing: 'Opportunity not found',
   handler: async (ctx, { opportunityId }) => {
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireAccess(ctx, opportunity._id, 'read')
-
     const rows = await ctx.db
       .query('emailLog')
       .withIndex('by_opportunity', (q) => q.eq('opportunityId', opportunityId))

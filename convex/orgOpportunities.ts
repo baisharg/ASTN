@@ -1,11 +1,6 @@
 import { ConvexError, v } from 'convex/values'
 import type { Doc, Id } from './_generated/dataModel'
-import {
-  internalMutation,
-  internalQuery,
-  mutation,
-  query,
-} from './_generated/server'
+import { internalMutation, internalQuery } from './_generated/server'
 import { copyCanonicalEmails } from './emails/templateLibrary'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import {
@@ -14,13 +9,13 @@ import {
   toBaishCourseOpportunityContract,
   type BaishCourseOpportunityContract,
 } from './lib/baishCourseOpportunities'
-import { getUserId } from './lib/auth'
+import { canAccessOpportunity, hasOpportunityAccess } from './lib/courseAccess'
 import {
-  canAccessOpportunity,
-  getOrgAccess,
-  hasOpportunityAccess,
-  requireOpportunityAccess,
-} from './lib/courseAccess'
+  courseMutation,
+  loadOpportunity,
+  orgQuery,
+  publicQuery,
+} from './lib/access'
 import { sanitizeFormFieldKeys } from './lib/formFields'
 import {
   cleanAdminForm,
@@ -182,8 +177,9 @@ const baishCourseOpportunityReturnValidator = v.object({
   featured: v.boolean(),
 })
 
-// Get an opportunity by ID
-export const get = query({
+// Get an opportunity by ID. Public: an active opportunity is visible to
+// anyone, and a draft or closed one only to course readers (null otherwise).
+export const get = publicQuery({
   args: { id: v.id('orgOpportunities') },
   returns: v.union(opportunityReturnValidator, v.null()),
   handler: async (ctx, { id }) => {
@@ -204,7 +200,7 @@ export const get = query({
  * the admin URL can carry a name instead of a hash. Ids keep working: bookmarks
  * and links pasted in Slack must not break.
  */
-export const getByKey = query({
+export const getByKey = publicQuery({
   args: { orgSlug: v.string(), key: v.string() },
   returns: v.union(opportunityReturnValidator, v.null()),
   handler: async (ctx, { orgSlug, key }) => {
@@ -262,7 +258,7 @@ const withRedirectReturnValidator = v.union(
  * closed EOI can be reopened at any time, so an old link must never 404 — but
  * everything ASTN generates from now on uses the slug.
  */
-export const getWithRedirectByKey = query({
+export const getWithRedirectByKey = publicQuery({
   args: { orgSlug: v.string(), key: v.string() },
   returns: withRedirectReturnValidator,
   handler: async (ctx, { orgSlug, key }) => {
@@ -289,7 +285,7 @@ export const getWithRedirectByKey = query({
 })
 
 // Get opportunity with redirect resolution (used by the public apply page)
-export const getWithRedirect = query({
+export const getWithRedirect = publicQuery({
   args: { id: v.id('orgOpportunities') },
   returns: v.union(
     v.object({
@@ -362,7 +358,7 @@ async function resolveRedirect(
 }
 
 // List active opportunities for an org
-export const listByOrg = query({
+export const listByOrg = publicQuery({
   args: { orgId: v.id('organizations') },
   returns: v.array(opportunityReturnValidator),
   handler: async (ctx, { orgId }) => {
@@ -376,7 +372,7 @@ export const listByOrg = query({
 })
 
 // Public: list BAISH course opportunities in the stable next-baish contract.
-export const listBaishCourses = query({
+export const listBaishCourses = publicQuery({
   args: {},
   returns: v.array(baishCourseOpportunityReturnValidator),
   handler: async (ctx) => {
@@ -407,7 +403,7 @@ export const listBaishCourses = query({
 })
 
 // Get featured opportunity for an org (only active ones)
-export const getFeatured = query({
+export const getFeatured = publicQuery({
   args: { orgId: v.id('organizations') },
   returns: v.union(opportunityReturnValidator, v.null()),
   handler: async (ctx, { orgId }) => {
@@ -421,22 +417,16 @@ export const getFeatured = query({
 })
 
 // Admin: list all opportunities for an org (all statuses)
-export const listAllByOrg = query({
+// Admins see every opportunity; members with course grants see theirs.
+export const listAllByOrg = orgQuery({
+  role: 'team',
   args: {
     orgId: v.id('organizations'),
     includeArchived: v.optional(v.boolean()),
   },
   returns: v.array(opportunityReturnValidator),
-  handler: async (ctx, { orgId, includeArchived }) => {
-    const userId = await getUserId(ctx)
-    if (!userId) throw new ConvexError('Not authenticated')
-
-    // Admins see every opportunity; members with course grants see theirs.
-    const access = await getOrgAccess(ctx, userId, orgId)
-    if (!access || (!access.isAdmin && access.courses.size === 0)) {
-      throw new ConvexError('Admin access required')
-    }
-
+  org: ({ orgId }) => orgId,
+  handler: async (ctx, { orgId, includeArchived }, { access }) => {
     // Fetch all statuses by querying without the status filter
     const active = await ctx.db
       .query('orgOpportunities')
@@ -525,14 +515,13 @@ export async function opportunityAttachments(
  * touching anything that references it — the honest answer to "this is over,
  * stop showing it to me", which is what people reach for the delete button for.
  */
-export const setArchived = mutation({
+export const setArchived = courseMutation({
+  level: 'edit',
   args: { id: v.id('orgOpportunities'), archived: v.boolean() },
   returns: v.null(),
+  load: (ctx, { id }) => loadOpportunity(ctx, id),
+  missing: 'Opportunity not found',
   handler: async (ctx, { id, archived }) => {
-    const opportunity = await ctx.db.get('orgOpportunities', id)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireOpportunityAccess(ctx, opportunity, 'edit')
-
     await ctx.db.patch('orgOpportunities', id, {
       archivedAt: archived ? Date.now() : undefined,
       updatedAt: Date.now(),
@@ -556,16 +545,15 @@ export const setArchived = mutation({
  * does allow is deleting the duplicates and typos that should never have
  * existed, which is the other half of what people actually want.
  */
-export const remove = mutation({
+export const remove = courseMutation({
+  // Only empty opportunities can be deleted (see below), so course editors
+  // may clean up their own drafts.
+  level: 'edit',
   args: { id: v.id('orgOpportunities') },
   returns: v.null(),
-  handler: async (ctx, { id }) => {
-    const opportunity = await ctx.db.get('orgOpportunities', id)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-    // Only empty opportunities can be deleted (see below), so course editors
-    // may clean up their own drafts.
-    await requireOpportunityAccess(ctx, opportunity, 'edit')
-
+  load: (ctx, { id }) => loadOpportunity(ctx, id),
+  missing: 'Opportunity not found',
+  handler: async (ctx, { id }, { opportunity }) => {
     const attached = await opportunityAttachments(ctx, id)
     const blocking = Object.entries(attached).filter(([, n]) => n > 0)
     if (blocking.length > 0) {
@@ -677,13 +665,13 @@ export async function duplicateOpportunityFor(
   return copyId
 }
 
-export const duplicate = mutation({
+export const duplicate = courseMutation({
+  level: 'edit',
   args: { id: v.id('orgOpportunities') },
   returns: v.id('orgOpportunities'),
-  handler: async (ctx, { id }) => {
-    const source = await ctx.db.get('orgOpportunities', id)
-    if (!source) throw new ConvexError('Opportunity not found')
-    const userId = await requireOpportunityAccess(ctx, source, 'edit')
+  load: (ctx, { id }) => loadOpportunity(ctx, id),
+  missing: 'Opportunity not found',
+  handler: async (ctx, _args, { opportunity: source, userId }) => {
     return await duplicateOpportunityFor(ctx, source, userId)
   },
 })
@@ -827,8 +815,10 @@ export const migrateLegacyFormFieldShape = internalMutation({
   },
 })
 
-// Create an opportunity (org admin only)
-export const create = mutation({
+// Create an opportunity. Admins create anything; course editors only inside
+// their courses, so the new opportunity must carry a course tag they edit.
+export const create = courseMutation({
+  level: 'edit',
   args: {
     orgId: v.id('organizations'),
     title: v.string(),
@@ -852,20 +842,16 @@ export const create = mutation({
     formSource: v.optional(formSourceValidator),
   },
   returns: v.id('orgOpportunities'),
-  handler: async (ctx, args) => {
-    // Admins create anything; course editors only inside their courses, so
-    // the new opportunity must carry the course tag they can edit.
-    const userId = await requireOpportunityAccess(
-      ctx,
-      { orgId: args.orgId, tags: args.tags },
-      'edit',
-    )
+  // Nothing exists yet: access is checked against where it will live.
+  load: async (_ctx, { orgId, tags }) => ({ opportunity: { orgId, tags } }),
+  handler: async (ctx, args, { userId }) => {
     return await createOpportunityFor(ctx, { ...args, createdBy: userId })
   },
 })
 
-// Update an opportunity (org admin only)
-export const update = mutation({
+// Update an opportunity: admins, or members with edit access to its course.
+export const update = courseMutation({
+  level: 'edit',
   args: {
     id: v.id('orgOpportunities'),
     title: v.optional(v.string()),
@@ -895,22 +881,13 @@ export const update = mutation({
     ),
   },
   returns: v.null(),
+  load: (ctx, { id }) => loadOpportunity(ctx, id),
+  missing: 'Opportunity not found',
   handler: async (
     ctx,
     { id, redirectOpportunityId, sourceOpportunityId, ...updates },
+    { opportunity, access },
   ) => {
-    const userId = await getUserId(ctx)
-    if (!userId) throw new ConvexError('Not authenticated')
-
-    const opportunity = await ctx.db.get('orgOpportunities', id)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-
-    // Admins, or members with edit access to its course. Only admins move
-    // an opportunity between courses, since the tags decide who reaches it.
-    const access = await getOrgAccess(ctx, userId, opportunity.orgId)
-    if (!canAccessOpportunity(access, opportunity, 'edit')) {
-      throw new ConvexError('Edit access required')
-    }
     // Tags decide who reaches it: a course editor can retag only within
     // the courses they edit, so they can't hand it to (or hide it from)
     // another course.
@@ -980,13 +957,13 @@ export async function assertNoApplications(
  * or the bare start of a custom form. Only while nobody has applied: swapping
  * questions under existing answers would strand them.
  */
-export const replaceForm = mutation({
+export const replaceForm = courseMutation({
+  level: 'edit',
   args: { id: v.id('orgOpportunities'), source: formSourceValidator },
   returns: v.null(),
-  handler: async (ctx, { id, source }) => {
-    const opportunity = await ctx.db.get('orgOpportunities', id)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireOpportunityAccess(ctx, opportunity, 'edit')
+  load: (ctx, { id }) => loadOpportunity(ctx, id),
+  missing: 'Opportunity not found',
+  handler: async (ctx, { id, source }, { opportunity }) => {
     await assertNoApplications(ctx, id)
     await ctx.db.patch('orgOpportunities', id, {
       formFields: await copyCanonicalForm(ctx, {
@@ -1006,13 +983,13 @@ export const replaceForm = mutation({
  * adjusted for this edition. Only while nobody has applied, so no answer is
  * ever left without its question.
  */
-export const saveForm = mutation({
+export const saveForm = courseMutation({
+  level: 'edit',
   args: { id: v.id('orgOpportunities'), formFields: v.any() },
   returns: v.null(),
+  load: (ctx, { id }) => loadOpportunity(ctx, id),
+  missing: 'Opportunity not found',
   handler: async (ctx, { id, formFields }) => {
-    const opportunity = await ctx.db.get('orgOpportunities', id)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-    await requireOpportunityAccess(ctx, opportunity, 'edit')
     await assertNoApplications(ctx, id)
     await ctx.db.patch('orgOpportunities', id, {
       formFields: cleanAdminForm(formFields),
