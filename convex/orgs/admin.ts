@@ -5,6 +5,7 @@ import {
   deleteCourseGrants,
   requirePermissionManager,
 } from '../lib/courseAccess'
+import { logPermissionChange } from '../lib/permissionLog'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc, Id } from '../_generated/dataModel'
 
@@ -63,8 +64,19 @@ export const removeMember = mutation({
     }
 
     // Delete the membership, and the course access that came with it
+    const via = 'orgs/admin:removeMember'
+    const by = adminMembership.userId
     await ctx.db.delete('orgMemberships', membershipId)
-    await deleteCourseGrants(ctx, orgId, targetMembership.userId)
+    await logPermissionChange(ctx, {
+      orgId,
+      userId: targetMembership.userId,
+      by,
+      change: 'role',
+      from: targetMembership.role,
+      to: null,
+      via,
+    })
+    await deleteCourseGrants(ctx, orgId, targetMembership.userId, by, via)
 
     return { success: true }
   },
@@ -78,7 +90,7 @@ export const promoteToAdmin = mutation({
   },
   handler: async (ctx, { orgId, membershipId }) => {
     // Admins see every course, so making one is an owner's call.
-    await requirePermissionManager(ctx, orgId)
+    const managerId = await requirePermissionManager(ctx, orgId)
 
     // Get the target membership
     const targetMembership = await ctx.db.get('orgMemberships', membershipId)
@@ -92,10 +104,26 @@ export const promoteToAdmin = mutation({
     }
 
     // Update role to admin; course grants are moot for an admin
+    const via = 'orgs/admin:promoteToAdmin'
     await ctx.db.patch('orgMemberships', membershipId, {
       role: 'admin',
     })
-    await deleteCourseGrants(ctx, orgId, targetMembership.userId)
+    await logPermissionChange(ctx, {
+      orgId,
+      userId: targetMembership.userId,
+      by: managerId,
+      change: 'role',
+      from: targetMembership.role,
+      to: 'admin',
+      via,
+    })
+    await deleteCourseGrants(
+      ctx,
+      orgId,
+      targetMembership.userId,
+      managerId,
+      via,
+    )
 
     return { success: true }
   },
@@ -168,6 +196,25 @@ export const demoteToMember = mutation({
       role: 'member',
       isOwner: undefined,
       onTeam: true,
+    })
+    const via = 'orgs/admin:demoteToMember'
+    await logPermissionChange(ctx, {
+      orgId,
+      userId: targetMembership.userId,
+      by: managerId,
+      change: 'role',
+      from: targetMembership.role,
+      to: 'member',
+      via,
+    })
+    await logPermissionChange(ctx, {
+      orgId,
+      userId: targetMembership.userId,
+      by: managerId,
+      change: 'owner',
+      from: targetMembership.isOwner === true ? 'yes' : 'no',
+      to: 'no',
+      via,
     })
 
     return { success: true }

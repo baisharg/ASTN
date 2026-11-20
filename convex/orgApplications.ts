@@ -2,6 +2,7 @@ import { ConvexError, v } from 'convex/values'
 import { internal } from './_generated/api'
 import { mutation, query } from './_generated/server'
 import { isPlatformAdmin, requireAuth, requirePlatformAdmin } from './lib/auth'
+import { logPermissionChange } from './lib/permissionLog'
 import { rateLimiter } from './lib/rateLimiter'
 import { generateSlug } from './lib/slug'
 
@@ -229,6 +230,15 @@ export const approve = mutation({
       role: 'admin',
       directoryVisibility: 'visible',
       joinedAt: Date.now(),
+    })
+    await logPermissionChange(ctx, {
+      orgId,
+      userId: application.applicantUserId,
+      by: adminUserId,
+      change: 'role',
+      from: null,
+      to: 'admin',
+      via: 'orgApplications:approve',
     })
 
     // Schedule notification to applicant

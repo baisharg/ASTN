@@ -55,6 +55,7 @@ If a tool fails for reasons unrelated to the code (e.g. "Failed to convert napi 
 - Comments describe what the code does now. No history, no notes about removed features or past versions.
 - Tests are `*.test.ts` files under `src/` (mostly `src/lib/`) and run with `bun test`. They declare `describe`/`test`/`expect` themselves instead of importing `bun:test`, which the type check can't resolve.
 - Who may call what is a table in `convex/permissions/matrix.cases.helpers.ts`, run by `bun test` against an in-memory backend (`convex-test`). Adding or changing a public query, mutation or action means adding its row (or a reason in `coverage.helpers.ts`), or `coverage.test.ts` fails. `KNOWN HOLE` tests are `test.todo`: `bun test --todo convex/permissions` runs them.
+- Every change to a role, the owner flag or a course grant calls `logPermissionChange` (`convex/lib/permissionLog.ts`) in the same mutation, so `permissionChanges` records who changed what for whom. There is no UI for it: read it in the Convex dashboard or with `npx convex run permissionLog:listForOrg '{"orgSlug":"baish"}'`.
 - Small conventional commits: `fix(polls): ...`, `feat(forms): ...`, `chore: ...`.
 
 <!-- convex-ai-start -->

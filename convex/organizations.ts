@@ -1,5 +1,6 @@
 import { v } from 'convex/values'
 import { internalMutation, query } from './_generated/server'
+import { logPermissionChange } from './lib/permissionLog'
 
 // List all organizations (for browse mode)
 export const listOrganizations = query({
@@ -116,6 +117,15 @@ export const bootstrapOrgAdmin = internalMutation({
       // Update to admin if not already
       if (existing.role !== 'admin') {
         await ctx.db.patch('orgMemberships', existing._id, { role: 'admin' })
+        await logPermissionChange(ctx, {
+          orgId: org._id,
+          userId: user._id,
+          by: null,
+          change: 'role',
+          from: existing.role,
+          to: 'admin',
+          via: 'organizations:bootstrapOrgAdmin',
+        })
         return { action: 'promoted', userId: user._id, orgId: org._id }
       }
       return { action: 'already_admin', userId: user._id, orgId: org._id }
@@ -128,6 +138,15 @@ export const bootstrapOrgAdmin = internalMutation({
       role: 'admin',
       directoryVisibility: 'visible',
       joinedAt: Date.now(),
+    })
+    await logPermissionChange(ctx, {
+      orgId: org._id,
+      userId: user._id,
+      by: null,
+      change: 'role',
+      from: null,
+      to: 'admin',
+      via: 'organizations:bootstrapOrgAdmin',
     })
 
     return { action: 'created', userId: user._id, orgId: org._id }

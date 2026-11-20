@@ -7,6 +7,7 @@ import {
   requirePermissionManager,
 } from './lib/courseAccess'
 import { COURSE_TAGS } from './lib/courses'
+import { logPermissionChange } from './lib/permissionLog'
 
 const levelValidator = v.union(v.literal('read'), v.literal('edit'))
 
@@ -123,6 +124,16 @@ export const setAccess = mutation({
         )
         .collect()
     ).find((g) => g.course === course)
+    await logPermissionChange(ctx, {
+      orgId,
+      userId,
+      by: adminId,
+      change: 'course',
+      course,
+      from: existing?.level ?? null,
+      to: level,
+      via: 'courseAccess:setAccess',
+    })
     if (level === null) {
       if (existing) await ctx.db.delete('courseAccess', existing._id)
     } else if (existing) {
@@ -185,6 +196,15 @@ export const setOwner = mutation({
     await ctx.db.patch('orgMemberships', membershipId, {
       isOwner: owner || undefined,
     })
+    await logPermissionChange(ctx, {
+      orgId,
+      userId: target.userId,
+      by: managerId,
+      change: 'owner',
+      from: target.isOwner === true ? 'yes' : 'no',
+      to: owner ? 'yes' : 'no',
+      via: 'courseAccess:setOwner',
+    })
     return null
   },
 })
@@ -204,6 +224,15 @@ export const forceOwner = internalMutation({
       throw new ConvexError('Only an admin can be an owner.')
     }
     await ctx.db.patch('orgMemberships', membershipId, { isOwner: true })
+    await logPermissionChange(ctx, {
+      orgId: target.orgId,
+      userId: target.userId,
+      by: null,
+      change: 'owner',
+      from: target.isOwner === true ? 'yes' : 'no',
+      to: 'yes',
+      via: 'courseAccess:forceOwner',
+    })
     return null
   },
 })

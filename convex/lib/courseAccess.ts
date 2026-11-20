@@ -2,6 +2,7 @@ import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc, Id } from '../_generated/dataModel'
 import { getUserId } from './auth'
 import { courseOf } from './courses'
+import { logPermissionChange } from './permissionLog'
 import type { CourseTag } from './courses'
 
 /**
@@ -122,11 +123,16 @@ export async function requirePermissionManager(
   return userId
 }
 
-/** Drop someone's course grants, e.g. when they leave or become an admin. */
+/**
+ * Drop someone's course grants, e.g. when they leave or become an admin, and
+ * record each one in the permission log.
+ */
 export async function deleteCourseGrants(
   ctx: MutationCtx,
   orgId: Id<'organizations'>,
   userId: string,
+  by: string | null,
+  via: string,
 ): Promise<void> {
   const grants = await ctx.db
     .query('courseAccess')
@@ -134,5 +140,17 @@ export async function deleteCourseGrants(
       q.eq('orgId', orgId).eq('userId', userId),
     )
     .collect()
-  for (const g of grants) await ctx.db.delete('courseAccess', g._id)
+  for (const g of grants) {
+    await ctx.db.delete('courseAccess', g._id)
+    await logPermissionChange(ctx, {
+      orgId,
+      userId,
+      by,
+      change: 'course',
+      course: g.course,
+      from: g.level,
+      to: null,
+      via,
+    })
+  }
 }

@@ -1982,6 +1982,22 @@ export default defineSchema({
     .index('by_org_and_user', ['orgId', 'userId'])
     .index('by_org_and_course', ['orgId', 'course']),
 
+  // Every change to someone's role, owner flag or course access, written by
+  // the function that made it (convex/lib/permissionLog.ts). Append-only and
+  // read outside the app: Convex dashboard or `permissionLog:listForOrg`.
+  permissionChanges: defineTable({
+    orgId: v.id('organizations'),
+    userId: v.string(),
+    by: v.union(v.string(), v.null()),
+    change: v.union(v.literal('role'), v.literal('owner'), v.literal('course')),
+    course: v.optional(v.string()),
+    from: v.union(v.string(), v.null()),
+    to: v.union(v.string(), v.null()),
+    via: v.string(),
+  })
+    .index('by_orgId', ['orgId'])
+    .index('by_orgId_and_userId', ['orgId', 'userId']),
+
   // The org's canonical application forms: one for course editions, one for
   // expressions of interest. Every new opportunity copies the one for its
   // kind (see convex/canonicalForms.ts). Edited only from the web admin,
