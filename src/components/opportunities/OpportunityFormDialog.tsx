@@ -35,8 +35,9 @@ interface OpportunityFormDialogProps {
   onOpenChange: (open: boolean) => void
   orgId: Id<'organizations'>
   slug: string
-  // Courses the user may create in. Admins also get "No course".
+  // Courses the user may create in.
   courses: ReadonlyArray<string>
+  // Whether they may also create one without a course ("Other").
   isAdmin: boolean
 }
 
