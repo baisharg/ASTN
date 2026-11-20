@@ -1,15 +1,19 @@
 import { ConvexError, v } from 'convex/values'
-import { action, internalQuery, mutation, query } from './_generated/server'
+import { internalQuery } from './_generated/server'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import type { Doc, Id } from './_generated/dataModel'
 import { internal } from './_generated/api'
 import { getUserId } from './lib/auth'
+import { canAccessOpportunity, getOrgAccess } from './lib/courseAccess'
 import {
-  canAccessOpportunity,
-  getOrgAccess,
-  hasOpportunityAccess,
-  requireOpportunityAccess,
-} from './lib/courseAccess'
+  courseAction,
+  courseMutation,
+  courseQuery,
+  loadOpportunity,
+  loadPoll,
+  publicMutation,
+  publicQuery,
+} from './lib/access'
 import {
   resolveApplicantDisplayNameByApplicationId,
   resolveApplicantDisplayNameFromApplication,
@@ -236,7 +240,7 @@ export async function saveApplicationAvailability(
  * availability. `slots` is what the logged-in person already marked, so an
  * edit starts from their week instead of an empty one.
  */
-export const getApplicationAvailability = query({
+export const getApplicationAvailability = publicQuery({
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.union(
     v.object({
@@ -375,7 +379,8 @@ export async function createPollFor(
   return pollId
 }
 
-export const createPoll = mutation({
+export const createPoll = courseMutation({
+  level: 'edit',
   args: {
     opportunityId: v.id('orgOpportunities'),
     title: v.string(),
@@ -386,17 +391,9 @@ export const createPoll = mutation({
     slotDurationMinutes: v.number(),
   },
   returns: v.id('availabilityPolls'),
-  handler: async (ctx, args) => {
-    const userId = await getUserId(ctx)
-    if (!userId) throw new ConvexError('Not authenticated')
-
-    const opportunity = await ctx.db.get('orgOpportunities', args.opportunityId)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-
-    const access = await getOrgAccess(ctx, userId, opportunity.orgId)
-    if (!canAccessOpportunity(access, opportunity, 'edit'))
-      throw new ConvexError('Edit access required')
-
+  load: (ctx, args) => loadOpportunity(ctx, args.opportunityId),
+  missing: 'Opportunity not found',
+  handler: async (ctx, args, { opportunity, userId }) => {
     return await createPollFor(ctx, {
       ...args,
       orgId: opportunity.orgId,
@@ -405,28 +402,13 @@ export const createPoll = mutation({
   },
 })
 
-export const backfillRespondents = mutation({
+export const backfillRespondents = courseMutation({
+  level: 'edit',
   args: { pollId: v.id('availabilityPolls') },
   returns: v.number(),
-  handler: async (ctx, { pollId }) => {
-    const userId = await getUserId(ctx)
-    if (!userId) throw new ConvexError('Not authenticated')
-
-    const poll = await ctx.db.get('availabilityPolls', pollId)
-    if (!poll) throw new ConvexError('Poll not found')
-
-    // Verify admin
-    const pollOpportunity = await ctx.db.get(
-      'orgOpportunities',
-      poll.opportunityId,
-    )
-    const access = await getOrgAccess(ctx, userId, poll.orgId)
-    if (
-      !pollOpportunity ||
-      !canAccessOpportunity(access, pollOpportunity, 'edit')
-    )
-      throw new ConvexError('Edit access required')
-
+  load: (ctx, { pollId }) => loadPoll(ctx, pollId),
+  missing: 'Poll not found',
+  handler: async (ctx, { pollId }, { poll }) => {
     // Collect existing applicationIds so we can skip duplicates
     const existingRespondents = await ctx.db
       .query('pollRespondents')
@@ -493,7 +475,8 @@ export function checkPollRange(
   return { days }
 }
 
-export const updatePoll = mutation({
+export const updatePoll = courseMutation({
+  level: 'edit',
   args: {
     pollId: v.id('availabilityPolls'),
     title: v.optional(v.string()),
@@ -508,25 +491,9 @@ export const updatePoll = mutation({
     days: v.optional(v.array(v.number())),
   },
   returns: v.null(),
-  handler: async (ctx, { pollId, ...updates }) => {
-    const userId = await getUserId(ctx)
-    if (!userId) throw new ConvexError('Not authenticated')
-
-    const poll = await ctx.db.get('availabilityPolls', pollId)
-    if (!poll) throw new ConvexError('Poll not found')
-
-    // Verify admin
-    const pollOpportunity = await ctx.db.get(
-      'orgOpportunities',
-      poll.opportunityId,
-    )
-    const access = await getOrgAccess(ctx, userId, poll.orgId)
-    if (
-      !pollOpportunity ||
-      !canAccessOpportunity(access, pollOpportunity, 'edit')
-    )
-      throw new ConvexError('Edit access required')
-
+  load: (ctx, { pollId }) => loadPoll(ctx, pollId),
+  missing: 'Poll not found',
+  handler: async (ctx, { pollId, ...updates }, { poll }) => {
     if (updates.days !== undefined) {
       updates.days = checkPollRange(poll, updates).days
     } else {
@@ -541,28 +508,13 @@ export const updatePoll = mutation({
   },
 })
 
-export const deletePoll = mutation({
+export const deletePoll = courseMutation({
+  level: 'edit',
   args: { pollId: v.id('availabilityPolls') },
   returns: v.null(),
+  load: (ctx, { pollId }) => loadPoll(ctx, pollId),
+  missing: 'Poll not found',
   handler: async (ctx, { pollId }) => {
-    const userId = await getUserId(ctx)
-    if (!userId) throw new ConvexError('Not authenticated')
-
-    const poll = await ctx.db.get('availabilityPolls', pollId)
-    if (!poll) throw new ConvexError('Poll not found')
-
-    // Verify admin
-    const pollOpportunity = await ctx.db.get(
-      'orgOpportunities',
-      poll.opportunityId,
-    )
-    const access = await getOrgAccess(ctx, userId, poll.orgId)
-    if (
-      !pollOpportunity ||
-      !canAccessOpportunity(access, pollOpportunity, 'edit')
-    )
-      throw new ConvexError('Edit access required')
-
     // Delete all responses first
     const responses = await ctx.db
       .query('availabilityResponses')
@@ -586,7 +538,8 @@ export const deletePoll = mutation({
   },
 })
 
-export const finalizePoll = mutation({
+export const finalizePoll = courseMutation({
+  level: 'edit',
   args: {
     pollId: v.id('availabilityPolls'),
     finalizedSlot: v.object({
@@ -596,25 +549,9 @@ export const finalizePoll = mutation({
     }),
   },
   returns: v.null(),
+  load: (ctx, { pollId }) => loadPoll(ctx, pollId),
+  missing: 'Poll not found',
   handler: async (ctx, { pollId, finalizedSlot }) => {
-    const userId = await getUserId(ctx)
-    if (!userId) throw new ConvexError('Not authenticated')
-
-    const poll = await ctx.db.get('availabilityPolls', pollId)
-    if (!poll) throw new ConvexError('Poll not found')
-
-    // Verify admin
-    const pollOpportunity = await ctx.db.get(
-      'orgOpportunities',
-      poll.opportunityId,
-    )
-    const access = await getOrgAccess(ctx, userId, poll.orgId)
-    if (
-      !pollOpportunity ||
-      !canAccessOpportunity(access, pollOpportunity, 'edit')
-    )
-      throw new ConvexError('Edit access required')
-
     const now = Date.now()
     await ctx.db.patch('availabilityPolls', pollId, {
       status: 'finalized',
@@ -628,15 +565,15 @@ export const finalizePoll = mutation({
 
 // ─── Admin queries ───
 
-export const getPollByOpportunity = query({
+// Returns the poll's access token, so it takes a course read grant.
+export const getPollByOpportunity = courseQuery({
+  level: 'read',
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.union(pollReturnValidator, v.null()),
+  load: (ctx, { opportunityId }) => loadOpportunity(ctx, opportunityId),
+  missing: () => null,
+  denied: () => null,
   handler: async (ctx, { opportunityId }) => {
-    // Returns the poll's access token: admins and course readers only (no
-    // check before 2026-10-30, and opportunity ids are public).
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity || !(await hasOpportunityAccess(ctx, opportunity, 'read')))
-      return null
     return await ctx.db
       .query('availabilityPolls')
       .withIndex('by_opportunity', (q) => q.eq('opportunityId', opportunityId))
@@ -645,24 +582,17 @@ export const getPollByOpportunity = query({
   },
 })
 
-export const getPollResults = query({
+// Everyone's names and availability: a course read grant.
+export const getPollResults = courseQuery({
+  level: 'read',
   args: { pollId: v.id('availabilityPolls') },
   returns: v.object({
     poll: pollReturnValidator,
     responses: v.array(responseReturnValidator),
   }),
-  handler: async (ctx, { pollId }) => {
-    const poll = await ctx.db.get('availabilityPolls', pollId)
-    if (!poll) throw new ConvexError('Poll not found')
-    // Everyone's names and availability: admins and course readers only
-    // (this query had no check before 2026-10-30).
-    const pollOpportunity = await ctx.db.get(
-      'orgOpportunities',
-      poll.opportunityId,
-    )
-    if (!pollOpportunity) throw new ConvexError('Poll not found')
-    await requireOpportunityAccess(ctx, pollOpportunity, 'read')
-
+  load: (ctx, { pollId }) => loadPoll(ctx, pollId),
+  missing: 'Poll not found',
+  handler: async (ctx, { pollId }, { poll }) => {
     const responses = await ctx.db
       .query('availabilityResponses')
       .withIndex('by_poll', (q) => q.eq('pollId', pollId))
@@ -755,16 +685,19 @@ export const getExportData = internalQuery({
   },
 })
 
-export const exportAvailability = action({
+export const exportAvailability = courseAction({
+  level: 'read',
   args: {
     pollId: v.id('availabilityPolls'),
     blockDurationMinutes: v.optional(v.number()),
   },
   returns: v.string(),
-  handler: async (ctx, { pollId, blockDurationMinutes }): Promise<string> => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new ConvexError('Not authenticated')
-
+  target: ({ pollId }) => ({ pollId }),
+  handler: async (
+    ctx,
+    { pollId, blockDurationMinutes },
+    { userId },
+  ): Promise<string> => {
     const data: {
       poll: {
         days: Array<number>
@@ -778,7 +711,7 @@ export const exportAvailability = action({
       }>
     } = await ctx.runQuery(internal.availabilityPolls.getExportData, {
       pollId,
-      userId: identity.subject,
+      userId,
     })
 
     const { poll, responses } = data
@@ -957,7 +890,9 @@ export const exportAvailability = action({
   },
 })
 
-export const getRespondentLinks = query({
+// Personal links let anyone answer as that person: a course edit grant.
+export const getRespondentLinks = courseQuery({
+  level: 'edit',
   args: { pollId: v.id('availabilityPolls') },
   returns: v.array(
     v.object({
@@ -966,17 +901,9 @@ export const getRespondentLinks = query({
       applicationId: v.id('opportunityApplications'),
     }),
   ),
+  load: (ctx, { pollId }) => loadPoll(ctx, pollId),
+  missing: () => [],
   handler: async (ctx, { pollId }) => {
-    // Personal links let anyone answer as that person: admins and course
-    // editors only (this query had no check before 2026-10-30).
-    const poll = await ctx.db.get('availabilityPolls', pollId)
-    if (!poll) return []
-    const pollOpportunity = await ctx.db.get(
-      'orgOpportunities',
-      poll.opportunityId,
-    )
-    if (!pollOpportunity) return []
-    await requireOpportunityAccess(ctx, pollOpportunity, 'edit')
     const respondents = await ctx.db
       .query('pollRespondents')
       .withIndex('by_poll', (q) => q.eq('pollId', pollId))
@@ -1007,7 +934,7 @@ export const getRespondentLinks = query({
 
 // ─── Respondent queries (no auth required) ───
 
-export const getPollByToken = query({
+export const getPollByToken = publicQuery({
   args: { accessToken: v.string() },
   returns: v.union(
     v.object({
@@ -1046,7 +973,7 @@ export const getPollByToken = query({
   },
 })
 
-export const getPollByRespondentToken = query({
+export const getPollByRespondentToken = publicQuery({
   args: { respondentToken: v.string() },
   returns: v.union(
     v.object({
@@ -1100,7 +1027,7 @@ export const getPollByRespondentToken = query({
   },
 })
 
-export const getResponseByRespondent = query({
+export const getResponseByRespondent = publicQuery({
   args: {
     pollId: v.id('availabilityPolls'),
     respondentId: v.id('pollRespondents'),
@@ -1133,7 +1060,7 @@ export const getResponseByRespondent = query({
 
 // ─── Respondent mutation ───
 
-export const submitResponse = mutation({
+export const submitResponse = publicMutation({
   args: {
     pollId: v.id('availabilityPolls'),
     respondentId: v.id('pollRespondents'),
@@ -1207,7 +1134,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
  * nobody can rewrite someone else's week by typing their address. The
  * personal token is never returned to the caller for the same reason.
  */
-export const submitOpenResponse = mutation({
+export const submitOpenResponse = publicMutation({
   args: {
     accessToken: v.string(),
     firstName: v.string(),
