@@ -43,7 +43,8 @@ export const removeMember = mutation({
     membershipId: v.id('orgMemberships'),
   },
   handler: async (ctx, { orgId, membershipId }) => {
-    const adminMembership = await requireOrgAdmin(ctx, orgId)
+    // Removing someone is an owner's call, like changing their access.
+    const managerId = await requirePermissionManager(ctx, orgId)
 
     // Get the target membership
     const targetMembership = await ctx.db.get('orgMemberships', membershipId)
@@ -57,7 +58,7 @@ export const removeMember = mutation({
     }
 
     // Cannot remove yourself (use leaveOrg instead)
-    if (targetMembership._id === adminMembership._id) {
+    if (targetMembership.userId === managerId) {
       throw new Error(
         'Cannot remove yourself. Use the leave organization option instead.',
       )
@@ -65,7 +66,7 @@ export const removeMember = mutation({
 
     // Delete the membership, and the course access that came with it
     const via = 'orgs/admin:removeMember'
-    const by = adminMembership.userId
+    const by = managerId
     await ctx.db.delete('orgMemberships', membershipId)
     await logPermissionChange(ctx, {
       orgId,
@@ -195,6 +196,7 @@ export const demoteToMember = mutation({
     await ctx.db.patch('orgMemberships', membershipId, {
       role: 'member',
       isOwner: undefined,
+      courseScope: undefined,
       onTeam: true,
     })
     const via = 'orgs/admin:demoteToMember'
@@ -216,6 +218,14 @@ export const demoteToMember = mutation({
       to: 'no',
       via,
     })
+    // Course access is for admins: a member keeps none.
+    await deleteCourseGrants(
+      ctx,
+      orgId,
+      targetMembership.userId,
+      managerId,
+      via,
+    )
 
     return { success: true }
   },

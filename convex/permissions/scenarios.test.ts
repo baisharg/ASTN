@@ -5,6 +5,7 @@ import {
   ACCESS_ERROR,
   ACTORS,
   APPLICANT,
+  SUBJECT,
   asActor,
   newBackend,
   seed,
@@ -167,19 +168,41 @@ describe('public pages show only what is public', () => {
 
 describe('who gets which access, as the app asks for it', () => {
   const expected: Record<Actor, unknown> = {
-    owner: { isAdmin: true, canManage: true, courses: [] },
-    admin: { isAdmin: true, canManage: false, courses: [] },
-    courseEditor: {
-      isAdmin: false,
+    owner: {
+      isAdmin: true,
+      isOwner: true,
+      canManage: true,
+      allCourses: true,
+      courses: [],
+    },
+    admin: {
+      isAdmin: true,
+      isOwner: false,
       canManage: false,
+      allCourses: true,
+      courses: [],
+    },
+    courseEditor: {
+      isAdmin: true,
+      isOwner: false,
+      canManage: false,
+      allCourses: false,
       courses: [{ course: 'TAIS Course', level: 'edit' }],
     },
     courseReader: {
-      isAdmin: false,
+      isAdmin: true,
+      isOwner: false,
       canManage: false,
+      allCourses: false,
       courses: [{ course: 'TAIS Course', level: 'read' }],
     },
-    member: { isAdmin: false, canManage: false, courses: [] },
+    member: {
+      isAdmin: false,
+      isOwner: false,
+      canManage: false,
+      allCourses: false,
+      courses: [],
+    },
     outsider: null,
     otherOrgAdmin: null,
     platformAdmin: null,
@@ -364,5 +387,55 @@ describe('survey answers and the agent log', () => {
         }),
       ),
     ).toBe('refused')
+  })
+})
+
+describe('the "Other" column opens opportunities without a course', () => {
+  test('a chosen-courses admin sees them only once granted', async () => {
+    const t = newBackend()
+    const fx = await seed(t)
+    const titles = async () =>
+      (
+        await asActor(t, 'courseReader').query(
+          api.orgOpportunities.listAllByOrg,
+          { orgId: fx.orgId },
+        )
+      )
+        .map((o) => o.title)
+        .sort()
+    expect(await titles()).toEqual(['TAIS active', 'TAIS draft'])
+    await asActor(t, 'owner').mutation(api.courseAccess.setAccess, {
+      orgId: fx.orgId,
+      userId: SUBJECT.courseReader,
+      course: 'Other',
+      level: 'read',
+    })
+    expect(await titles()).toEqual([
+      'No course draft',
+      'TAIS active',
+      'TAIS draft',
+    ])
+  })
+
+  test('moving an admin to chosen courses keeps them an admin', async () => {
+    const t = newBackend()
+    const fx = await seed(t)
+    await asActor(t, 'owner').mutation(api.courseAccess.setScope, {
+      orgId: fx.orgId,
+      membershipId: fx.memberships.admin,
+      scope: 'chosen',
+    })
+    const access = await asActor(t, 'admin').query(api.courseAccess.myAccess, {
+      orgId: fx.orgId,
+    })
+    expect(access?.isAdmin).toBe(true)
+    expect(access?.allCourses).toBe(false)
+    expect(access?.courses).toEqual([])
+    // Still reaches the org's tools.
+    const members = await asActor(t, 'admin').query(
+      api.orgs.admin.getAllMembersWithProfiles,
+      { orgId: fx.orgId },
+    )
+    expect(members.length > 0).toBe(true)
   })
 })

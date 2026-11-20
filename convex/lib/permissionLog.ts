@@ -5,6 +5,7 @@ import type { Id } from '../_generated/dataModel'
  * One change to who someone is in an org or what they can open:
  * - `role`: their membership role (`admin`, `member`; null = not in the org)
  * - `owner`: whether they are an owner (`yes`, `no`)
+ * - `scope`: an admin's courses (`all`, `chosen`)
  * - `course`: their access to `course` (`read`, `edit`; null = none)
  */
 export interface PermissionChange {
@@ -12,7 +13,7 @@ export interface PermissionChange {
   userId: string
   /** Who made the change; null when it ran from the CLI or the system. */
   by: string | null
-  change: 'role' | 'owner' | 'course'
+  change: 'role' | 'owner' | 'scope' | 'course'
   course?: string
   from: string | null
   to: string | null

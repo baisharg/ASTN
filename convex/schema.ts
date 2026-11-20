@@ -449,11 +449,13 @@ export default defineSchema({
     userId: v.string(),
     orgId: v.id('organizations'),
     role: v.union(v.literal('admin'), v.literal('member')),
-    // Owners are the admins who manage roles and course permissions
-    // (convex/lib/courseAccess.ts). "Admin" covers every facilitator.
+    // Owners are the admins who see every course, edit the canonicals and
+    // manage roles and course access (convex/lib/courseAccess.ts).
     isOwner: v.optional(v.boolean()),
-    // Part of the team even without any course yet (moved to "Chosen
-    // courses" in Course access), so the table keeps showing them.
+    // An admin's courses: 'chosen' opens only their courseAccess grants;
+    // absent or 'all' opens every course, including ones added later.
+    courseScope: v.optional(v.union(v.literal('all'), v.literal('chosen'))),
+    // Set on people an owner demoted from admin; kept so they can be found.
     onTeam: v.optional(v.boolean()),
     directoryVisibility: v.union(v.literal('visible'), v.literal('hidden')),
     joinedAt: v.number(),
@@ -1989,7 +1991,12 @@ export default defineSchema({
     orgId: v.id('organizations'),
     userId: v.string(),
     by: v.union(v.string(), v.null()),
-    change: v.union(v.literal('role'), v.literal('owner'), v.literal('course')),
+    change: v.union(
+      v.literal('role'),
+      v.literal('owner'),
+      v.literal('scope'),
+      v.literal('course'),
+    ),
     course: v.optional(v.string()),
     from: v.union(v.string(), v.null()),
     to: v.union(v.string(), v.null()),

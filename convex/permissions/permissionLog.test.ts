@@ -88,7 +88,7 @@ describe('the permission log', () => {
     const set = (level: 'read' | 'edit' | null) =>
       owner.mutation(api.courseAccess.setAccess, {
         orgId: fx.orgId,
-        userId: SUBJECT.member,
+        userId: SUBJECT.courseReader,
         course: 'Governance',
         level,
       })
@@ -97,7 +97,7 @@ describe('the permission log', () => {
     await set('edit')
     await set(null)
     const row = (from: string | null, to: string | null) => ({
-      userId: SUBJECT.member,
+      userId: SUBJECT.courseReader,
       by: SUBJECT.owner,
       change: 'course',
       course: 'Governance',
@@ -112,22 +112,43 @@ describe('the permission log', () => {
     ])
   })
 
-  test('records a promotion and the course grants it dropped', async () => {
+  test('records a promotion', async () => {
     const t = newBackend()
     const fx = await seed(t)
     await asActor(t, 'owner').mutation(api.orgs.admin.promoteToAdmin, {
       orgId: fx.orgId,
-      membershipId: fx.memberships.courseEditor,
+      membershipId: fx.memberships.member,
     })
-    const via = 'orgs/admin:promoteToAdmin'
     expect(await changes(t, fx)).toEqual([
       {
-        userId: SUBJECT.courseEditor,
+        userId: SUBJECT.member,
         by: SUBJECT.owner,
         change: 'role',
         course: undefined,
         from: 'member',
         to: 'admin',
+        via: 'orgs/admin:promoteToAdmin',
+      },
+    ])
+  })
+
+  test('records moving to all courses and the grants it dropped', async () => {
+    const t = newBackend()
+    const fx = await seed(t)
+    await asActor(t, 'owner').mutation(api.courseAccess.setScope, {
+      orgId: fx.orgId,
+      membershipId: fx.memberships.courseEditor,
+      scope: 'all',
+    })
+    const via = 'courseAccess:setScope'
+    expect(await changes(t, fx)).toEqual([
+      {
+        userId: SUBJECT.courseEditor,
+        by: SUBJECT.owner,
+        change: 'scope',
+        course: undefined,
+        from: 'chosen',
+        to: 'all',
         via,
       },
       {
@@ -145,7 +166,7 @@ describe('the permission log', () => {
   test('records someone removed from the org and leaving it', async () => {
     const t = newBackend()
     const fx = await seed(t)
-    await asActor(t, 'admin').mutation(api.orgs.admin.removeMember, {
+    await asActor(t, 'owner').mutation(api.orgs.admin.removeMember, {
       orgId: fx.orgId,
       membershipId: fx.memberships.courseReader,
     })
@@ -155,16 +176,16 @@ describe('the permission log', () => {
     expect(await changes(t, fx)).toEqual([
       {
         userId: SUBJECT.courseReader,
-        by: SUBJECT.admin,
+        by: SUBJECT.owner,
         change: 'role',
         course: undefined,
-        from: 'member',
+        from: 'admin',
         to: null,
         via: 'orgs/admin:removeMember',
       },
       {
         userId: SUBJECT.courseReader,
-        by: SUBJECT.admin,
+        by: SUBJECT.owner,
         change: 'course',
         course: 'TAIS Course',
         from: 'read',

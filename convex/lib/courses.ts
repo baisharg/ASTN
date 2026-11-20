@@ -13,6 +13,18 @@ export const COURSE_TAGS = [
 
 export type CourseTag = (typeof COURSE_TAGS)[number]
 
+/**
+ * Where opportunities without a course tag fall for access: one more column
+ * after the courses, granted like any course.
+ */
+export const OTHER_COURSE = 'Other'
+
+/** Every course an admin can be given access to, in table order. */
+export const ACCESS_COURSES: ReadonlyArray<string> = [
+  ...COURSE_TAGS,
+  OTHER_COURSE,
+]
+
 /** The course tag among `tags`, matched case-insensitively, if any. */
 export function courseOf(
   tags: ReadonlyArray<string> | undefined,
