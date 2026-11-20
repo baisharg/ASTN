@@ -4,7 +4,8 @@ import { v } from 'convex/values'
 import { marked } from 'marked'
 import { emojify } from 'node-emoji'
 import { internal } from '../_generated/api'
-import { action, internalAction } from '../_generated/server'
+import { internalAction } from '../_generated/server'
+import { courseAction } from '../lib/access'
 import type { Id } from '../_generated/dataModel'
 import { renderAdminBroadcast } from './templates'
 import { usesCourseVariables } from './outbox'
@@ -212,7 +213,8 @@ export const sendAvailabilityEmail = internalAction({
  * link, and hard idempotency in finalizeDraftSend guarantees one sent email
  * per (application, kind) even under double-clicks or races.
  */
-export const sendDrafts = action({
+export const sendDrafts = courseAction({
+  level: 'edit',
   args: {
     opportunityId: v.id('orgOpportunities'),
     draftIds: v.array(v.id('emailOutbox')),
@@ -225,19 +227,11 @@ export const sendDrafts = action({
     gone: v.number(),
     failed: v.number(),
   }),
-  handler: async (ctx, { opportunityId, draftIds }) => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new Error('Not authenticated')
-
-    const isAdmin: boolean = await ctx.runQuery(
-      internal.emails.adminBroadcast.verifyOrgAdmin,
-      { userId: identity.subject, opportunityId },
-    )
-    if (!isAdmin) throw new Error('Admin access required')
-
+  target: ({ opportunityId }) => ({ opportunityId }),
+  handler: async (ctx, { opportunityId, draftIds }, { userId }) => {
     await ctx.runMutation(
       internal.emails.adminBroadcast.checkBroadcastRateLimit,
-      { userId: identity.subject },
+      { userId },
     )
 
     const drafts: Array<{
@@ -331,7 +325,7 @@ export const sendDrafts = action({
             recipientName: draft.recipientName,
             subject,
             html,
-            sentBy: identity.subject,
+            sentBy: userId,
           },
         )
         if (outcome === 'sent') sent++
@@ -345,7 +339,7 @@ export const sendDrafts = action({
           to: draft.recipientEmail,
           recipientName: draft.recipientName,
           subject,
-          sentBy: identity.subject,
+          sentBy: userId,
           error: err instanceof Error ? err.message : String(err),
         })
       }
