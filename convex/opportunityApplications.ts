@@ -1,10 +1,20 @@
 import { ConvexError, v } from 'convex/values'
-import { action, internalQuery, mutation, query } from './_generated/server'
-import { getUserId } from './lib/auth'
+import { internalQuery } from './_generated/server'
 import {
   hasOpportunityAccess,
   requireOpportunityAccess,
 } from './lib/courseAccess'
+import {
+  courseAction,
+  courseMutation,
+  courseQuery,
+  loadApplication,
+  loadOpportunity,
+  memberMutation,
+  memberQuery,
+  orgQuery,
+  publicMutation,
+} from './lib/access'
 import { resolveApplicantContact } from './lib/applicantContact'
 import {
   resolveApplicantDisplayName,
@@ -91,7 +101,7 @@ async function maybeAddPollRespondent(
 
 // Submit an application (idempotent — returns existing if already applied)
 // Auto-joins the org if the user is not already a member.
-export const submit = mutation({
+export const submit = memberMutation({
   args: {
     opportunityId: v.id('orgOpportunities'),
     responses: v.any(),
@@ -100,10 +110,11 @@ export const submit = mutation({
     availability: v.optional(v.record(v.string(), slotValueValidator)),
   },
   returns: v.id('opportunityApplications'),
-  handler: async (ctx, { opportunityId, responses, availability }) => {
-    const userId = await getUserId(ctx)
-    if (!userId) throw new ConvexError('Not authenticated')
-
+  handler: async (
+    ctx,
+    { opportunityId, responses, availability },
+    { userId },
+  ) => {
     await rateLimiter.limit(ctx, 'opportunityApplication', {
       key: userId,
       throws: true,
@@ -218,7 +229,7 @@ export const submit = mutation({
 // Submit an application as a guest (no auth required, idempotent by email+opportunity).
 // Guest submissions are not editable — returning users must sign up so the row
 // can be claimed and re-opened through the authenticated `submit` path.
-export const submitGuest = mutation({
+export const submitGuest = publicMutation({
   args: {
     opportunityId: v.id('orgOpportunities'),
     guestEmail: v.string(),
@@ -336,15 +347,13 @@ export const submitGuest = mutation({
 // Claim guest applications on login/signup (idempotent)
 // Finds guest apps matching the user's email, patches them with userId,
 // and auto-joins the user to each org.
-export const claimGuestApplications = mutation({
+export const claimGuestApplications = memberMutation({
   args: {},
   returns: v.number(),
-  handler: async (ctx): Promise<number> => {
+  signedOut: () => 0,
+  handler: async (ctx, _args, { userId }): Promise<number> => {
     const identity = await ctx.auth.getUserIdentity()
-    if (!identity) return 0
-
-    const userId = identity.subject
-    const email = identity.email?.trim().toLowerCase()
+    const email = identity?.email?.trim().toLowerCase()
     if (!email) return 0
 
     // Find all guest applications matching this email
@@ -398,7 +407,7 @@ export const claimGuestApplications = mutation({
 })
 
 // Check if current user already applied
-export const getMyApplication = query({
+export const getMyApplication = memberQuery({
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.union(
     v.object({
@@ -433,10 +442,8 @@ export const getMyApplication = query({
     }),
     v.null(),
   ),
-  handler: async (ctx, { opportunityId }) => {
-    const userId = await getUserId(ctx)
-    if (!userId) return null
-
+  signedOut: () => null,
+  handler: async (ctx, { opportunityId }, { userId }) => {
     return await ctx.db
       .query('opportunityApplications')
       .withIndex('by_user_and_opportunity', (q) =>
@@ -456,7 +463,7 @@ export const getMyApplication = query({
 // cleaned against the current form on its own, since the same key can carry a
 // different option list in an older edition. Returns null when nothing
 // carries over.
-export const getPreviousResponsesForOpportunity = query({
+export const getPreviousResponsesForOpportunity = memberQuery({
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.union(
     v.null(),
@@ -465,10 +472,8 @@ export const getPreviousResponsesForOpportunity = query({
       responses: v.any(),
     }),
   ),
-  handler: async (ctx, { opportunityId }) => {
-    const userId = await getUserId(ctx)
-    if (!userId) return null
-
+  signedOut: () => null,
+  handler: async (ctx, { opportunityId }, { userId }) => {
     const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
     if (!opportunity) return null
 
@@ -542,17 +547,16 @@ function isBlankAnswer(value: unknown): boolean {
 // Admin: where each Next edition link in this opportunity points. For an
 // application accepted automatically, the edition it was promised in; for a
 // `next_edition` application already honoured, the edition that accepted it.
-export const getNextEditionLinks = query({
+export const getNextEditionLinks = courseQuery({
+  level: 'read',
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.object({
     autoAcceptedFrom: v.record(v.string(), v.string()),
     acceptedIn: v.record(v.string(), v.string()),
   }),
+  load: (ctx, { opportunityId }) => loadOpportunity(ctx, opportunityId),
+  missing: () => ({ autoAcceptedFrom: {}, acceptedIn: {} }),
   handler: async (ctx, { opportunityId }) => {
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity) return { autoAcceptedFrom: {}, acceptedIn: {} }
-    await requireOpportunityAccess(ctx, opportunity, 'read')
-
     const applications = await ctx.db
       .query('opportunityApplications')
       .withIndex('by_opportunity_and_status', (q) =>
@@ -587,7 +591,8 @@ export const getNextEditionLinks = query({
 
 // Admin: people accepted automatically (Next edition) that this admin has not
 // been told about yet. Drives the one-time notice on the opportunity page.
-export const getUnseenAutoAccepted = query({
+export const getUnseenAutoAccepted = courseQuery({
+  level: 'read',
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.array(
     v.object({
@@ -596,11 +601,9 @@ export const getUnseenAutoAccepted = query({
       fromTitle: v.string(),
     }),
   ),
-  handler: async (ctx, { opportunityId }) => {
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity) return []
-    const userId = await requireOpportunityAccess(ctx, opportunity, 'read')
-
+  load: (ctx, { opportunityId }) => loadOpportunity(ctx, opportunityId),
+  missing: () => [],
+  handler: async (ctx, { opportunityId }, { userId }) => {
     const accepted = await ctx.db
       .query('opportunityApplications')
       .withIndex('by_opportunity_and_status', (q) =>
@@ -634,7 +637,9 @@ export const getUnseenAutoAccepted = query({
 })
 
 // Admin: dismiss the automatic-acceptance notice for these applications.
-export const markAutoAcceptedSeen = mutation({
+// Signed in, and each application is checked for a course read grant on its
+// own opportunity.
+export const markAutoAcceptedSeen = memberMutation({
   args: { applicationIds: v.array(v.id('opportunityApplications')) },
   returns: v.null(),
   handler: async (ctx, { applicationIds }) => {
@@ -658,7 +663,8 @@ export const markAutoAcceptedSeen = mutation({
 })
 
 // Admin: list all applications for an opportunity
-export const listByOpportunity = query({
+export const listByOpportunity = courseQuery({
+  level: 'read',
   args: {
     opportunityId: v.id('orgOpportunities'),
     statusFilter: v.optional(
@@ -710,18 +716,9 @@ export const listByOpportunity = query({
       email: v.string(),
     }),
   ),
-  handler: async (ctx, { opportunityId, statusFilter }) => {
-    const userId = await getUserId(ctx)
-    if (!userId) throw new ConvexError('Not authenticated')
-
-    // Get opportunity to check org
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-
-    if (!(await hasOpportunityAccess(ctx, opportunity, 'read'))) {
-      throw new ConvexError('Admin access required')
-    }
-
+  load: (ctx, { opportunityId }) => loadOpportunity(ctx, opportunityId),
+  missing: 'Opportunity not found',
+  handler: async (ctx, { opportunityId, statusFilter }, { opportunity }) => {
     const applications = statusFilter
       ? await ctx.db
           .query('opportunityApplications')
@@ -756,7 +753,8 @@ export const listByOpportunity = query({
 // (guestEmail → profile.email → legacy users table), so the recipient table in
 // the email composer matches who will really receive the broadcast. `email` is
 // '' when no address can be resolved for the applicant.
-export const listRecipientsByOpportunity = query({
+export const listRecipientsByOpportunity = courseQuery({
+  level: 'read',
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.array(
     v.object({
@@ -775,17 +773,9 @@ export const listRecipientsByOpportunity = query({
       email: v.string(),
     }),
   ),
-  handler: async (ctx, { opportunityId }) => {
-    const userId = await getUserId(ctx)
-    if (!userId) throw new ConvexError('Not authenticated')
-
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity) throw new ConvexError('Opportunity not found')
-
-    if (!(await hasOpportunityAccess(ctx, opportunity, 'read'))) {
-      throw new ConvexError('Admin access required')
-    }
-
+  load: (ctx, { opportunityId }) => loadOpportunity(ctx, opportunityId),
+  missing: 'Opportunity not found',
+  handler: async (ctx, { opportunityId }, { opportunity }) => {
     const formFields = opportunity.formFields as Array<FormField> | undefined
 
     const apps = await ctx.db
@@ -822,49 +812,26 @@ export const listRecipientsByOpportunity = query({
 })
 
 // Admin: get a single application by ID (includes full responses)
-export const getById = query({
+export const getById = courseQuery({
+  level: 'read',
   args: { applicationId: v.id('opportunityApplications') },
   returns: v.any(),
-  handler: async (ctx, { applicationId }) => {
-    const userId = await getUserId(ctx)
-    if (!userId) throw new ConvexError('Not authenticated')
-
-    const application = await ctx.db.get(
-      'opportunityApplications',
-      applicationId,
-    )
-    if (!application) return null
-
-    const ownOpportunity = await ctx.db.get(
-      'orgOpportunities',
-      application.opportunityId,
-    )
-    if (
-      !ownOpportunity ||
-      !(await hasOpportunityAccess(ctx, ownOpportunity, 'read'))
-    ) {
-      throw new ConvexError('Admin access required')
-    }
-
+  load: (ctx, { applicationId }) => loadApplication(ctx, applicationId),
+  missing: () => null,
+  handler: async (_ctx, _args, { application }) => {
     return application
   },
 })
 
 // Admin: get application count for an opportunity
-export const getApplicationCount = query({
+export const getApplicationCount = courseQuery({
+  level: 'read',
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.number(),
+  load: (ctx, { opportunityId }) => loadOpportunity(ctx, opportunityId),
+  missing: () => 0,
+  denied: () => 0,
   handler: async (ctx, { opportunityId }) => {
-    const userId = await getUserId(ctx)
-    if (!userId) throw new ConvexError('Not authenticated')
-
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity) return 0
-
-    if (!(await hasOpportunityAccess(ctx, opportunity, 'read'))) {
-      return 0
-    }
-
     const apps = await ctx.db
       .query('opportunityApplications')
       .withIndex('by_opportunity_and_status', (q) =>
@@ -877,21 +844,13 @@ export const getApplicationCount = query({
 })
 
 // Admin: count all applications for an org
-export const getOrgApplicationCount = query({
+export const getOrgApplicationCount = orgQuery({
+  role: 'admin',
   args: { orgId: v.id('organizations') },
   returns: v.number(),
+  org: ({ orgId }) => orgId,
+  denied: () => 0,
   handler: async (ctx, { orgId }) => {
-    const userId = await getUserId(ctx)
-    if (!userId) return 0
-
-    const membership = await ctx.db
-      .query('orgMemberships')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .filter((q) => q.eq(q.field('orgId'), orgId))
-      .first()
-
-    if (!membership || membership.role !== 'admin') return 0
-
     const apps = await ctx.db
       .query('opportunityApplications')
       .withIndex('by_org', (q) => q.eq('orgId', orgId))
@@ -902,7 +861,8 @@ export const getOrgApplicationCount = query({
 })
 
 // Admin: update application status (idempotent)
-export const updateStatus = mutation({
+export const updateStatus = courseMutation({
+  level: 'edit',
   args: {
     applicationId: v.id('opportunityApplications'),
     status: v.union(
@@ -918,27 +878,13 @@ export const updateStatus = mutation({
     reviewNotes: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, { applicationId, status, reviewNotes }) => {
-    const userId = await getUserId(ctx)
-    if (!userId) throw new ConvexError('Not authenticated')
-
-    const application = await ctx.db.get(
-      'opportunityApplications',
-      applicationId,
-    )
-    if (!application) throw new ConvexError('Application not found')
-
-    const ownOpportunity = await ctx.db.get(
-      'orgOpportunities',
-      application.opportunityId,
-    )
-    if (
-      !ownOpportunity ||
-      !(await hasOpportunityAccess(ctx, ownOpportunity, 'edit'))
-    ) {
-      throw new ConvexError('Edit access required')
-    }
-
+  load: (ctx, { applicationId }) => loadApplication(ctx, applicationId),
+  missing: 'Application not found',
+  handler: async (
+    ctx,
+    { applicationId, status, reviewNotes },
+    { application, opportunity, userId },
+  ) => {
     // Idempotent: skip if already at target status
     if (
       application.status === status &&
@@ -956,19 +902,13 @@ export const updateStatus = mutation({
 
     // The decision gets a pending draft of the opportunity's email for it.
     // Deciding never sends — admins review and send from the outbox.
-    const opportunity = await ctx.db.get(
-      'orgOpportunities',
-      application.opportunityId,
-    )
-    if (opportunity) {
-      const updated = await ctx.db.get('opportunityApplications', applicationId)
-      if (updated) {
-        await syncOutboxOnStatusChange(ctx, {
-          application: updated,
-          status,
-          opportunity,
-        })
-      }
+    const updated = await ctx.db.get('opportunityApplications', applicationId)
+    if (updated) {
+      await syncOutboxOnStatusChange(ctx, {
+        application: updated,
+        status,
+        opportunity,
+      })
     }
 
     return null
@@ -1022,7 +962,8 @@ export const listForExport = internalQuery({
 
 // Admin: export applications as CSV (returns string for client-side download)
 // Dynamically generates columns from the opportunity's formFields.
-export const exportApplications = action({
+export const exportApplications = courseAction({
+  level: 'read',
   args: {
     opportunityId: v.id('orgOpportunities'),
     // Same filter as listByOpportunity, so the CSV matches the table.
@@ -1040,17 +981,9 @@ export const exportApplications = action({
     ),
   },
   returns: v.string(),
+  target: ({ opportunityId }) => ({ opportunityId }),
   handler: async (ctx, { opportunityId, statusFilter }): Promise<string> => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new ConvexError('Not authenticated')
-
-    // Verify admin + fetch data in parallel
-    const [isAdmin, applications, opportunity] = await Promise.all([
-      ctx.runQuery(internal.emails.adminBroadcast.verifyOrgAdmin, {
-        userId: identity.subject,
-        opportunityId,
-        level: 'read',
-      }),
+    const [applications, opportunity] = await Promise.all([
       ctx.runQuery(internal.opportunityApplications.listForExport, {
         opportunityId,
       }) as Promise<
@@ -1068,7 +1001,6 @@ export const exportApplications = action({
         formFields?: Array<{ key: string; kind: string; label: string }>
       } | null>,
     ])
-    if (!isAdmin) throw new ConvexError('Admin access required')
 
     const escapeCSV = (val: string): string => {
       if (val.includes(',') || val.includes('"') || val.includes('\n')) {
