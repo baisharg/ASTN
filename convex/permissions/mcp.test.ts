@@ -1,4 +1,5 @@
-// The MCP server (convex/mcp/) lets admins in and nobody else. The HTTP layer
+// The MCP server (convex/mcp/) lets admins in and nobody else, and filters
+// course records by the caller's courses like the web does. The HTTP layer
 // verifies a Clerk OAuth token and passes the subject to internal functions,
 // which must check admin membership on every call. The token check itself
 // (convex/mcp/server.ts, jwt.ts) needs a real HTTP request and is not covered
@@ -24,8 +25,16 @@ declare const expect: <T>(actual: T) => {
   toEqual(expected: unknown): void
 }
 
-/** Admins of the org, and nobody else: not even a course editor. */
-const MCP_ALLOWED: Array<Actor> = ['owner', 'admin']
+/**
+ * Every admin of the org gets in, and nobody else. Admins with chosen
+ * courses only see their courses' records: see the filter tests below.
+ */
+const MCP_ALLOWED: Array<Actor> = [
+  'owner',
+  'admin',
+  'courseEditor',
+  'courseReader',
+]
 
 /** The subject the MCP handler would pass down; a logged-out caller has none. */
 const subjectOf = (actor: Actor) =>
@@ -281,4 +290,133 @@ describe('MCP org discovery and the shared admin check', () => {
       expect(result).toBe(allowed ? 'allowed' : 'Admin access required')
     })
   }
+})
+
+describe('MCP filters course records by the caller’s courses', () => {
+  const asUser = (actor: Actor, fx: Fixture) => ({
+    userId: subjectOf(actor),
+    orgSlug: fx.orgSlug,
+  })
+  const refusal = async (run: () => Promise<unknown>) =>
+    await run().then(
+      () => 'allowed',
+      (error: Error) => error.message,
+    )
+
+  test('opportunities: chosen courses list only theirs', async () => {
+    const t = newBackend()
+    const fx = await seed(t)
+    for (const [actor, expected] of [
+      ['admin', 5],
+      ['courseReader', 2],
+      ['courseEditor', 2],
+    ] as const) {
+      const rows = (await t.query(internal.mcp.platform.list, {
+        ...asUser(actor, fx),
+        resource: 'opportunities',
+      })) as Array<{ title: string; tags?: Array<string> }>
+      expect(rows.length).toBe(expected)
+      if (actor !== 'admin') {
+        expect(rows.every((r) => r.tags?.includes('TAIS Course'))).toBe(true)
+      }
+    }
+  })
+
+  test('applications, surveys and polls: only their courses', async () => {
+    const t = newBackend()
+    const fx = await seed(t)
+    const user = asUser('courseReader', fx)
+    const apps = (await t.query(internal.mcp.platform.list, {
+      ...user,
+      resource: 'applications',
+    })) as { records: Array<{ opportunityId: string }> }
+    const tais = new Set<string>([fx.opp.taisActive, fx.opp.taisDraft])
+    expect(apps.records.length > 0).toBe(true)
+    expect(apps.records.every((a) => tais.has(a.opportunityId))).toBe(true)
+    for (const resource of ['surveys', 'polls'] as const) {
+      const rows = (await t.query(internal.mcp.platform.list, {
+        ...user,
+        resource,
+      })) as Array<{ opportunityId: string }>
+      expect(rows.every((r) => tais.has(r.opportunityId))).toBe(true)
+    }
+    expect(
+      await refusal(() =>
+        t.query(internal.mcp.platform.list, {
+          ...user,
+          resource: 'applications',
+          opportunityId: fx.opp.govDraft,
+        }),
+      ),
+    ).toBe('opportunityId not found')
+  })
+
+  test('getOne hides other courses, and the "Other" column', async () => {
+    const t = newBackend()
+    const fx = await seed(t)
+    const user = asUser('courseEditor', fx)
+    for (const k of ['govDraft', 'plain'] as const) {
+      expect(
+        await t.query(internal.mcp.platform.getOne, {
+          ...user,
+          resource: 'opportunities',
+          id: fx.opp[k],
+        }),
+      ).toBe(null)
+    }
+    const own = (await t.query(internal.mcp.platform.getOne, {
+      ...user,
+      resource: 'opportunities',
+      id: fx.opp.taisDraft,
+    })) as { _id: string } | null
+    expect(own?._id).toBe(fx.opp.taisDraft)
+  })
+
+  test('writes need edit on the course', async () => {
+    const t = newBackend()
+    const fx = await seed(t)
+    const rename = (actor: Actor, k: 'taisDraft' | 'govDraft') =>
+      refusal(() =>
+        t.mutation(internal.mcp.platform.update, {
+          ...asUser(actor, fx),
+          resource: 'opportunities',
+          id: fx.opp[k],
+          fields: { title: 'Renamed' },
+        }),
+      )
+    expect(await rename('courseEditor', 'taisDraft')).toBe('allowed')
+    expect(await rename('courseReader', 'taisDraft')).toBe('Record not found')
+    expect(await rename('courseEditor', 'govDraft')).toBe('Record not found')
+    expect(
+      await refusal(() =>
+        t.mutation(internal.mcp.platform.update, {
+          ...asUser('courseEditor', fx),
+          resource: 'opportunities',
+          id: fx.opp.taisDraft,
+          fields: { tags: ['Governance'] },
+        }),
+      ),
+    ).toBe('You can only tag it with a course you can edit.')
+    expect(
+      await refusal(() =>
+        t.mutation(internal.mcp.platform.createOpportunity, {
+          ...asUser('courseEditor', fx),
+          title: 'New',
+          description: 'New',
+          type: 'course',
+          tags: ['Governance'],
+          formSource: 'custom',
+        }),
+      ),
+    ).toBe('You can only create opportunities in a course you edit.')
+  })
+
+  test('orgStats counts only their courses', async () => {
+    const t = newBackend()
+    const fx = await seed(t)
+    const stats = (await t.query(internal.mcp.platform.orgStats, {
+      ...asUser('courseReader', fx),
+    })) as { opportunities: { total: number } }
+    expect(stats.opportunities.total).toBe(2)
+  })
 })
