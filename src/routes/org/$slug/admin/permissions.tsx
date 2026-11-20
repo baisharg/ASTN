@@ -8,6 +8,17 @@ import { api } from '../../../../../convex/_generated/api'
 import type { Id } from '../../../../../convex/_generated/dataModel'
 import { COURSE_TAGS } from '../../../../../convex/lib/courses'
 import { AuthHeader } from '~/components/layout/auth-header'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '~/components/ui/alert-dialog'
+import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
 import {
   Card,
@@ -140,6 +151,9 @@ function CourseAccessEditor({
   const [pickerOpen, setPickerOpen] = useState(false)
   // People added from the picker before they have any course.
   const [added, setAdded] = useState<Array<string>>([])
+  // An admin about to be moved to chosen courses, waiting for confirmation.
+  const [pendingDemote, setPendingDemote] =
+    useState<Id<'orgMemberships'> | null>(null)
 
   if (members === undefined || grants === undefined) {
     return <Spinner className="size-6 mx-auto" />
@@ -193,6 +207,13 @@ function CourseAccessEditor({
   const scopeOf = (m: Member): Scope =>
     m.membership.isOwner === true ? 'owner' : isAdmin(m) ? 'all' : 'some'
 
+  // Chosen courses makes an admin a member, so it waits for confirmation.
+  const requestScope = (m: Member, next: Scope) => {
+    if (next === 'some' && isAdmin(m)) setPendingDemote(m.membership._id)
+    else changeScope(m, next)
+  }
+  const demoting = rows.find((m) => m.membership._id === pendingDemote)
+
   const changeScope = (m: Member, next: Scope) => {
     const id = m.membership._id
     const current = scopeOf(m)
@@ -208,7 +229,7 @@ function CourseAccessEditor({
         ? `${nameOf(m)} is now an owner.`
         : next === 'all'
           ? `${nameOf(m)} can now open every course.`
-          : `${nameOf(m)} now opens only the courses you choose.`,
+          : `${nameOf(m)} is now a member and opens only the courses you choose.`,
     )
   }
 
@@ -304,7 +325,17 @@ function CourseAccessEditor({
               {rows.map((m) => (
                 <tr key={m.membership._id}>
                   <td className="py-2 pr-3 min-w-40">
-                    <div>{nameOf(m)}</div>
+                    <div className="flex items-center gap-2">
+                      {nameOf(m)}
+                      {!isAdmin(m) && (
+                        <Badge
+                          variant="outline"
+                          title="Not an admin: no CRM, events, members or MCP"
+                        >
+                          member
+                        </Badge>
+                      )}
+                    </div>
                     {m.email && (
                       <div className="text-xs text-muted-foreground">
                         {m.email}
@@ -314,7 +345,7 @@ function CourseAccessEditor({
                   <td className="py-2 px-1">
                     <Select
                       value={scopeOf(m)}
-                      onValueChange={(value) => changeScope(m, value as Scope)}
+                      onValueChange={(value) => requestScope(m, value as Scope)}
                       // Your own access is changed by another owner, so a
                       // misclick can't lock you out of this page.
                       disabled={m.membership.userId === me?.userId}
@@ -379,6 +410,39 @@ function CourseAccessEditor({
           with all courses.
         </p>
       </CardContent>
+      <AlertDialog
+        open={demoting !== undefined}
+        onOpenChange={(open) => {
+          if (!open) setPendingDemote(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Remove {demoting ? nameOf(demoting) : ''} as admin?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Chosen courses makes them a member. They lose the CRM, events,
+              members, settings, canonicals and the MCP, and they open no
+              opportunity until you give them courses in this table.
+              {demoting?.membership.isOwner === true &&
+                ' They also stop being an owner.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (demoting) changeScope(demoting, 'some')
+                setPendingDemote(null)
+              }}
+            >
+              Make member
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   )
 }
