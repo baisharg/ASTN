@@ -1,9 +1,9 @@
 import { v } from 'convex/values'
-import { internalMutation, internalQuery, query } from './_generated/server'
+import { internalMutation, internalQuery } from './_generated/server'
 import type { QueryCtx } from './_generated/server'
 import type { Doc, Id } from './_generated/dataModel'
 import { resolveApplicantContact } from './lib/applicantContact'
-import { requireOpportunityAccess } from './lib/courseAccess'
+import { courseQuery, loadOpportunity, publicQuery } from './lib/access'
 import { courseOf } from './lib/courses'
 import { sanitizeResponsesForForm } from './lib/formFields'
 import type { FormField } from './lib/formFields'
@@ -60,13 +60,13 @@ export async function applyTargetFor(
 }
 
 /** The email composer: where {{apply_link}} goes from this opportunity. */
-export const getApplyTarget = query({
+export const getApplyTarget = courseQuery({
+  level: 'read',
   args: { opportunityId: v.id('orgOpportunities') },
   returns: v.union(v.null(), v.object({ title: v.string(), key: v.string() })),
-  handler: async (ctx, { opportunityId }) => {
-    const opportunity = await ctx.db.get('orgOpportunities', opportunityId)
-    if (!opportunity) return null
-    await requireOpportunityAccess(ctx, opportunity, 'read')
+  load: (ctx, { opportunityId }) => loadOpportunity(ctx, opportunityId),
+  missing: () => null,
+  handler: async (ctx, _args, { opportunity }) => {
     const target = await applyTargetFor(ctx, opportunity)
     return target
       ? { title: target.title, key: target.slug ?? target._id }
@@ -173,7 +173,7 @@ async function hasApplied(
  * purpose (the link is the credential, like a poll's personal link), and it
  * returns only what that person answered, never consents.
  */
-export const getInvite = query({
+export const getInvite = publicQuery({
   args: { token: v.string(), opportunityId: v.id('orgOpportunities') },
   returns: v.union(
     v.object({ state: v.literal('invalid') }),
