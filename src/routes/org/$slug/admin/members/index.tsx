@@ -645,7 +645,8 @@ function MemberCardMobile({
                 Cannot demote self
               </DropdownMenuItem>
             )}
-            {!isSelf && (
+            {/* Removing someone is an owner's call, like their access. */}
+            {!isSelf && canManageRoles && (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
@@ -884,7 +885,8 @@ function MemberRow({
                   Cannot demote self
                 </DropdownMenuItem>
               )}
-              {!isSelf && (
+              {/* Removing someone is an owner's call, like their access. */}
+              {!isSelf && canManageRoles && (
                 <>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem

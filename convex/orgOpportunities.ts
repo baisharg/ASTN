@@ -431,9 +431,9 @@ export const listAllByOrg = query({
     const userId = await getUserId(ctx)
     if (!userId) throw new ConvexError('Not authenticated')
 
-    // Admins see every opportunity; members with course grants see theirs.
+    // Admins with every course see all of them; with chosen courses, theirs.
     const access = await getOrgAccess(ctx, userId, orgId)
-    if (!access || (!access.isAdmin && access.courses.size === 0)) {
+    if (!access?.isAdmin) {
       throw new ConvexError('Admin access required')
     }
 
@@ -458,7 +458,7 @@ export const listAllByOrg = query({
       .collect()
 
     const all = [...active, ...closed, ...draft]
-    const visible = access.isAdmin
+    const visible = access.allCourses
       ? all
       : all.filter((o) => canAccessOpportunity(access, o, 'read'))
     return includeArchived

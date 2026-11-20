@@ -22,7 +22,7 @@ import { toast } from 'sonner'
 import { api } from '../../../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../../../convex/_generated/dataModel'
 import { canonicalFormProblems } from '../../../../../../../convex/lib/formFields'
-import { courseOf } from '../../../../../../../convex/lib/courses'
+import { OTHER_COURSE, courseOf } from '../../../../../../../convex/lib/courses'
 import type { FormField } from '../../../../../../../convex/lib/formFields'
 import type { FormSource } from '../../../../../../../convex/canonicalForms'
 import { weekdayShort } from '../../../../../../../convex/lib/availabilityWeek'
@@ -380,19 +380,20 @@ function OpportunityEditPage() {
     key: oppId,
   })
 
-  // Admins reach every opportunity; members with course access, the ones
-  // tagged with their courses.
+  // Admins with every course reach every opportunity; with chosen courses,
+  // the ones of their courses ("Other" for those without a course tag).
   const access = useQuery(
     api.courseAccess.myAccess,
     org ? { orgId: org._id } : 'skip',
   )
-  const isAdmin = access?.isAdmin ?? false
+  const allCourses = access?.allCourses ?? false
   const courseLevel = opportunity
-    ? access?.courses.find((c) => c.course === courseOf(opportunity.tags))
-        ?.level
+    ? access?.courses.find(
+        (c) => c.course === (courseOf(opportunity.tags) ?? OTHER_COURSE),
+      )?.level
     : undefined
-  const canView = isAdmin || courseLevel !== undefined
-  const canEdit = isAdmin || courseLevel === 'edit'
+  const canView = allCourses || courseLevel !== undefined
+  const canEdit = allCourses || courseLevel === 'edit'
 
   // Pending outbox drafts — shown as a count badge on the Emails tab.
   const outboxDrafts = useQuery(
@@ -612,8 +613,8 @@ function OpportunityEditPage() {
                   </span>
                 )}
               </TabsTrigger>
-              {/* Surveys stay with admins (not part of course access). */}
-              {isAdmin && (
+              {/* Surveys come with the course, like the rest of the page. */}
+              {canView && (
                 <TabsTrigger value="feedback" className="gap-2">
                   <ClipboardList className="size-4" />
                   Feedback
@@ -705,7 +706,7 @@ function OpportunityEditPage() {
             </TabsContent>
 
             <TabsContent value="feedback" className="mt-6">
-              {isAdmin && (
+              {canView && (
                 <SurveyTab
                   opportunityId={opportunity._id}
                   slug={slug}

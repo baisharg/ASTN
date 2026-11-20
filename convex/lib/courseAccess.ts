@@ -1,24 +1,30 @@
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc, Id } from '../_generated/dataModel'
 import { getUserId } from './auth'
-import { courseOf } from './courses'
+import { OTHER_COURSE, courseOf } from './courses'
 import { logPermissionChange } from './permissionLog'
-import type { CourseTag } from './courses'
 
 /**
- * Per-course access for team members who are not org admins. Admins see and
- * do everything; anyone else sees an opportunity only through a grant for its
- * course tag: "read" shows the opportunity, its applications, answers and
- * availability; "edit" also lets them change statuses, emails, polls and
- * custom forms. Creating, duplicating, archiving or deleting opportunities,
- * and everything that is not a course (CRM, events, members, canonical
- * forms, settings), stays with admins.
+ * Who opens which courses. Only org admins reach courses; members don't.
+ * - Owners and admins with all courses (`courseScope` absent or 'all') open
+ *   every course, including "Other" (opportunities without a course tag) and
+ *   courses added later.
+ * - Admins with chosen courses (`courseScope: 'chosen'`) open only the
+ *   courses in their `courseAccess` grants: "read" shows the opportunity,
+ *   its applications, answers, availability and surveys; "edit" also lets
+ *   them change statuses, emails, polls, surveys and forms.
+ * Everything that is not a course (CRM, events, members, settings, the MCP)
+ * is the same for every admin. Canonicals and permissions are for owners.
  */
 export type AccessLevel = 'read' | 'edit'
 
 export interface OrgAccess {
   isAdmin: boolean
-  courses: Map<CourseTag, AccessLevel>
+  isOwner: boolean
+  /** Opens every course, now and later. */
+  allCourses: boolean
+  /** The granted courses, when `allCourses` is false. */
+  courses: Map<string, AccessLevel>
 }
 
 export async function getOrgAccess(
@@ -33,17 +39,35 @@ export async function getOrgAccess(
     )
     .first()
   if (!membership) return null
-  const courses = new Map<CourseTag, AccessLevel>()
-  if (membership.role !== 'admin') {
+  return await accessOf(ctx, membership)
+}
+
+/** The access a membership gives. */
+export async function accessOf(
+  ctx: QueryCtx | MutationCtx,
+  membership: Doc<'orgMemberships'>,
+): Promise<OrgAccess> {
+  const courses = new Map<string, AccessLevel>()
+  const isAdmin = membership.role === 'admin'
+  const isOwner = isAdmin && membership.isOwner === true
+  const allCourses = isOwner || (isAdmin && membership.courseScope !== 'chosen')
+  if (isAdmin && !allCourses) {
     const grants = await ctx.db
       .query('courseAccess')
       .withIndex('by_org_and_user', (q) =>
-        q.eq('orgId', orgId).eq('userId', userId),
+        q.eq('orgId', membership.orgId).eq('userId', membership.userId),
       )
       .collect()
-    for (const g of grants) courses.set(g.course as CourseTag, g.level)
+    for (const g of grants) courses.set(g.course, g.level)
   }
-  return { isAdmin: membership.role === 'admin', courses }
+  return { isAdmin, isOwner, allCourses, courses }
+}
+
+/** The access column an opportunity falls under: its course, or "Other". */
+export function accessCourseOf(
+  tags: ReadonlyArray<string> | undefined,
+): string {
+  return courseOf(tags) ?? OTHER_COURSE
 }
 
 /** Whether `access` reaches `opportunity` at `level`. */
@@ -52,17 +76,15 @@ export function canAccessOpportunity(
   opportunity: Pick<Doc<'orgOpportunities'>, 'tags'>,
   level: AccessLevel,
 ): boolean {
-  if (!access) return false
-  if (access.isAdmin) return true
-  const course = courseOf(opportunity.tags)
-  if (!course) return false
-  const granted = access.courses.get(course)
+  if (!access?.isAdmin) return false
+  if (access.allCourses) return true
+  const granted = access.courses.get(accessCourseOf(opportunity.tags))
   return granted === 'edit' || (granted === 'read' && level === 'read')
 }
 
 /**
- * Require the current user to reach `opportunity` at `level`: an org admin,
- * or a member with a grant for its course. Returns the user id.
+ * Require the current user to reach `opportunity` at `level`: an admin with
+ * every course or with a grant for its course. Returns the user id.
  */
 export async function requireOpportunityAccess(
   ctx: QueryCtx | MutationCtx,

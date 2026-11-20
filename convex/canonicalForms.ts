@@ -3,6 +3,7 @@ import { mutation, query } from './_generated/server'
 import type { MutationCtx } from './_generated/server'
 import type { Id } from './_generated/dataModel'
 import { requireOrgAdmin } from './lib/auth'
+import { requirePermissionManager } from './lib/courseAccess'
 import {
   assertFormFieldsShape,
   canonicalFormProblems,
@@ -78,7 +79,8 @@ export const save = mutation({
   },
   returns: v.null(),
   handler: async (ctx, { orgId, kind, formFields, title, description }) => {
-    const userId = await requireOrgAdmin(ctx, orgId)
+    // Canonicals are the org's defaults for every course: owners edit them.
+    const userId = await requirePermissionManager(ctx, orgId)
     // A survey asks no identity questions: its personal link says who answered.
     const fields = isFeedback(kind)
       ? cleanSurveyForm(formFields)

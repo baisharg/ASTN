@@ -3,25 +3,29 @@ import { internalMutation, mutation, query } from './_generated/server'
 import { getUserId } from './lib/auth'
 import {
   canManagePermissions,
+  deleteCourseGrants,
   getOrgAccess,
   requirePermissionManager,
 } from './lib/courseAccess'
-import { COURSE_TAGS } from './lib/courses'
+import { ACCESS_COURSES } from './lib/courses'
 import { logPermissionChange } from './lib/permissionLog'
 
 const levelValidator = v.union(v.literal('read'), v.literal('edit'))
 
 /**
- * What the current user can reach in the org: everything as an admin, or the
- * courses they were granted. Null when they are not a member.
+ * What the current user can reach in the org: whether they are an admin,
+ * whether they open every course, and otherwise their granted courses.
+ * Null when they are not a member.
  */
 export const myAccess = query({
   args: { orgId: v.id('organizations') },
   returns: v.union(
     v.object({
       isAdmin: v.boolean(),
+      isOwner: v.boolean(),
       // Owners manage roles and course access (any admin while there is none).
       canManage: v.boolean(),
+      allCourses: v.boolean(),
       courses: v.array(v.object({ course: v.string(), level: levelValidator })),
     }),
     v.null(),
@@ -33,7 +37,9 @@ export const myAccess = query({
     if (!access) return null
     return {
       isAdmin: access.isAdmin,
+      isOwner: access.isOwner,
       canManage: await canManagePermissions(ctx, userId, orgId),
+      allCourses: access.allCourses,
       courses: [...access.courses].map(([course, level]) => ({
         course,
         level,
@@ -42,7 +48,7 @@ export const myAccess = query({
   },
 })
 
-/** Every course grant of the org's current non-admin members (owners). */
+/** Every course grant of the org's admins with chosen courses (owners). */
 export const list = query({
   args: { orgId: v.id('organizations') },
   returns: v.array(
@@ -64,12 +70,19 @@ export const list = query({
       .query('orgMemberships')
       .withIndex('by_org', (q) => q.eq('orgId', orgId))
       .collect()
-    const nonAdmins = new Set(
-      members.filter((m) => m.role !== 'admin').map((m) => m.userId),
+    const chosen = new Set(
+      members
+        .filter(
+          (m) =>
+            m.role === 'admin' &&
+            m.isOwner !== true &&
+            m.courseScope === 'chosen',
+        )
+        .map((m) => m.userId),
     )
     return await Promise.all(
       grants
-        .filter((g) => nonAdmins.has(g.userId))
+        .filter((g) => chosen.has(g.userId))
         .map(async (g) => {
           const profile = await ctx.db
             .query('profiles')
@@ -88,8 +101,55 @@ export const list = query({
 })
 
 /**
- * Give a member read or edit access to one course, change it, or take it
- * away (`level: null`). Owners only; admins need no grants.
+ * Whether an admin opens every course (`all`) or only the ones granted to
+ * them (`chosen`). Owners only; owners themselves always open every course.
+ * It never changes whether someone is an admin: that is done in Members.
+ * Moving to `all` drops their grants, so moving back starts from none.
+ */
+export const setScope = mutation({
+  args: {
+    orgId: v.id('organizations'),
+    membershipId: v.id('orgMemberships'),
+    scope: v.union(v.literal('all'), v.literal('chosen')),
+  },
+  returns: v.null(),
+  handler: async (ctx, { orgId, membershipId, scope }) => {
+    const managerId = await requirePermissionManager(ctx, orgId)
+    const target = await ctx.db.get('orgMemberships', membershipId)
+    if (!target || target.orgId !== orgId) {
+      throw new ConvexError('Membership not found')
+    }
+    if (target.role !== 'admin') {
+      throw new ConvexError('Make them an admin first, in Members.')
+    }
+    if (target.isOwner === true) {
+      throw new ConvexError('Owners open every course.')
+    }
+    const via = 'courseAccess:setScope'
+    const from = target.courseScope === 'chosen' ? 'chosen' : 'all'
+    await ctx.db.patch('orgMemberships', membershipId, {
+      courseScope: scope === 'chosen' ? 'chosen' : undefined,
+    })
+    await logPermissionChange(ctx, {
+      orgId,
+      userId: target.userId,
+      by: managerId,
+      change: 'scope',
+      from,
+      to: scope,
+      via,
+    })
+    if (scope === 'all') {
+      await deleteCourseGrants(ctx, orgId, target.userId, managerId, via)
+    }
+    return null
+  },
+})
+
+/**
+ * Give an admin with chosen courses read or edit access to one course
+ * ("Other" covers opportunities without a course tag), change it, or take
+ * it away (`level: null`). Owners only.
  */
 export const setAccess = mutation({
   args: {
@@ -101,7 +161,7 @@ export const setAccess = mutation({
   returns: v.null(),
   handler: async (ctx, { orgId, userId, course, level }) => {
     const adminId = await requirePermissionManager(ctx, orgId)
-    if (!(COURSE_TAGS as ReadonlyArray<string>).includes(course)) {
+    if (!ACCESS_COURSES.includes(course)) {
       throw new ConvexError(`Unknown course "${course}".`)
     }
     const membership = await ctx.db
@@ -113,8 +173,13 @@ export const setAccess = mutation({
     if (!membership) {
       throw new ConvexError('That person is not a member of the organization.')
     }
-    if (membership.role === 'admin') {
-      throw new ConvexError('Admins already reach every course.')
+    if (membership.role !== 'admin') {
+      throw new ConvexError('Make them an admin first, in Members.')
+    }
+    if (membership.isOwner === true || membership.courseScope !== 'chosen') {
+      throw new ConvexError(
+        'They open every course. Switch them to chosen courses first.',
+      )
     }
     const existing = (
       await ctx.db
@@ -157,8 +222,8 @@ export const setAccess = mutation({
 })
 
 /**
- * Make an admin an owner, or take it away. Owners manage roles and course
- * access. Owners only (any admin while the org has none); the last owner
+ * Make an admin an owner, or take it away. Owners open every course, edit
+ * the canonicals and manage roles and course access. Owners only (any admin while the org has none); the last owner
  * cannot step down, so the org is never left without one by accident.
  */
 export const setOwner = mutation({
@@ -193,8 +258,11 @@ export const setOwner = mutation({
         throw new ConvexError('Make someone else an owner first.')
       }
     }
+    const via = 'courseAccess:setOwner'
+    // An owner opens every course, and keeps doing so if they step down.
     await ctx.db.patch('orgMemberships', membershipId, {
       isOwner: owner || undefined,
+      ...(owner ? { courseScope: undefined } : {}),
     })
     await logPermissionChange(ctx, {
       orgId,
@@ -203,8 +271,20 @@ export const setOwner = mutation({
       change: 'owner',
       from: target.isOwner === true ? 'yes' : 'no',
       to: owner ? 'yes' : 'no',
-      via: 'courseAccess:setOwner',
+      via,
     })
+    if (owner && target.courseScope === 'chosen') {
+      await logPermissionChange(ctx, {
+        orgId,
+        userId: target.userId,
+        by: managerId,
+        change: 'scope',
+        from: 'chosen',
+        to: 'all',
+        via,
+      })
+      await deleteCourseGrants(ctx, orgId, target.userId, managerId, via)
+    }
     return null
   },
 })

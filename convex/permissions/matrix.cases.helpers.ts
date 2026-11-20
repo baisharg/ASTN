@@ -2,11 +2,14 @@
 // access is intended; a test fails when behaviour and this table disagree.
 //
 // The intended design is the comment at the top of convex/lib/courseAccess.ts:
-//  - org admins do everything; the owner also manages roles and course access;
-//  - a "read" grant shows a course's opportunities, applications, answers and
+//  - every admin has the org's tools (CRM, events, members, settings);
+//  - admins with all courses (and owners) open every course; admins with
+//    chosen courses (courseEditor, courseReader) open only their grants:
+//    "read" shows a course's opportunities, applications, answers and
 //    availability; "edit" also changes statuses, emails, polls and forms;
-//  - everything that is not a course (CRM, events, members, canonicals,
-//    settings) is admin-only.
+//  - owners also edit the canonicals, manage roles and course access and
+//    remove people from the org;
+//  - members reach no course.
 import { getFunctionName } from 'convex/server'
 import type { FunctionReference } from 'convex/server'
 import { api } from '../_generated/api'
@@ -19,6 +22,7 @@ export type Gate =
   | 'read'
   | 'edit'
   | 'admin'
+  | 'allCourses'
   | 'owner'
   | 'platform'
   | 'anyOrgAdmin'
@@ -30,13 +34,17 @@ export const TARGET_OPP: Record<Target, OppKey> = {
   plain: 'plain',
 }
 
+/** Admins with every course. */
 const ADMINS: Array<Actor> = ['owner', 'admin']
+/** Every admin, whatever their courses. */
+const ALL_ADMINS: Array<Actor> = [...ADMINS, 'courseEditor', 'courseReader']
 const TAIS_READERS: Array<Actor> = [...ADMINS, 'courseEditor', 'courseReader']
 const TAIS_EDITORS: Array<Actor> = [...ADMINS, 'courseEditor']
 
 /**
  * Who gets in, written out. 'tais' is the course the editor and the reader
- * were granted; 'gov' and 'plain' (no course tag) are reachable by admins only.
+ * were granted; 'gov' and 'plain' (no course tag, the "Other" column) are
+ * reachable only by admins with every course.
  */
 export const ALLOWED: Record<string, Array<Actor>> = {
   'read:tais': TAIS_READERS,
@@ -45,11 +53,12 @@ export const ALLOWED: Record<string, Array<Actor>> = {
   'edit:gov': ADMINS,
   'read:plain': ADMINS,
   'edit:plain': ADMINS,
-  admin: ADMINS,
+  admin: ALL_ADMINS,
+  allCourses: ADMINS,
   owner: ['owner'],
   platform: ['platformAdmin'],
   // What requireAnyOrgAdmin lets in: an admin of any org at all.
-  anyOrgAdmin: [...ADMINS, 'otherOrgAdmin'],
+  anyOrgAdmin: [...ALL_ADMINS, 'otherOrgAdmin'],
 }
 
 export interface Case {
@@ -166,9 +175,10 @@ const opportunities: Array<Case> = [
     id: fx.opp[k],
     title: 'Renamed',
   })),
+  // Moving it to a course needs edit on both: the editor has TAIS only.
   m(
     api.orgOpportunities.update,
-    'admin',
+    'allCourses',
     (fx, k) => ({ id: fx.opp[k], tags: ['Governance'] }),
     {
       name: 'orgOpportunities:update (retag to another course)',
@@ -450,19 +460,39 @@ const emails: Array<Case> = [
   q(api.emails.templateLibrary.getCanonical, 'admin', (fx) => ({
     orgId: fx.orgId,
   })),
-  m(api.emails.templateLibrary.saveCanonicalEmail, 'admin', (fx) => ({
-    orgId: fx.orgId,
-    kind: 'accepted',
-    subject: 'Hola',
-    markdownBody: 'Hola',
-    enabled: true,
-    includePollLink: false,
-    includeSurveyLink: false,
-  })),
-  m(api.emails.templateLibrary.saveFooter, 'admin', (fx) => ({
-    orgId: fx.orgId,
-    footer: 'Footer',
-  })),
+  m(
+    api.emails.templateLibrary.saveCanonicalEmail,
+    'admin',
+    (fx) => ({
+      orgId: fx.orgId,
+      kind: 'accepted',
+      subject: 'Hola',
+      markdownBody: 'Hola',
+      enabled: true,
+      includePollLink: false,
+      includeSurveyLink: false,
+    }),
+    {
+      wanted: {
+        gate: 'owner',
+        note: 'canonicals are for owners (issue #57); moves with the access-levels change to templateLibrary',
+      },
+    },
+  ),
+  m(
+    api.emails.templateLibrary.saveFooter,
+    'admin',
+    (fx) => ({
+      orgId: fx.orgId,
+      footer: 'Footer',
+    }),
+    {
+      wanted: {
+        gate: 'owner',
+        note: 'the canonical footer is for owners (issue #57); moves with the access-levels change to templateLibrary',
+      },
+    },
+  ),
 ]
 
 // ── Canonical forms ─────────────────────────────────────────────────────────
@@ -477,7 +507,7 @@ const canonicals: Array<Case> = [
     }),
     { silent: true },
   ),
-  m(api.canonicalForms.save, 'admin', (fx) => ({
+  m(api.canonicalForms.save, 'owner', (fx) => ({
     orgId: fx.orgId,
     kind: 'course',
     formFields: FORM,
@@ -738,9 +768,14 @@ const members: Array<Case> = [
   q(api.courseAccess.list, 'owner', org),
   m(api.courseAccess.setAccess, 'owner', (fx) => ({
     orgId: fx.orgId,
-    userId: 'user_member',
+    userId: 'user_course_reader',
     course: 'Governance',
     level: 'read',
+  })),
+  m(api.courseAccess.setScope, 'owner', (fx) => ({
+    orgId: fx.orgId,
+    membershipId: fx.memberships.admin,
+    scope: 'chosen',
   })),
   m(api.courseAccess.setOwner, 'owner', (fx) => ({
     orgId: fx.orgId,
@@ -755,7 +790,7 @@ const members: Array<Case> = [
     orgId: fx.orgId,
     membershipId: fx.memberships.admin,
   })),
-  m(api.orgs.admin.removeMember, 'admin', (fx) => ({
+  m(api.orgs.admin.removeMember, 'owner', (fx) => ({
     orgId: fx.orgId,
     membershipId: fx.memberships.member,
   })),

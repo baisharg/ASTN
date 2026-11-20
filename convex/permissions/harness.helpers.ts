@@ -158,21 +158,32 @@ export async function seed(t: Backend): Promise<Fixture> {
     const member = async (
       userId: string,
       role: 'admin' | 'member',
-      extra: { isOwner?: boolean; org?: Id<'organizations'> } = {},
+      extra: {
+        isOwner?: boolean
+        courseScope?: 'chosen'
+        org?: Id<'organizations'>
+      } = {},
     ) =>
       await ctx.db.insert('orgMemberships', {
         userId,
         orgId: extra.org ?? orgId,
         role,
         isOwner: extra.isOwner,
+        courseScope: extra.courseScope,
         directoryVisibility: 'visible',
         joinedAt: now,
       })
+    // courseEditor and courseReader are admins with chosen courses: edit and
+    // read on TAIS Course, nothing on Governance or Other.
     const memberships = {
       owner: await member(SUBJECT.owner, 'admin', { isOwner: true }),
       admin: await member(SUBJECT.admin, 'admin'),
-      courseEditor: await member(SUBJECT.courseEditor, 'member'),
-      courseReader: await member(SUBJECT.courseReader, 'member'),
+      courseEditor: await member(SUBJECT.courseEditor, 'admin', {
+        courseScope: 'chosen',
+      }),
+      courseReader: await member(SUBJECT.courseReader, 'admin', {
+        courseScope: 'chosen',
+      }),
       member: await member(SUBJECT.member, 'member'),
     }
     await member(SUBJECT.otherOrgAdmin, 'admin', {

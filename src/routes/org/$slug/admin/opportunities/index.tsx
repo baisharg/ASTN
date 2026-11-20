@@ -19,7 +19,11 @@ import {
 } from 'lucide-react'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
-import { COURSE_TAGS, courseOf } from '../../../../../../convex/lib/courses'
+import {
+  COURSE_TAGS,
+  OTHER_COURSE,
+  courseOf,
+} from '../../../../../../convex/lib/courses'
 import { OpportunityFormDialog } from '~/components/opportunities/OpportunityFormDialog'
 import { AuthHeader } from '~/components/layout/auth-header'
 import { Card } from '~/components/ui/card'
@@ -129,19 +133,21 @@ function AdminOpportunitiesPage() {
     api.orgs.membership.getMembership,
     org ? { orgId: org._id } : 'skip',
   )
-  // Admins see every opportunity; members with course access, theirs.
+  // Admins with every course see all opportunities; with chosen courses,
+  // theirs ("Other" for those without a course tag).
   const access = useQuery(
     api.courseAccess.myAccess,
     org ? { orgId: org._id } : 'skip',
   )
   const isAdmin = access?.isAdmin ?? false
-  const canView = isAdmin || (access?.courses.length ?? 0) > 0
-  // Course editors create, duplicate and archive within their courses.
+  const allCourses = access?.allCourses ?? false
+  const canView = isAdmin
+  // Admins create, duplicate and archive within the courses they edit.
   const editCourses = (access?.courses ?? [])
     .filter((c) => c.level === 'edit')
     .map((c): string => c.course)
   const canEditOpp = (tags: Array<string> | undefined) =>
-    isAdmin || editCourses.includes(courseOf(tags) ?? '')
+    allCourses || editCourses.includes(courseOf(tags) ?? OTHER_COURSE)
   const opportunities = useQuery(
     api.orgOpportunities.listAllByOrg,
     org && canView ? { orgId: org._id, includeArchived: true } : 'skip',
@@ -335,7 +341,7 @@ function AdminOpportunitiesPage() {
                 forms
               </p>
             </div>
-            {(isAdmin || editCourses.length > 0) && (
+            {(allCourses || editCourses.length > 0) && (
               <Button onClick={() => setDialogOpen(true)}>
                 <Plus className="size-4 mr-2" />
                 New Opportunity
@@ -745,8 +751,12 @@ function AdminOpportunitiesPage() {
             onOpenChange={setDialogOpen}
             orgId={org._id}
             slug={slug}
-            isAdmin={isAdmin}
-            courses={isAdmin ? COURSE_TAGS : editCourses}
+            isAdmin={allCourses || editCourses.includes(OTHER_COURSE)}
+            courses={
+              allCourses
+                ? COURSE_TAGS
+                : editCourses.filter((c) => c !== OTHER_COURSE)
+            }
           />
         </div>
       </main>

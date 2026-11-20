@@ -3,6 +3,8 @@ import { internalMutation, internalQuery } from '../_generated/server'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import type { Doc, Id } from '../_generated/dataModel'
 import { requireOrgAdminFor } from '../lib/auth'
+import { canAccessOpportunity, getOrgAccess } from '../lib/courseAccess'
+import type { AccessLevel } from '../lib/courseAccess'
 import { syncOutboxOnStatusChange } from '../emails/outbox'
 import {
   assertFormFieldsShape,
@@ -200,6 +202,69 @@ async function resolveOrgForAdmin(
   return org
 }
 
+/**
+ * The caller's course access in the org, for the course resources
+ * (opportunities and everything hanging off one). Admins with chosen
+ * courses get the same filter as on the web.
+ */
+async function courseGate(
+  ctx: QueryCtx | MutationCtx,
+  userId: string,
+  orgId: Id<'organizations'>,
+) {
+  const access = await getOrgAccess(ctx, userId, orgId)
+  const opps = new Map<string, Doc<'orgOpportunities'> | null>()
+  const can = (
+    opportunity: Pick<Doc<'orgOpportunities'>, 'tags'>,
+    level: AccessLevel = 'read',
+  ) => canAccessOpportunity(access, opportunity, level)
+  const canId = async (
+    opportunityId: Id<'orgOpportunities'>,
+    level: AccessLevel = 'read',
+  ) => {
+    if (!opps.has(opportunityId)) {
+      opps.set(opportunityId, await ctx.db.get(opportunityId))
+    }
+    const opportunity = opps.get(opportunityId)
+    return !!opportunity && can(opportunity, level)
+  }
+  return { all: access?.allCourses === true, can, canId }
+}
+
+type CourseGate = Awaited<ReturnType<typeof courseGate>>
+
+/** The opportunity a course resource belongs to; undefined for the others. */
+function opportunityIdOf(
+  resource: string,
+  doc: any,
+): Id<'orgOpportunities'> | undefined {
+  if (resource === 'opportunities') return doc._id
+  if (
+    resource === 'applications' ||
+    resource === 'surveys' ||
+    resource === 'polls' ||
+    resource === 'outbox' ||
+    resource === 'email_log'
+  ) {
+    return doc.opportunityId
+  }
+  return undefined
+}
+
+/** Throws "Record not found" unless the caller reaches the record's course. */
+async function assertCourse(
+  gate: CourseGate,
+  resource: string,
+  doc: any,
+  level: AccessLevel,
+): Promise<void> {
+  const opportunityId = opportunityIdOf(resource, doc)
+  if (opportunityId === undefined) return
+  if (!(await gate.canId(opportunityId, level))) {
+    throw new Error('Record not found')
+  }
+}
+
 async function adminMembership(
   ctx: QueryCtx | MutationCtx,
   userId: string,
@@ -301,6 +366,7 @@ export const list = internalQuery({
     const org = await resolveOrgForAdmin(ctx, args.userId, args.orgSlug)
     const limit = clampLimit(args.limit)
     const orgId = org._id
+    const gate = await courseGate(ctx, args.userId, orgId)
 
     switch (args.resource) {
       case 'members': {
@@ -331,7 +397,8 @@ export const list = internalQuery({
               ? qq.eq('orgId', orgId).eq('status', args.status as any)
               : qq.eq('orgId', orgId),
           )
-        return await q.take(limit)
+        if (gate.all) return await q.take(limit)
+        return (await q.collect()).filter((o) => gate.can(o)).slice(0, limit)
       }
 
       case 'applications': {
@@ -343,7 +410,7 @@ export const list = internalQuery({
           )
           if (!oppId) throw new Error('opportunityId not found')
           const opp = await ctx.db.get(oppId)
-          if (!opp || opp.orgId !== orgId)
+          if (!opp || opp.orgId !== orgId || !gate.can(opp))
             throw new Error('opportunityId not found')
           query = ctx.db
             .query('opportunityApplications')
@@ -364,8 +431,19 @@ export const list = internalQuery({
           numItems: limit,
           cursor: args.cursor ?? null,
         })
+        // With chosen courses a page can come back short: keep following
+        // nextCursor until it is null.
+        const records = gate.all
+          ? page.page
+          : (
+              await Promise.all(
+                page.page.map(async (a) =>
+                  (await gate.canId(a.opportunityId)) ? a : null,
+                ),
+              )
+            ).filter((a) => a !== null)
         return {
-          records: page.page,
+          records,
           nextCursor: page.isDone ? null : page.continueCursor,
         }
       }
@@ -436,10 +514,16 @@ export const list = internalQuery({
       }
 
       case 'surveys': {
-        return await ctx.db
+        const q = ctx.db
           .query('feedbackSurveys')
           .withIndex('by_org', (qq) => qq.eq('orgId', orgId))
-          .take(limit)
+        if (gate.all) return await q.take(limit)
+        const visible: Array<Doc<'feedbackSurveys'>> = []
+        for (const survey of await q.collect()) {
+          if (await gate.canId(survey.opportunityId)) visible.push(survey)
+          if (visible.length >= limit) break
+        }
+        return visible
       }
 
       case 'polls': {
@@ -450,7 +534,7 @@ export const list = internalQuery({
           )
           if (!oppId) throw new Error('opportunityId not found')
           const opp = await ctx.db.get(oppId)
-          if (!opp || opp.orgId !== orgId)
+          if (!opp || opp.orgId !== orgId || !gate.can(opp))
             throw new Error('opportunityId not found')
           return await ctx.db
             .query('availabilityPolls')
@@ -463,7 +547,7 @@ export const list = internalQuery({
           .withIndex('by_org_and_status', (qq) => qq.eq('orgId', orgId))
           .collect()
         const polls: Array<Doc<'availabilityPolls'>> = []
-        for (const opp of opps) {
+        for (const opp of opps.filter((o) => gate.can(o))) {
           const p = await ctx.db
             .query('availabilityPolls')
             .withIndex('by_opportunity', (qq) =>
@@ -536,7 +620,7 @@ export const list = internalQuery({
         const oppId = ctx.db.normalizeId('orgOpportunities', args.opportunityId)
         if (!oppId) throw new Error('opportunityId not found')
         const opp = await ctx.db.get(oppId)
-        if (!opp || opp.orgId !== orgId)
+        if (!opp || opp.orgId !== orgId || !gate.can(opp))
           throw new Error('opportunityId not found')
         if (args.resource === 'outbox') {
           return await ctx.db
@@ -731,6 +815,11 @@ export const getOne = internalQuery({
     const doc = await ctx.db.get(id)
     if (!doc) return null
     await assertInOrg(ctx, args.resource, doc, org._id)
+    const opportunityId = opportunityIdOf(args.resource, doc)
+    if (opportunityId !== undefined) {
+      const gate = await courseGate(ctx, args.userId, org._id)
+      if (!(await gate.canId(opportunityId))) return null
+    }
     return doc
   },
 })
@@ -755,6 +844,16 @@ export const update = internalMutation({
     const doc = await ctx.db.get(id)
     if (!doc) throw new Error('Record not found')
     await assertInOrg(ctx, args.resource, doc, org._id)
+    const gate = await courseGate(ctx, args.userId, org._id)
+    await assertCourse(gate, args.resource, doc, 'edit')
+    // Moving an opportunity to another course needs edit on that one too.
+    if (
+      args.resource === 'opportunities' &&
+      Array.isArray(args.fields?.tags) &&
+      !gate.can({ tags: args.fields.tags }, 'edit')
+    ) {
+      throw new Error('You can only tag it with a course you can edit.')
+    }
 
     const allowed = UPDATE_FIELDS[args.resource]
     const f = (
@@ -1087,14 +1186,21 @@ export const orgStats = internalQuery({
       .query('orgMemberships')
       .withIndex('by_org', (q) => q.eq('orgId', orgId))
       .collect()
-    const opportunities = await ctx.db
-      .query('orgOpportunities')
-      .withIndex('by_org_and_status', (q) => q.eq('orgId', orgId))
-      .collect()
-    const applications = await ctx.db
-      .query('opportunityApplications')
-      .withIndex('by_org', (q) => q.eq('orgId', orgId))
-      .collect()
+    // Opportunity and application counts cover only the caller's courses.
+    const gate = await courseGate(ctx, args.userId, orgId)
+    const opportunities = (
+      await ctx.db
+        .query('orgOpportunities')
+        .withIndex('by_org_and_status', (q) => q.eq('orgId', orgId))
+        .collect()
+    ).filter((o) => gate.can(o))
+    const visibleIds = new Set<string>(opportunities.map((o) => o._id))
+    const applications = (
+      await ctx.db
+        .query('opportunityApplications')
+        .withIndex('by_org', (q) => q.eq('orgId', orgId))
+        .collect()
+    ).filter((a) => visibleIds.has(a.opportunityId))
     const programs = await ctx.db
       .query('programs')
       .withIndex('by_org', (q) => q.eq('orgId', orgId))
@@ -1185,6 +1291,10 @@ export const createOpportunity = internalMutation({
   returns: v.any(),
   handler: async (ctx, args) => {
     const org = await resolveOrgForAdmin(ctx, args.userId, args.orgSlug)
+    const gate = await courseGate(ctx, args.userId, org._id)
+    if (!gate.can({ tags: args.tags }, 'edit')) {
+      throw new Error('You can only create opportunities in a course you edit.')
+    }
     const id = await createOpportunityFor(ctx, {
       orgId: org._id,
       createdBy: args.userId,
@@ -1213,6 +1323,8 @@ export const duplicateOpportunity = internalMutation({
     const id = ctx.db.normalizeId('orgOpportunities', args.id)
     const source = id ? await ctx.db.get(id) : null
     if (!source || source.orgId !== org._id) throw new Error('Record not found')
+    const gate = await courseGate(ctx, args.userId, org._id)
+    if (!gate.can(source, 'edit')) throw new Error('Record not found')
     const copyId = await duplicateOpportunityFor(ctx, source, args.userId)
     const copy = await ctx.db.get(copyId)
     return { id: copyId, slug: copy?.slug ?? null, status: copy?.status }
@@ -1242,6 +1354,8 @@ export const createSurvey = internalMutation({
     if (!opportunityId) throw new Error('opportunityId not found')
     const opportunity = await ctx.db.get(opportunityId)
     if (!opportunity || opportunity.orgId !== org._id)
+      throw new Error('opportunityId not found')
+    if (!(await courseGate(ctx, args.userId, org._id)).can(opportunity, 'edit'))
       throw new Error('opportunityId not found')
 
     let { title, description, formFields } = args
@@ -1313,6 +1427,8 @@ export const createPoll = internalMutation({
     const opportunity = await ctx.db.get(opportunityId)
     if (!opportunity || opportunity.orgId !== org._id)
       throw new Error('opportunityId not found')
+    if (!(await courseGate(ctx, args.userId, org._id)).can(opportunity, 'edit'))
+      throw new Error('opportunityId not found')
 
     const id = await createPollFor(ctx, {
       opportunityId,
@@ -1341,6 +1457,9 @@ export const surveyResults = internalQuery({
     if (!surveyId) throw new Error('surveyId not found')
     const survey = await ctx.db.get(surveyId)
     if (!survey || survey.orgId !== org._id)
+      throw new Error('surveyId not found')
+    const gate = await courseGate(ctx, args.userId, org._id)
+    if (!(await gate.canId(survey.opportunityId)))
       throw new Error('surveyId not found')
 
     const surveyInfo = {
@@ -1410,6 +1529,8 @@ export const deleteOpportunity = internalMutation({
     const opportunity = await ctx.db.get(id)
     if (!opportunity || opportunity.orgId !== org._id)
       throw new Error('Record not found')
+    const gate = await courseGate(ctx, args.userId, org._id)
+    if (!gate.can(opportunity, 'edit')) throw new Error('Record not found')
 
     const attached = await opportunityAttachments(ctx, id)
     const blocking = Object.entries(attached).filter(([, n]) => n > 0)
@@ -1464,6 +1585,9 @@ export const availabilityHeatmap = internalQuery({
     if (!pollId) throw new Error('pollId not found')
     const poll = await ctx.db.get(pollId)
     if (!poll || poll.orgId !== org._id) throw new Error('pollId not found')
+    const gate = await courseGate(ctx, args.userId, org._id)
+    if (!(await gate.canId(poll.opportunityId)))
+      throw new Error('pollId not found')
 
     const [responses, roster] = await Promise.all([
       ctx.db

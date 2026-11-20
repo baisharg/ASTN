@@ -210,10 +210,6 @@ interface MembershipStatusProps {
 
 function MembershipStatus({ orgId, orgSlug }: MembershipStatusProps) {
   const membership = useQuery(api.orgs.membership.getMembership, { orgId })
-  const access = useQuery(
-    api.courseAccess.myAccess,
-    membership ? { orgId } : 'skip',
-  )
 
   if (membership === undefined) {
     return <Spinner className="size-5" />
@@ -245,20 +241,6 @@ function MembershipStatus({ orgId, orgSlug }: MembershipStatusProps) {
           </Link>
         </Button>
       )}
-      {/* Team members with course access reach their courses from here. */}
-      {membership.role !== 'admin' &&
-        (access?.courses.length ?? 0) > 0 &&
-        orgSlug && (
-          <Button variant="outline" size="sm" asChild>
-            <Link
-              to="/org/$slug/admin/opportunities"
-              params={{ slug: orgSlug }}
-            >
-              <Settings className="size-4 mr-1" />
-              My courses
-            </Link>
-          </Button>
-        )}
     </div>
   )
 }
